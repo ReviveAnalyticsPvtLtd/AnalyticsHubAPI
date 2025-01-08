@@ -18,26 +18,29 @@ client = create_client(
 
 @router.post("/signUp")
 async def signup(signupDetails: SignUp):
-    passwordString = signupDetails.password + os.environ["SECRET_KEY"]
-    hashedPassword = hashlib.md5(passwordString.encode("utf-8")).hexdigest()
-    allData = pd.DataFrame(client.table("Users").select("userId", "email", "password").execute().data)
-    if signupDetails.email not in allData["email"]:
-        response = client.table(table_name = "Users").insert(
-            {
-                "email": signupDetails.email,
-                "password": hashedPassword
-            }
-        ).execute()
-        return JSONResponse(status_code = 200, content = {"status": "SUCCESS"})
-    else:
-        return JSONResponse(status_code = 409, content = {"status": "ERROR", "errorDetail": "User Already Exists"})
+    try:
+        passwordString = signupDetails.password + os.environ["SECRET_KEY"]
+        hashedPassword = hashlib.md5(passwordString.encode("utf-8")).hexdigest()
+        allData = pd.DataFrame(client.table("Users").select("userId", "email", "password").execute().data, columns = ["userId", "email", "password"])
+        if signupDetails.email not in allData["email"]:
+            response = client.table(table_name = "Users").insert(
+                {
+                    "email": signupDetails.email,
+                    "password": hashedPassword
+                }
+            ).execute()
+            return JSONResponse(status_code = 200, content = {"status": "SUCCESS"})
+        else:
+            return JSONResponse(status_code = 409, content = {"status": "ERROR", "errorDetail": "User Already Exists"})
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
 
 @router.post("/login")
 async def login(loginDetails: Login):
     try:
         passwordString = loginDetails.password + os.environ["SECRET_KEY"]
         hashedPassword = hashlib.md5(passwordString.encode("utf-8")).hexdigest()
-        allData = pd.DataFrame(client.table("Users").select("userId", "email", "password").execute().data)
+        allData = pd.DataFrame(client.table("Users").select("userId", "email", "password").execute().data, columns = ["userId", "email", "password"])
         if loginDetails.email not in allData["email"].unique():
             return JSONResponse(status_code = 404, content = {"status": "ERROR", "errorDetail": "User not found"})
         else:  
