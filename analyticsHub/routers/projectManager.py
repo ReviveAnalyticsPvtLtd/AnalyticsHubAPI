@@ -1,4 +1,3 @@
-from ..models.requestModels import CreateProject
 from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse
 from ..utils.functions import verifyToken
@@ -14,8 +13,8 @@ client = create_client(
     supabase_key = os.environ["SUPABASE_KEY"]
 )
 
-@router.get("/createProject")
-async def createProject(projectDetails: CreateProject, token: Annotated[str, Header()]):
+@router.get("/createProject/{projectName}")
+async def createProject(projectName: str, token: Annotated[str, Header()]):
     try:
         if verifyToken(token = token):
             decodedToken = jwt.decode(
@@ -24,7 +23,7 @@ async def createProject(projectDetails: CreateProject, token: Annotated[str, Hea
                 algorithms = ["HS256"]
             )
             response = client.table("Projects").insert({
-                "projectName": projectDetails.projectName,
+                "projectName": projectName,
                 "ownerUserId": decodedToken["userId"],
                 "ownerUserMail": decodedToken["email"]
             }).execute()

@@ -7,6 +7,3 @@ class SignUp(BaseModel):
 class Login(BaseModel):
     email: str
     password: str
-
-class CreateProject(BaseModel):
-    projectName: str
