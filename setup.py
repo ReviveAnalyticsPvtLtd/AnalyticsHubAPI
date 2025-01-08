@@ -20,14 +20,9 @@ def get_requirements(requirements_path: str) -> list[str]:
 
 setup(
     name="AnalyticsHub",
-    author="Rauhan Ahmed Siddiqui",
-    author_email="rauhaan.siddiqui@gmail.com",
+    author="Revive Analytics",
+    author_email="reviveanalyticsdocs@gmail.com",
     version="0.1",
     packages=find_packages(),
-    install_requires=get_requirements(requirements_path="requirements.txt"),
-    classifiers=[
-        "Programming Language :: Python :: 3",
-        "License :: OSI Approved :: MIT License",
-        "Operating System :: OS Independent",
-    ],
+    install_requires=get_requirements(requirements_path="requirements.txt")
 )
