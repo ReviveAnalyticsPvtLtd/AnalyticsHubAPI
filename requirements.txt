@@ -1,0 +1,8 @@
+fastapi
+supabase
+python-dotenv
+python-jose
+pydantic
+pandas
+uvicorn
+-e .
