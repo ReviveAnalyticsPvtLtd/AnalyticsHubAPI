@@ -1,3 +1,4 @@
+from fastapi import UploadFile
 from pydantic import BaseModel
 
 class SignUp(BaseModel):
@@ -11,3 +12,4 @@ class Login(BaseModel):
 class UploadData(BaseModel):
     projectId: str
     projectName: str
+    dataFile: UploadFile

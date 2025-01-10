@@ -1,6 +1,6 @@
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from fastapi import APIRouter, Depends, UploadFile
 from ..models.requestModels import UploadData
+from fastapi import APIRouter, Depends, Form
 from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse
 from ..utils.functions import verifyToken
@@ -58,18 +58,18 @@ async def listProjects(credentials: Annotated[HTTPAuthorizationCredentials, Depe
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
 
 @router.post("/uploadData")
-async def uploadData(projectInfo: UploadData, file: UploadFile, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
-    # try:
-    if verifyToken(token = credentials.credentials):
-        project = client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", projectInfo.projectId).execute().data[0]                
-        response = client.storage.from_("AnalyticsHub").upload(
-            file = await file.read(),
-            path = f"{projectInfo.projectId}/{file.filename}"
-        )
-        if project["dataTables"]:
-            projectData = project["dataTables"] + f", {file.filename}"
-        else:
-            projectData = file.filename 
-        response = client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectInfo.projectId).execute()
-    # except Exception as e:
-    #     raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+async def uploadData(dataInfo: Annotated[UploadData, Form()], credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+    try:
+        if verifyToken(token = credentials.credentials):
+            project = client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", dataInfo.dataFile.projectId).execute().data[0]                
+            response = client.storage.from_("AnalyticsHub").upload(
+                file = await dataInfo.dataFile.read(),
+                path = f"{dataInfo.projectId}/{dataInfo.dataFile.filename}"
+            )
+            if project["dataTables"]:
+                projectData = project["dataTables"] + f", {dataInfo.dataFile.filename}"
+            else:
+                projectData = dataInfo.dataFile.filename 
+            response = client.table("Projects").update({"dataTables": projectData}).eq("projectId", dataInfo.projectId).execute()
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
