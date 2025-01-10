@@ -1,5 +1,5 @@
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from fastapi import APIRouter, Header, Depends, UploadFile
+from fastapi import APIRouter, Depends, UploadFile
 from ..models.requestModels import UploadData
 from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse
@@ -17,16 +17,12 @@ client = create_client(
     supabase_key = os.environ["SUPABASE_KEY"]
 )
 
-@router.get("/sampleEndpoint")
-async def sampleEndpoint(credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
-    return JSONResponse(status_code = 200, content = {"scheme": credentials.scheme, "token": credentials.credentials})
-
 @router.get("/createProject/{projectName}")
-async def createProject(projectName: str, Authorization: Annotated[str, Header()]):
+async def createProject(projectName: str, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
-        if verifyToken(token = Authorization):
+        if verifyToken(token = credentials.credentials):
             decodedToken = jwt.decode(
-                Authorization.split(" ")[1],
+                credentials.credentials.split(" ")[1],
                 os.environ["SECRET_KEY"],
                 algorithms = ["HS256"]
             )
@@ -42,11 +38,11 @@ async def createProject(projectName: str, Authorization: Annotated[str, Header()
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
     
 @router.get("/listProjects")
-async def listProjects(Authorization: Annotated[str, Header()]):
+async def listProjects(credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
-        if verifyToken(token = Authorization):
+        if verifyToken(token = credentials.credentials):
             decodedToken = jwt.decode(
-                Authorization.split(" ")[1],
+                credentials.credentials.split(" ")[1],
                 os.environ["SECRET_KEY"],
                 algorithms = ["HS256"]
             )
@@ -62,11 +58,11 @@ async def listProjects(Authorization: Annotated[str, Header()]):
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
 
 @router.post("/uploadData")
-async def uploadData(projectInfo: UploadData, file: UploadFile, Authorization: Annotated[str, Header()]):
+async def uploadData(projectInfo: UploadData, file: UploadFile, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
-        if verifyToken(token = Authorization):
+        if verifyToken(token = credentials.credentials):
             decodedToken = jwt.decode(
-                Authorization.split(" ")[1],
+                credentials.credentials.split(" ")[1],
                 os.environ["SECRET_KEY"],
                 algorithms = ["HS256"]
             )

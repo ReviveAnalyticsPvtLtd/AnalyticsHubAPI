@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException, Header
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import APIRouter, HTTPException, Depends
 from ..models.requestModels import SignUp, Login
 from fastapi.responses import JSONResponse
 from ..utils.functions import verifyToken
@@ -11,6 +12,7 @@ import hashlib
 import os
 
 router = APIRouter()
+security = HTTPBearer()
 client = create_client(
     supabase_url = os.environ["SUPABASE_URL"],
     supabase_key = os.environ["SUPABASE_KEY"]
@@ -74,10 +76,10 @@ async def login(loginDetails: Login):
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
     
 @router.get("/logout")
-async def logout(Authorization: Annotated[str, Header()]):
+async def logout(credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
-        if verifyToken(token = Authorization):
-            response = client.table("Sessions").delete().eq("accessToken", Authorization.split(" ")[1]).execute()
+        if verifyToken(token = credentials.credentials):
+            response = client.table("Sessions").delete().eq("accessToken", credentials.credentials.split(" ")[1]).execute()
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Session logged out successfully"})
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})
