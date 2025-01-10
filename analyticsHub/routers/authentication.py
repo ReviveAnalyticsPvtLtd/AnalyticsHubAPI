@@ -74,10 +74,10 @@ async def login(loginDetails: Login):
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
     
 @router.get("/logout")
-async def logout(token: Annotated[str, Header()]):
+async def logout(Authorization: Annotated[str, Header()]):
     try:
-        if verifyToken(token = token):
-            response = client.table("Sessions").delete().eq("accessToken", token.split(" ")[1]).execute()
+        if verifyToken(token = Authorization):
+            response = client.table("Sessions").delete().eq("accessToken", Authorization.split(" ")[1]).execute()
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Session logged out successfully"})
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})

@@ -1,10 +1,12 @@
+from fastapi import APIRouter, Header, UploadFile
+from ..models.requestModels import UploadData
 from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse
 from ..utils.functions import verifyToken
-from fastapi import APIRouter, Header
 from supabase import create_client
 from typing import Annotated
 from jose import jwt
+import pandas as pd
 import os
 
 router = APIRouter()
@@ -14,11 +16,11 @@ client = create_client(
 )
 
 @router.get("/createProject/{projectName}")
-async def createProject(projectName: str, token: Annotated[str, Header()]):
+async def createProject(projectName: str, Authorization: Annotated[str, Header()]):
     try:
-        if verifyToken(token = token):
+        if verifyToken(token = Authorization):
             decodedToken = jwt.decode(
-                token.split(" ")[1],
+                Authorization.split(" ")[1],
                 os.environ["SECRET_KEY"],
                 algorithms = ["HS256"]
             )
@@ -33,3 +35,44 @@ async def createProject(projectName: str, token: Annotated[str, Header()]):
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
     
+@router.get("/listProjects")
+async def listProjects(Authorization: Annotated[str, Header()]):
+    try:
+        if verifyToken(token = Authorization):
+            decodedToken = jwt.decode(
+                Authorization.split(" ")[1],
+                os.environ["SECRET_KEY"],
+                algorithms = ["HS256"]
+            )
+            data = pd.DataFrame(client.table("Projects").select("projectId", "projectName", "ownerUserId").execute().data, columns = ["projectId", "projectName", "ownerUserId"])
+            data = data[data["ownerUserId"] == decodedToken["userId"]]
+            projects = list()
+            for projectId, projectName in zip(data["projectId"], data["projectName"]):
+                projects.append({"projectId": projectId, "projectName": projectName})
+            return JSONResponse(status_code = 200, content = {"projects": projects})
+        else:
+            JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+
+@router.post("/uploadData")
+async def uploadData(projectInfo: UploadData, file: UploadFile, Authorization: Annotated[str, Header()]):
+    try:
+        if verifyToken(token = Authorization):
+            decodedToken = jwt.decode(
+                Authorization.split(" ")[1],
+                os.environ["SECRET_KEY"],
+                algorithms = ["HS256"]
+            )
+            project = client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", projectInfo.projectId).execute().data[0]                
+            response = client.storage.from_("AnalyticsHub").upload(
+                file = await file.read(),
+                path = f"{projectInfo.projectId}/{file.filename}"
+            )
+            if project["dataTables"]:
+                projectData = project["dataTables"] + f", {file.filename}"
+            else:
+                projectData = file.filename 
+            response = client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectInfo.projectId).execute()
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
