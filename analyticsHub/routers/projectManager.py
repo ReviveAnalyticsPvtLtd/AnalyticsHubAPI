@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Header, UploadFile
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import APIRouter, Header, Depends, UploadFile
 from ..models.requestModels import UploadData
 from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse
@@ -10,10 +11,15 @@ import pandas as pd
 import os
 
 router = APIRouter()
+security = HTTPBearer()
 client = create_client(
     supabase_url = os.environ["SUPABASE_URL"],
     supabase_key = os.environ["SUPABASE_KEY"]
 )
+
+@router.get("/sampleEndpoint")
+async def sampleEndpoint(credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+    return JSONResponse(status_code = 200, content = {"scheme": credentials.scheme, "token": credentials.credentials})
 
 @router.get("/createProject/{projectName}")
 async def createProject(projectName: str, Authorization: Annotated[str, Header()]):
