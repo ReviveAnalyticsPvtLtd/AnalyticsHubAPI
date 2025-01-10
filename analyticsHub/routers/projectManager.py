@@ -59,22 +59,17 @@ async def listProjects(credentials: Annotated[HTTPAuthorizationCredentials, Depe
 
 @router.post("/uploadData")
 async def uploadData(projectInfo: UploadData, file: UploadFile, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
-    try:
-        if verifyToken(token = credentials.credentials):
-            decodedToken = jwt.decode(
-                credentials.credentials.split(" ")[1],
-                os.environ["SECRET_KEY"],
-                algorithms = ["HS256"]
-            )
-            project = client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", projectInfo.projectId).execute().data[0]                
-            response = client.storage.from_("AnalyticsHub").upload(
-                file = await file.read(),
-                path = f"{projectInfo.projectId}/{file.filename}"
-            )
-            if project["dataTables"]:
-                projectData = project["dataTables"] + f", {file.filename}"
-            else:
-                projectData = file.filename 
-            response = client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectInfo.projectId).execute()
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+    # try:
+    if verifyToken(token = credentials.credentials):
+        project = client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", projectInfo.projectId).execute().data[0]                
+        response = client.storage.from_("AnalyticsHub").upload(
+            file = await file.read(),
+            path = f"{projectInfo.projectId}/{file.filename}"
+        )
+        if project["dataTables"]:
+            projectData = project["dataTables"] + f", {file.filename}"
+        else:
+            projectData = file.filename 
+        response = client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectInfo.projectId).execute()
+    # except Exception as e:
+    #     raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
