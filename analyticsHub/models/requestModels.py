@@ -1,5 +1,6 @@
-from fastapi import UploadFile
+from fastapi import UploadFile, File
 from pydantic import BaseModel
+from typing import Annotated
 
 class SignUp(BaseModel):
     email: str
@@ -12,4 +13,4 @@ class Login(BaseModel):
 class UploadData(BaseModel):
     projectId: str
     projectName: str
-    dataFile: UploadFile
+    dataFile: Annotated[UploadFile, File()]
