@@ -58,18 +58,18 @@ async def listProjects(credentials: Annotated[HTTPAuthorizationCredentials, Depe
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
 
 @router.post("/uploadData")
-async def uploadData(projectInfo: Annotated[UploadData, Form()], file: Annotated[UploadFile, File()], credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+async def uploadData(projectId: Annotated[str, Form()], file: Annotated[UploadFile, File()], credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
         if verifyToken(token = credentials.credentials):
-            project = client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", projectInfo.projectId).execute().data[0]                
+            project = client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", projectId).execute().data[0]                
             response = client.storage.from_("AnalyticsHub").upload(
                 file = await file.read(),
-                path = f"{projectInfo.projectId}/{file.filename}"
+                path = f"{projectId}/{file.filename}"
             )
             if project["dataTables"]:
                 projectData = project["dataTables"] + f", {file.filename}"
             else:
                 projectData = file.filename 
-            response = client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectInfo.projectId).execute()
+            response = client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
