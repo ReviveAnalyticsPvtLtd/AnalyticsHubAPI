@@ -88,6 +88,7 @@ async def loginWithProvider(loginDetails: LoginWithProvider):
                     "password": hashedPassword
                 }
             ).execute()
+            registeredUsers = pd.DataFrame(client.table("Users").select("userId", "email", "password").execute().data, columns = ["userId", "email", "password"])
         else:
             pass
         dataSlice = registeredUsers[registeredUsers["email"] == loginDetails.email].iloc[0, :]
