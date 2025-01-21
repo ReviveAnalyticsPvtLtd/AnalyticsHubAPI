@@ -10,7 +10,7 @@ class Login(BaseModel):
 
 class LoginWithProvider(BaseModel):
     email: str
-    sub: str | None
-    id: str | None
-    nodeId: str | None
+    sub: str | None = None
+    id: str | None = None
+    nodeId: str | None = None
     provider: str
