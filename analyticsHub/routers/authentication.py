@@ -1,6 +1,6 @@
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from ..models.requestModels import SignUp, Login, LoginWithProvider
 from fastapi import APIRouter, HTTPException, Depends
-from ..models.requestModels import SignUp, Login
 from fastapi.responses import JSONResponse
 from ..utils.functions import verifyToken
 from supabase import create_client
@@ -72,6 +72,47 @@ async def login(loginDetails: Login):
                     "accessToken": accessToken
                 }
                 return JSONResponse(status_code = 200, content = response)
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+    
+@router.post("/loginWithProvider")
+async def loginWithProvider(loginDetails: LoginWithProvider):
+    try:
+        passwordString = loginDetails.sub + loginDetails.id + loginDetails.nodeId
+        hashedPassword = hashlib.md5(passwordString.encode("utf-8")).hexdigest()
+        registeredUsers = pd.DataFrame(client.table("Users").select("email", "password").execute().data, columns = ["email", "password"])
+        if loginDetails.email not in registeredUsers["email"]:
+            response = client.table(table_name = "Users").insert(
+                {
+                    "email": loginDetails.email,
+                    "password": hashedPassword
+                }
+            ).execute()
+        else:
+            pass
+        dataSlice = registeredUsers[registeredUsers["email"] == loginDetails.email].iloc[0, :]
+        sessionStartTime = str(datetime.datetime.utcnow())
+        dictItems = {
+            "userId": dataSlice["userId"],
+            "email": loginDetails.email,
+            "password": hashedPassword,
+            "sessionStartTime": sessionStartTime
+        }
+        accessToken = jwt.encode(dictItems, os.environ["SECRET_KEY"], "HS256")
+        client.table("Sessions").insert({
+            "userId": dataSlice["userId"],
+            "email": dataSlice["email"],
+            "accessToken": accessToken,
+            "sessionStartTime": sessionStartTime,
+            "lastActivity": sessionStartTime
+        }).execute()
+        response = {
+            "status": "SUCCESS",
+            "userId": dataSlice["userId"],
+            "email": dataSlice["email"],
+            "accessToken": accessToken
+        }
+        return JSONResponse(status_code = 200, content = response)
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
     
