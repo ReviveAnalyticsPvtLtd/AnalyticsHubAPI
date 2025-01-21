@@ -78,7 +78,7 @@ async def login(loginDetails: Login):
 @router.post("/loginWithProvider")
 async def loginWithProvider(loginDetails: LoginWithProvider):
     try:
-        passwordString = loginDetails.sub + loginDetails.id + loginDetails.nodeId + os.environ["SECRET_KEY"]
+        passwordString = str(loginDetails.sub) + str(loginDetails.id) + str(loginDetails.nodeId) + os.environ["SECRET_KEY"]
         hashedPassword = hashlib.md5(passwordString.encode("utf-8")).hexdigest()
         registeredUsers = pd.DataFrame(client.table("Users").select("email", "password").execute().data, columns = ["email", "password"])
         if loginDetails.email not in registeredUsers["email"]:
