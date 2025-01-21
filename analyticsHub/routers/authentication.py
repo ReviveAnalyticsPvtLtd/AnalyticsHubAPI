@@ -80,8 +80,8 @@ async def loginWithProvider(loginDetails: LoginWithProvider):
     try:
         passwordString = str(loginDetails.sub) + str(loginDetails.id) + str(loginDetails.nodeId) + os.environ["SECRET_KEY"]
         hashedPassword = hashlib.md5(passwordString.encode("utf-8")).hexdigest()
-        registeredUsers = pd.DataFrame(client.table("Users").select("email", "password").execute().data, columns = ["email", "password"])
-        if loginDetails.email not in registeredUsers["email"]:
+        registeredUsers = pd.DataFrame(client.table("Users").select("userId", "email", "password").execute().data, columns = ["userId", "email", "password"])
+        if loginDetails.email not in registeredUsers["email"].unique():
             response = client.table(table_name = "Users").insert(
                 {
                     "email": loginDetails.email,
