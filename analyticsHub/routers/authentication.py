@@ -70,7 +70,7 @@ async def login(loginDetails: Login):
                     "userId": dataSlice["userId"],
                     "email": dataSlice["email"],
                     "accessToken": accessToken,
-                    "onboarded": dataSlice["onboarded"]
+                    "onboarded": int(dataSlice["onboarded"])
                 }
                 return JSONResponse(status_code = 200, content = response)
     except Exception as e:
@@ -113,7 +113,7 @@ async def loginWithProvider(loginDetails: LoginWithProvider):
             "userId": dataSlice["userId"],
             "email": dataSlice["email"],
             "accessToken": accessToken,
-            "onboarded": dataSlice["onboarded"]
+            "onboarded": int(dataSlice["onboarded"])
         }
         return JSONResponse(status_code = 200, content = response)
     except Exception as e:
