@@ -21,7 +21,7 @@ async def createProject(projectName: str, credentials: Annotated[HTTPAuthorizati
     try:
         if verifyToken(token = credentials.credentials):
             decodedToken = jwt.decode(
-                credentials.credentials.split(" ")[1],
+                credentials.credentials,
                 os.environ["SECRET_KEY"],
                 algorithms = ["HS256"]
             )
@@ -41,7 +41,7 @@ async def listProjects(credentials: Annotated[HTTPAuthorizationCredentials, Depe
     try:
         if verifyToken(token = credentials.credentials):
             decodedToken = jwt.decode(
-                credentials.credentials.split(" ")[1],
+                credentials.credentials,
                 os.environ["SECRET_KEY"],
                 algorithms = ["HS256"]
             )
