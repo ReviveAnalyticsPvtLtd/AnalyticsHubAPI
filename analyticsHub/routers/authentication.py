@@ -42,7 +42,7 @@ async def login(loginDetails: Login):
     try:
         passwordString = loginDetails.password + os.environ["SECRET_KEY"]
         hashedPassword = hashlib.md5(passwordString.encode("utf-8")).hexdigest()
-        allData = pd.DataFrame(client.table("Users").select("userId", "email", "password").execute().data, columns = ["userId", "email", "password"])
+        allData = pd.DataFrame(client.table("Users").select("userId", "email", "password", "onboarded").execute().data, columns = ["userId", "email", "password", "onboarded"])
         if loginDetails.email not in allData["email"].unique():
             return JSONResponse(status_code = 404, content = {"status": "ERROR", "errorDetail": "User not found"})
         else:  
@@ -69,7 +69,8 @@ async def login(loginDetails: Login):
                     "status": "SUCCESS",
                     "userId": dataSlice["userId"],
                     "email": dataSlice["email"],
-                    "accessToken": accessToken
+                    "accessToken": accessToken,
+                    "onboarded": dataSlice["onboarded"]
                 }
                 return JSONResponse(status_code = 200, content = response)
     except Exception as e:
@@ -80,7 +81,7 @@ async def loginWithProvider(loginDetails: LoginWithProvider):
     try:
         passwordString = str(loginDetails.sub) + str(loginDetails.id) + str(loginDetails.nodeId) + os.environ["SECRET_KEY"]
         hashedPassword = hashlib.md5(passwordString.encode("utf-8")).hexdigest()
-        registeredUsers = pd.DataFrame(client.table("Users").select("userId", "email", "password").execute().data, columns = ["userId", "email", "password"])
+        registeredUsers = pd.DataFrame(client.table("Users").select("userId", "email", "password", "onboarded").execute().data, columns = ["userId", "email", "password", "onboarded"])
         if loginDetails.email not in registeredUsers["email"].unique():
             response = client.table(table_name = "Users").insert(
                 {
@@ -88,7 +89,7 @@ async def loginWithProvider(loginDetails: LoginWithProvider):
                     "password": hashedPassword
                 }
             ).execute()
-            registeredUsers = pd.DataFrame(client.table("Users").select("userId", "email", "password").execute().data, columns = ["userId", "email", "password"])
+            registeredUsers = pd.DataFrame(client.table("Users").select("userId", "email", "password", "onboarded").execute().data, columns = ["userId", "email", "password", "onboarded"])
         else:
             pass
         dataSlice = registeredUsers[registeredUsers["email"] == loginDetails.email].iloc[0, :]
@@ -111,7 +112,8 @@ async def loginWithProvider(loginDetails: LoginWithProvider):
             "status": "SUCCESS",
             "userId": dataSlice["userId"],
             "email": dataSlice["email"],
-            "accessToken": accessToken
+            "accessToken": accessToken,
+            "onboarded": dataSlice["onboarded"]
         }
         return JSONResponse(status_code = 200, content = response)
     except Exception as e:

@@ -8,7 +8,6 @@ client = create_client(
 )
 
 def verifyToken(token: str):
-    token = token.split(" ")[1]
     allTokens = [x["accessToken"] for x in client.table("Sessions").select("accessToken").execute().data]
     if token in allTokens: 
         response = client.table("Sessions").update({"lastActivity": str(datetime.datetime.utcnow())}).eq("accessToken", token).execute()
