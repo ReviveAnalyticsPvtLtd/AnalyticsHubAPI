@@ -123,7 +123,7 @@ async def loginWithProvider(loginDetails: LoginWithProvider):
 async def logout(credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
         if verifyToken(token = credentials.credentials):
-            response = client.table("Sessions").delete().eq("accessToken", credentials.credentials.split(" ")[1]).execute()
+            response = client.table("Sessions").delete().eq("accessToken", credentials.credentials).execute()
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Session logged out successfully"})
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})
