@@ -1,5 +1,5 @@
+from ..models.requestModels import SignUp, Login, LoginWithProvider, OnboardingDetails
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from ..models.requestModels import SignUp, Login, LoginWithProvider
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from ..utils.functions import verifyToken
@@ -116,6 +116,29 @@ async def loginWithProvider(loginDetails: LoginWithProvider):
             "onboarded": int(dataSlice["onboarded"])
         }
         return JSONResponse(status_code = 200, content = response)
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+    
+@router.post("/onboarding")
+async def onboarding(onboardingDetails: OnboardingDetails, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+    try:
+        if verifyToken(token = credentials.credentials):
+            dataToUpdate = {
+                "onboarded": 1,
+                "usage": onboardingDetails.usage,
+                "fullName": onboardingDetails.fullName,
+                "role": onboardingDetails.role,
+                "companyName": onboardingDetails.companyName,
+                "industryType": onboardingDetails.industryType,
+                "companySize": onboardingDetails.companySize,
+                "country": onboardingDetails.country,
+                "goals": onboardingDetails.goals,
+                "source": onboardingDetails.source
+            }
+            response = client.table("Users").update(dataToUpdate).eq("email", onboardingDetails.email).execute()
+            return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "User onboarded successfully."})
+        else:
+            return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})        
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
     
