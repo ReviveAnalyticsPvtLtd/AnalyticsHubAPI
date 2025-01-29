@@ -74,6 +74,7 @@ async def confirmMail(signupId: str):
             "email_redirect_to": "https://localhost:3000"
         }
         })
+        return JSONResponse(status_code = 200, content = {"status": "SUCCESS"}) 
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
 
