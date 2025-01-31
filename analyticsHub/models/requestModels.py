@@ -26,3 +26,6 @@ class OnboardingDetails(BaseModel):
     country: str
     goals: str
     source: str
+
+class NewCredentials(BaseModel):
+    newPassword: str

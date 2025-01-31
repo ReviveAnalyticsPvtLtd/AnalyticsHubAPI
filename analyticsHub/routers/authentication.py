@@ -1,4 +1,4 @@
-from ..models.requestModels import SignUp, Login, LoginWithProvider, OnboardingDetails
+from ..models.requestModels import SignUp, Login, LoginWithProvider, OnboardingDetails, NewCredentials
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi import APIRouter, HTTPException, Depends
 from supabase.lib.client_options import ClientOptions
@@ -44,18 +44,19 @@ async def signup(signupDetails: SignUp):
             )
             client.table(table_name = "Users").insert(
                 {
+                    "userId": response.user.id,
                     "email": signupDetails.email,
                     "password": hashedPassword
                 }
             ).execute()
-            return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "signupId": response.user.id})
+            return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "userId": response.user.id})
         else:
             return JSONResponse(status_code = 409, content = {"status": "ERROR", "errorDetail": "User Already Exists"})
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
 
-@router.get("/confirmMail/{signupId}")
-async def confirmMail(signupId: str):
+@router.get("/confirmMail/{userId}")
+async def confirmMail(userId: str):
     try:
         allUsers = list()
         page = 1
@@ -66,7 +67,7 @@ async def confirmMail(signupId: str):
             else:
                 allUsers.extend(response)
                 page += 1
-        email = list(filter(lambda x: True if x.id == signupId else False, allUsers))[0].email
+        email = list(filter(lambda x: True if x.id == userId else False, allUsers))[0].email
         response = client.auth.resend({
         "type": "signup",
         "email": email,
@@ -194,7 +195,31 @@ async def onboarding(onboardingDetails: OnboardingDetails, credentials: Annotate
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})        
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
-    
+
+@router.put("/resetPassword")
+async def resetPassword(email: str, newCredentials: NewCredentials):
+    try:
+        passwordString = newCredentials.newPassword + os.environ["SECRET_KEY"]
+        hashedPassword = hashlib.md5(passwordString.encode("utf-8")).hexdigest()
+        allUsers = list()
+        page = 1
+        while True:
+            response = client.auth.admin.list_users(page = page, per_page = 1000)
+            if response == []:
+                break
+            else:
+                allUsers.extend(response)
+                page += 1
+        filteredResult = list(filter(lambda x: True if x.email == email else False, allUsers))[0]
+        response = client.auth.admin.update_user_by_id(
+            filteredResult.id,
+            {"password": hashedPassword}
+        )
+        response = client.table("Users").update({"password": hashedPassword}).eq("email", email).execute()
+        return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Password updated successfully!"})
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+
 @router.get("/logout")
 async def logout(credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
