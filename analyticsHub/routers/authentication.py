@@ -72,7 +72,7 @@ async def confirmMail(userId: str):
         "type": "signup",
         "email": email,
         "options": {
-            "email_redirect_to": "https://localhost:3000"
+            "email_redirect_to": "https://localhost:3000/login"
         }
         })
         return JSONResponse(status_code = 200, content = {"status": "SUCCESS"}) 
@@ -195,6 +195,19 @@ async def onboarding(onboardingDetails: OnboardingDetails, credentials: Annotate
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})        
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+
+@router.get("/initiatePasswordReset")
+async def initiatePasswordReset(emailId: str):
+    try:
+        client.auth.reset_password_for_email(
+            emailId,
+            {
+                "redirect_to": "http://localhost:3000/login/create-new-password"
+            }
+        )
+        return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Password reset initiated successfully."})
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")    
 
 @router.put("/resetPassword")
 async def resetPassword(email: str, newCredentials: NewCredentials):
