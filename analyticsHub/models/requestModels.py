@@ -29,3 +29,7 @@ class OnboardingDetails(BaseModel):
 
 class NewCredentials(BaseModel):
     newPassword: str
+
+class UpdateProjectState(BaseModel):
+    projectId: str
+    action: str

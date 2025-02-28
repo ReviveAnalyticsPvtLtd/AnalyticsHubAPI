@@ -1,5 +1,6 @@
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi import APIRouter, Depends, UploadFile, File, Form
+from ..models.requestModels import UpdateProjectState
 from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse
 from ..utils.functions import verifyToken
@@ -70,19 +71,35 @@ async def uploadData(projectId: Annotated[str, Form()], file: Annotated[UploadFi
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
     
-@router.post("/addBookmark")
-async def uploadData(projectId: Annotated[str, Form()], file: Annotated[UploadFile, File()], credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+@router.patch("/updateBookmark")
+async def updateBookmark(updateBookmarkDetails: UpdateProjectState, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
         if verifyToken(token = credentials.credentials):
-            project = client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", projectId).execute().data[0]                
-            response = client.storage.from_("AnalyticsHub").upload(
-                file = await file.read(),
-                path = f"{projectId}/{file.filename}"
-            )
-            if project["dataTables"]:
-                projectData = project["dataTables"] + f", {file.filename}"
+            if updateBookmarkDetails.action == "add":
+                response = client.table("Projects").update({"isBookmarked": 1}).eq("ProjectId", updateBookmarkDetails.projectId).execute()
             else:
-                projectData = file.filename 
-            response = client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
+                response = client.table("Projects").update({"isBookmarked": 0}).eq("ProjectId", updateBookmarkDetails.projectId).execute()                
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+    
+@router.patch("/updateArchive")
+async def updateArchive(updateArchiveDetails: UpdateProjectState, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+    try:
+        if verifyToken(token = credentials.credentials):
+            if updateArchiveDetails.action == "add":
+                response = client.table("Projects").update({"isArchived": 1}).eq("ProjectId", updateArchiveDetails.projectId).execute()
+            else:
+                response = client.table("Projects").update({"isArchived": 0}).eq("ProjectId", updateArchiveDetails.projectId).execute()                
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+    
+@router.patch("/updateTrash")
+async def updateTrash(updateTrashDetails: UpdateProjectState, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+    try:
+        if verifyToken(token = credentials.credentials):
+            if updateTrashDetails.action == "add":
+                response = client.table("Projects").update({"isTrash": 1}).eq("ProjectId", updateTrashDetails.projectId).execute()
+            else:
+                response = client.table("Projects").update({"isTrash": 0}).eq("ProjectId", updateTrashDetails.projectId).execute()                
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
