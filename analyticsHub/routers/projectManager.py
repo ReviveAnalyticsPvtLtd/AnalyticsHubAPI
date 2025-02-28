@@ -76,9 +76,12 @@ async def updateBookmark(updateBookmarkDetails: UpdateProjectState, credentials:
     try:
         if verifyToken(token = credentials.credentials):
             if updateBookmarkDetails.action == "add":
-                response = client.table("Projects").update({"isBookmarked": 1}).eq("ProjectId", updateBookmarkDetails.projectId).execute()
+                response = client.table("Projects").update({"isBookmarked": 1}).eq("projectId", updateBookmarkDetails.projectId).execute()
             else:
-                response = client.table("Projects").update({"isBookmarked": 0}).eq("ProjectId", updateBookmarkDetails.projectId).execute()                
+                response = client.table("Projects").update({"isBookmarked": 0}).eq("projectId", updateBookmarkDetails.projectId).execute()                
+            return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Project bookmark status updated successfully"})
+        else:
+            JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
     
@@ -87,9 +90,12 @@ async def updateArchive(updateArchiveDetails: UpdateProjectState, credentials: A
     try:
         if verifyToken(token = credentials.credentials):
             if updateArchiveDetails.action == "add":
-                response = client.table("Projects").update({"isArchived": 1}).eq("ProjectId", updateArchiveDetails.projectId).execute()
+                response = client.table("Projects").update({"isArchived": 1}).eq("projectId", updateArchiveDetails.projectId).execute()
             else:
-                response = client.table("Projects").update({"isArchived": 0}).eq("ProjectId", updateArchiveDetails.projectId).execute()                
+                response = client.table("Projects").update({"isArchived": 0}).eq("projectId", updateArchiveDetails.projectId).execute()                
+            return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Project archive status updated successfully"})
+        else:
+            JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})   
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
     
@@ -98,8 +104,11 @@ async def updateTrash(updateTrashDetails: UpdateProjectState, credentials: Annot
     try:
         if verifyToken(token = credentials.credentials):
             if updateTrashDetails.action == "add":
-                response = client.table("Projects").update({"isTrash": 1}).eq("ProjectId", updateTrashDetails.projectId).execute()
+                response = client.table("Projects").update({"isTrash": 1}).eq("projectId", updateTrashDetails.projectId).execute()
             else:
-                response = client.table("Projects").update({"isTrash": 0}).eq("ProjectId", updateTrashDetails.projectId).execute()                
+                response = client.table("Projects").update({"isTrash": 0}).eq("projectId", updateTrashDetails.projectId).execute()                
+            return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Project trash status updated successfully"})
+        else:
+            JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
