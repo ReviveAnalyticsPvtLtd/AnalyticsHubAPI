@@ -209,7 +209,7 @@ async def initiatePasswordReset(emailId: str):
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")    
 
-@router.put("/resetPassword")
+@router.patch("/resetPassword")
 async def resetPassword(email: str, newCredentials: NewCredentials):
     try:
         passwordString = newCredentials.newPassword + os.environ["SECRET_KEY"]
