@@ -1,3 +1,4 @@
+duckdb
 fastapi
 supabase
 python-dotenv
