@@ -24,7 +24,7 @@ async def uploadData(projectId: Annotated[str, Form()], file: Annotated[UploadFi
         if verifyToken(token = credentials.credentials):
             project = client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", projectId).execute().data[0]                
             with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
-                duckdb.read_csv(await file.read()).write_parquet(temp.name, compression = "snappy")
+                duckdb.read_csv(io.BytesIO(await file.read())).write_parquet(temp.name, compression = "snappy")
                 response = client.storage.from_("AnalyticsHub").upload(
                     file = temp.name,
                     path = f"{projectId}/{os.path.splitext(file.filename)[0] + '.parquet'}"
