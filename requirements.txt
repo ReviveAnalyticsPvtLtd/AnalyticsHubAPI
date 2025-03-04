@@ -1,4 +1,5 @@
 duckdb
+fsspec 
 fastapi
 supabase
 python-dotenv
