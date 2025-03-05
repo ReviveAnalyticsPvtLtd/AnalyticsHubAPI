@@ -35,7 +35,7 @@ async def createProject(projectDetails: CreateProject, credentials: Annotated[HT
                 "ownerUserId": decodedToken["userId"],
                 "ownerUserMail": decodedToken["email"]
             }).execute()
-            return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "projectId": projectId, "message": "Project created successfully"})
+            return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "projectId": str(projectId), "message": "Project created successfully"})
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})
     except Exception as e:
