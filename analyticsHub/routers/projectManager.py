@@ -1,5 +1,5 @@
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from ..models.requestModels import UpdateProjectState
+from ..models.requestModels import UpdateProjectState, CreateProject
 from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse
 from ..utils.functions import verifyToken
@@ -8,6 +8,7 @@ from supabase import create_client
 from typing import Annotated
 from jose import jwt
 import pandas as pd
+import uuid
 import os
 
 router = APIRouter()
@@ -17,21 +18,24 @@ client = create_client(
     supabase_key = os.environ["SUPABASE_KEY"]
 )
 
-@router.get("/createProject/{projectName}")
-async def createProject(projectName: str, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+@router.post("/createProject")
+async def createProject(projectDetails: CreateProject, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
         if verifyToken(token = credentials.credentials):
+            projectId = uuid.uuid4()
             decodedToken = jwt.decode(
                 credentials.credentials,
                 os.environ["SECRET_KEY"],
                 algorithms = ["HS256"]
             )
             response = client.table("Projects").insert({
-                "projectName": projectName,
+                "projectId": projectId,
+                "projectName": projectDetails.projectName,
+                "projectDescription": projectDetails.projectDescription,
                 "ownerUserId": decodedToken["userId"],
                 "ownerUserMail": decodedToken["email"]
             }).execute()
-            return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Project created successfully"})
+            return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "projectId": projectId, "message": "Project created successfully"})
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})
     except Exception as e:

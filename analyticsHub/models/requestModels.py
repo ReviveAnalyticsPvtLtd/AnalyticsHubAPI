@@ -33,3 +33,7 @@ class NewCredentials(BaseModel):
 class UpdateProjectState(BaseModel):
     projectId: str
     action: str
+
+class CreateProject(BaseModel):
+    projectName: str
+    projectDescription: str | None = None
