@@ -111,7 +111,7 @@ async def generateMetadata(projectId: str, credentials: Annotated[HTTPAuthorizat
         if verifyToken(token = credentials.credentials):
             metadata = pipeline.generateMetadata(projectId = projectId)
             buffer = io.BytesIO()
-            buffer.write(json.dumps(metadata, buffer, indent = 4).encode("utf-8"))
+            buffer.write(json.dumps(metadata, indent = 4).encode("utf-8"))
             buffer.seek(0)
             client.storage.from_("AnalyticsHub").upload(f"{projectId}/metadata.json", buffer)
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "metadata": metadata})
