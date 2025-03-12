@@ -99,3 +99,7 @@ async def updateTrash(updateTrashDetails: UpdateProjectState, credentials: Annot
             JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+    
+    @router.get("/generateMetadata")
+    async def generateMetadata(credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+        pass

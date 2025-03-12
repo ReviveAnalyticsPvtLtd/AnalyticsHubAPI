@@ -1,0 +1,71 @@
+metadataGeneratorPrompt: |
+    I have a dataset consisting of several dataframes with associated attribute information provided below.
+
+    {metadata}
+
+    Generate a `metadata.json` file that strictly adheres to the structure outlined here. The output should be a JSON block only—no additional text, explanations, or comments. Each entry in the JSON should include the dataframe's name, a description, a detailed breakdown of its columns (including their names, data types, and descriptions), and a sample row showcasing representative values.
+
+    ### Notes:
+    - The terms `dataframe1`, `dataframe2`, `column1`, `column2`, etc., are placeholders and do not represent the actual names, column labels, or values from the dataset. Replace them with the real dataframe and column names provided in the dataset's metadata.
+    - Ensure all descriptions and examples provided in the output JSON are consistent with the given dataset's structure and attributes.
+
+    ### Input Example:
+    For each dataframe:
+
+    DATAFRAME NAME: `<dataframe1>`
+    - `column1` (dtype: `<column1 dtype>`)
+    - `column2` (dtype: `<column2 dtype>`)
+    - `column3` (dtype: `<column3 dtype>`)
+    ...
+    Shape: (number of rows, number of columns)
+    Sample row:
+    | column1   | column2   | column3   |
+    |-----------|-----------|-----------|
+    | value1    | value2    | value3    |
+
+    DATAFRAME NAME: `<dataframe2>`
+    - `column1` (dtype: `<column1 dtype>`)
+    - `column2` (dtype: `<column2 dtype>`)
+    - `column3` (dtype: `<column3 dtype>`)
+    ...
+    Shape: (number of rows, number of columns)
+    Sample row:
+    | column1   | column2   | column3   |
+    |-----------|-----------|-----------|
+    | value1    | value2    | value3    |
+
+    ### Expected Output Format (JSON only):
+    ```json
+    {{
+        "<dataframe1>": {{
+            "description": "<Description of the dataframe>",
+            "shape": "<list of type [nunmber of rows, number of columns]>",
+            "columns": [
+                {{"name": "<column1>", "type": "<column1 datatype>", "description": "<column1 description>"}},
+                {{"name": "<column2>", "type": "<column2 datatype>", "description": "<column2 description>"}},
+                ...
+            ],
+            "sample_row": {{
+                "<column1>": "<value1>",
+                "<column2>": "<value2>",
+                ...
+            }}
+        }},
+        "<dataframe2>": {{
+            ...
+        }},
+        ...
+    }}
+    ```
+
+attributeInfoCode: |
+    import fireducks.pandas as pd
+    {dataframeName} = pd.read_parquet('{os.environ["FILE_URL"].format(projectId = projectId, fileName = dataframeName)}')
+    attributeInfo = 'DATAFRAME NAME: {dataframeName}\\n'
+
+    for column in {dataframeName}.columns:
+        attributeInfo += '- ' + str(column) + ' (' + {dataframeName}.get(column).dtype.name + ')\\n'
+        
+    attributeInfo += 'SHAPE: ' + str({dataframeName}.shape) + '\\n'
+    attributeInfo += 'SAMPLE ROWS:\\n' + str({dataframeName}.loc[{dataframeName}.index[:2]].to_string()) + '\\n'
+    print(attributeInfo)

@@ -1,3 +1,4 @@
+pyyaml
 duckdb
 fsspec 
 fastapi
@@ -8,4 +9,10 @@ pydantic
 pandas
 uvicorn
 python-multipart
+langchain
+langchain-community
+langchain-core
+langchain-groq
+langchain-experimental
+langgraph
 -e .
