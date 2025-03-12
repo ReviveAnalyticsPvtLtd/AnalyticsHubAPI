@@ -24,7 +24,7 @@ class CompletePipeline:
             results = ""
             for fileName in dataFiles:
                 dataframeName = fileName.replace(".parquet", "")
-                codeString = readYaml(self.yamlPath)["attributeInfoCode"].format(dataframeName = dataframeName)
+                codeString = readYaml(self.yamlPath)["attributeInfoCode"].format(dataframeName = dataframeName, projectId = projectId)
                 results += self.replManager[projectId].run(codeString)
             metadataChain = self.metadataGenerator.getMetadataChain()
             metadata = metadataChain.invoke({"metadata": results})

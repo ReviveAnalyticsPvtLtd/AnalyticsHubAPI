@@ -15,4 +15,5 @@ langchain-core
 langchain-groq
 langchain-experimental
 langgraph
+fireducks
 -e .

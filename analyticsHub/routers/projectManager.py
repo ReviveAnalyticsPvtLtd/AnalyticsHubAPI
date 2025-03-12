@@ -1,15 +1,19 @@
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from ..models.requestModels import UpdateProjectState, CreateProject
+from langchain_experimental.utilities import PythonREPL
 from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse
 from ..utils.functions import verifyToken
 from fastapi import APIRouter, Depends
 from supabase import create_client
 from typing import Annotated
+from . import pipeline
 from jose import jwt
 import pandas as pd
 import uuid
+import json
 import os
+import io
 
 router = APIRouter()
 security = HTTPBearer()
@@ -23,6 +27,7 @@ async def createProject(projectDetails: CreateProject, credentials: Annotated[HT
     try:
         if verifyToken(token = credentials.credentials):
             projectId = str(uuid.uuid4())
+            pipeline.replManager[projectId] = PythonREPL()
             decodedToken = jwt.decode(
                 credentials.credentials,
                 os.environ["SECRET_KEY"],
@@ -54,7 +59,7 @@ async def listProjects(credentials: Annotated[HTTPAuthorizationCredentials, Depe
             data = data[data["ownerUserId"] == decodedToken["userId"]]
             return JSONResponse(status_code = 200, content = {"projects": data.to_dict(orient = "records")})
         else:
-            JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})
+            return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
     
@@ -68,7 +73,7 @@ async def updateBookmark(updateBookmarkDetails: UpdateProjectState, credentials:
                 response = client.table("Projects").update({"isBookmarked": 0}).eq("projectId", updateBookmarkDetails.projectId).execute()                
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Project bookmark status updated successfully"})
         else:
-            JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})
+            return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
     
@@ -82,7 +87,7 @@ async def updateArchive(updateArchiveDetails: UpdateProjectState, credentials: A
                 response = client.table("Projects").update({"isArchived": 0}).eq("projectId", updateArchiveDetails.projectId).execute()                
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Project archive status updated successfully"})
         else:
-            JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})   
+            return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})   
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
     
@@ -96,10 +101,21 @@ async def updateTrash(updateTrashDetails: UpdateProjectState, credentials: Annot
                 response = client.table("Projects").update({"isTrash": 0}).eq("projectId", updateTrashDetails.projectId).execute()                
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Project trash status updated successfully"})
         else:
-            JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
+            return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
     
-    @router.get("/generateMetadata")
-    async def generateMetadata(credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
-        pass
+@router.post("/generateMetadata/{projectId}")
+async def generateMetadata(projectId: str, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+    try:
+        if verifyToken(token = credentials.credentials):
+            metadata = pipeline.generateMetadata(projectId = projectId)
+            buffer = io.BytesIO()
+            buffer.write(json.dumps(metadata, buffer, indent = 4).encode("utf-8"))
+            buffer.seek(0)
+            client.storage.from_("AnalyticsHub").upload(f"{projectId}/metadata.json", buffer)
+            return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "metadata": metadata})
+        else:
+            return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")

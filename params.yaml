@@ -58,9 +58,10 @@ metadataGeneratorPrompt: |
     }}
     ```
 
+
 attributeInfoCode: |
     import fireducks.pandas as pd
-    {dataframeName} = pd.read_parquet('{os.environ["FILE_URL"].format(projectId = projectId, fileName = dataframeName)}')
+    {dataframeName} = pd.read_parquet(os.environ["FILE_URL"].format(projectId = {projectId}, fileName = {dataframeName}))
     attributeInfo = 'DATAFRAME NAME: {dataframeName}\\n'
 
     for column in {dataframeName}.columns:
