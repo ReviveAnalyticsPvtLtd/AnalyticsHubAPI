@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from ..utils.functions import verifyToken
 from fastapi import APIRouter, Depends
 from supabase import create_client
+from urllib.request import urlopen
 from typing import Annotated
 from . import pipeline
 from jose import jwt
@@ -113,8 +114,19 @@ async def generateMetadata(projectId: str, credentials: Annotated[HTTPAuthorizat
             buffer = io.BytesIO()
             buffer.write(json.dumps(metadata, indent = 4).encode("utf-8"))
             buffer.seek(0)
-            client.storage.from_("AnalyticsHub").upload(f"{projectId}/metadata.json", buffer.getvalue())
+            client.storage.from_("AnalyticsHub").upload(path = f"{projectId}/metadata.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "metadata": metadata})
+        else:
+            return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+
+@router.get("/getMetadata/{projectId}")
+async def getMetadata(projectId: str, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+    try:
+        if verifyToken(token = credentials.credentials):
+            fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "")
+            return JSONResponse(status_code = 200, content = json.loads(urlopen(fileUrl)))
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
     except Exception as e:
