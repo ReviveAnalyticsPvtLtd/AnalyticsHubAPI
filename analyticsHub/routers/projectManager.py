@@ -29,7 +29,7 @@ async def createProject(projectDetails: CreateProject, credentials: Annotated[HT
         if verifyToken(token = credentials.credentials):
             projectId = str(uuid.uuid4())
             pipeline.replManager[projectId] = PythonREPL()
-            _ = pipeline.replManager[projectId].run(readYaml(filePath = os.path.join(os.getcwd() + "params.yaml")["redisFunctionCode"]))
+            _ = pipeline.replManager[projectId].run(readYaml("params.yaml")["redisFunctionCode"])
             decodedToken = jwt.decode(
                 credentials.credentials,
                 os.environ["SECRET_KEY"],
