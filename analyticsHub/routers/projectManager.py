@@ -1,9 +1,9 @@
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from ..models.requestModels import UpdateProjectState, CreateProject
 from langchain_experimental.utilities import PythonREPL
+from ..utils.functions import verifyToken, readYaml
 from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse
-from ..utils.functions import verifyToken
 from fastapi import APIRouter, Depends
 from supabase import create_client
 from urllib.request import urlopen
@@ -29,6 +29,7 @@ async def createProject(projectDetails: CreateProject, credentials: Annotated[HT
         if verifyToken(token = credentials.credentials):
             projectId = str(uuid.uuid4())
             pipeline.replManager[projectId] = PythonREPL()
+            _ = pipeline.replManager[projectId].run(readYaml(filePath = os.path.join(os.getcwd() + "params.yaml")["redisFunctionCode"]))
             decodedToken = jwt.decode(
                 credentials.credentials,
                 os.environ["SECRET_KEY"],

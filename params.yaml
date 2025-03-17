@@ -70,3 +70,22 @@ attributeInfoCode: |
     attributeInfo += 'SHAPE: ' + str({dataframeName}.shape) + '\\n'
     attributeInfo += 'SAMPLE ROWS:\\n' + str({dataframeName}.loc[{dataframeName}.index[:2]].to_string()) + '\\n'
     print(attributeInfo)
+
+
+redisFunctionCode: |
+    def fetch_data(projectId: str, tableName: str):
+        import fireducks.pandas as pd
+        import redis
+        import os
+        import io
+        r = redis.Redis(host=os.environ["REDIS_HOST"], port=int(os.environ["REDIS_PORT"]), password=os.environ["REDIS_PASSWORD"])
+        key = f"{projectId}::{tableName}"
+        df = r.get(key)
+        if df is None:
+            buffer = io.BytesIO()
+            df = pd.read_parquet(os.environ["FILE_URL"].format(projectId = projectId, fileName = tableName))
+            df.to_parquet(buffer, compression = "snappy")
+            r.set(name = key, value = buffer.getvalue(), ex = 60)
+        else:
+            df = pd.read_parquet(io.BytesIO(df))
+        return df

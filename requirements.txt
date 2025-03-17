@@ -1,6 +1,7 @@
 pyyaml
 duckdb
 fsspec 
+redis
 fastapi
 supabase
 python-dotenv
