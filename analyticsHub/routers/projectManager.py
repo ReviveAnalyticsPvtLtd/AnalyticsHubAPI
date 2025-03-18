@@ -32,6 +32,7 @@ async def createProject(projectDetails: CreateProject, credentials: Annotated[HT
             replManager.manager[projectId] = PythonREPL()
             _ = replManager.manager[projectId].run(readYaml("params.yaml")["redisFunctionCode"])
             _ = replManager.manager[projectId].run(readYaml("params.yaml")["jsonSerializer"])
+            _ = replManager.manager[projectId].run(("globals()['__name__'] = '__main__'"))
             _ = replManager.manager[projectId].run("globals().update(locals())")
             decodedToken = jwt.decode(
                 credentials.credentials,
@@ -132,17 +133,6 @@ async def getMetadata(projectId: str, credentials: Annotated[HTTPAuthorizationCr
         if verifyToken(token = credentials.credentials):
             fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "")
             return JSONResponse(status_code = 200, content = json.loads(urlopen(fileUrl).read()))
-        else:
-            return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
-    
-@router.post("/generateChart")
-async def generateChart(inputQuery: str, metadata: str, projectId: str, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
-    try:
-        if verifyToken(token = credentials.credentials):
-            response = pipeline.generateChart(inputQuery=inputQuery, metadata=metadata, projectId=projectId)
-            return JSONResponse(status_code = 200, content = response)
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
     except Exception as e:
