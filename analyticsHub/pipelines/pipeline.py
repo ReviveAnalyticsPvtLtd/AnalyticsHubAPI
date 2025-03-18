@@ -43,7 +43,7 @@ class CompletePipeline:
                 "metadata": metadata,
                 "projectId": projectId
             })
-            return response["finalOutput"]
+            return response
         except Exception as e:
             logger.error(f"Error during loadData: {e}")
             raise CustomException(e)
