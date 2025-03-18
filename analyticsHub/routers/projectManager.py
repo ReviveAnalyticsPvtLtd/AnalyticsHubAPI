@@ -4,6 +4,7 @@ from langchain_experimental.utilities import PythonREPL
 from ..utils.functions import verifyToken, readYaml
 from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse
+from ..components import replManager
 from fastapi import APIRouter, Depends
 from supabase import create_client
 from urllib.request import urlopen
@@ -28,8 +29,10 @@ async def createProject(projectDetails: CreateProject, credentials: Annotated[HT
     try:
         if verifyToken(token = credentials.credentials):
             projectId = str(uuid.uuid4())
-            pipeline.replManager[projectId] = PythonREPL()
-            _ = pipeline.replManager[projectId].run(readYaml("params.yaml")["redisFunctionCode"])
+            replManager.manager[projectId] = PythonREPL()
+            _ = replManager.manager[projectId].run(readYaml("params.yaml")["redisFunctionCode"])
+            _ = replManager.manager[projectId].run(readYaml("params.yaml")["jsonSerializer"])
+            _ = replManager.manager[projectId].run("globals().update(locals())")
             decodedToken = jwt.decode(
                 credentials.credentials,
                 os.environ["SECRET_KEY"],
@@ -112,6 +115,7 @@ async def generateMetadata(projectId: str, credentials: Annotated[HTTPAuthorizat
     try:
         if verifyToken(token = credentials.credentials):
             metadata = pipeline.generateMetadata(projectId = projectId)
+            _ = replManager.manager[projectId].run(f'metadata = {metadata}')
             buffer = io.BytesIO()
             buffer.write(json.dumps(metadata, indent = 4).encode("utf-8"))
             buffer.seek(0)

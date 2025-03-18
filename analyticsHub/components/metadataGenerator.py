@@ -19,8 +19,8 @@ class MetadataGenerator:
             promptTemplate = readYaml(self.yamlPath)["metadataGeneratorPrompt"]
             prompt = ChatPromptTemplate.from_template(promptTemplate)
             llm = ChatGroq(
-                model=self.config.get("LLM", "model"),
-                temperature=self.config.getfloat("LLM", "temperature")
+                model=self.config.get("METADATAGENERATOR", "model"),
+                temperature=self.config.getfloat("METADATAGENERATOR", "temperature")
             )
             outputParser = StrOutputParser()
             chain = {
