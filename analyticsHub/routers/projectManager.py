@@ -136,3 +136,14 @@ async def getMetadata(projectId: str, credentials: Annotated[HTTPAuthorizationCr
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+    
+@router.post("/generateChart")
+async def generateChart(inputQuery: str, metadata: str, projectId: str, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+    try:
+        if verifyToken(token = credentials.credentials):
+            response = pipeline.generateChart(inputQuery=inputQuery, metadata=metadata, projectId=projectId)
+            return JSONResponse(status_code = 200, content = response)
+        else:
+            return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")

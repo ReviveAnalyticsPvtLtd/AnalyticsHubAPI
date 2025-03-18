@@ -1,5 +1,5 @@
 from ..components.metadataGenerator import MetadataGenerator
-from langchain_experimental.utilities import PythonREPL
+from ..workflows.reportingWorkflow import workflow
 from ..utils.exceptions import CustomException
 from ..utils.functions import readYaml
 from supabase import create_client
@@ -32,6 +32,18 @@ class CompletePipeline:
             metadata = metadataParts[-2]
             metadata = json.loads("\n".join(metadata.split("\n")[1:]))
             return metadata
+        except Exception as e:
+            logger.error(f"Error during loadData: {e}")
+            raise CustomException(e)
+
+    def generateChart(self, inputQuery: str, metadata: dict, projectId: str) -> dict:
+        try:
+            response = workflow.invoke({
+                "inputQuery": inputQuery,
+                "metadata": metadata,
+                "projectId": projectId
+            })
+            return response["finalOutput"]
         except Exception as e:
             logger.error(f"Error during loadData: {e}")
             raise CustomException(e)
