@@ -68,7 +68,7 @@ attributeInfoCode: |
         attributeInfo += '- ' + str(column) + ' (' + {dataframeName}.get(column).dtype.name + ')\\n'
         
     attributeInfo += 'SHAPE: ' + str({dataframeName}.shape) + '\\n'
-    attributeInfo += 'SAMPLE ROWS:\\n' + str({dataframeName}.loc[{dataframeName}.index[:2]].to_string()) + '\\n'
+    attributeInfo += 'SAMPLE ROW:\\n' + str({dataframeName}.loc[{dataframeName}.index[:1]].to_string()) + '\\n'
     print(attributeInfo)
 
 
