@@ -1,10 +1,12 @@
-from ..components.codeGeneratorAgent import CodeGenerator
+from ..components.failsafeAgent import FailsafeCodeGenerator
 from ..components.queryRephraserAgent import QueryRephaser
+from ..components.codeGeneratorAgent import CodeGenerator
 from langgraph.graph import StateGraph, START, END
 from typing_extensions import TypedDict
 from ..components import replManager
 import json
 
+failsafeCodeGeneratorChain = FailsafeCodeGenerator().getFailsafeCodeGeneratorChain()
 queryRephraseChain = QueryRephaser().getQueryRephraserChain()
 codeGeneratorChain = CodeGenerator().getCodeGeneratorChain()
 
@@ -42,6 +44,20 @@ class ReportingToolWorkflow:
         return {
             "codeOutput": response
         }
+    def outputEvaluationRouter(self, state: State):
+        try:
+            _ = json.loads(state["codeOutput"])
+            return "pass"
+        except json.JSONDecodeError:
+            return "fail"
+    def failsafe(self, state: State):
+        response = failsafeCodeGeneratorChain.invoke({
+            "query": state["rephrasedQuery"],
+            "metadata": state["metadata"]
+        })
+        return {
+            "generatedCode": response
+        }
     def formatJsonResponse(self, state: State):
         if "codeOutput" in state.keys():
             try:
@@ -65,11 +81,15 @@ class ReportingToolWorkflow:
         workflow.add_node("rephraseQuery", self.rephraseQuery)
         workflow.add_node("generateCode", self.generateCode)
         workflow.add_node("runInPythonSandbox", self.runInPythonSandbox)
+        workflow.add_node("failsafe", self.failsafe)
+        workflow.add_node("failsafePythonSandbox", self.runInPythonSandbox)
         workflow.add_node("formatJsonResponse", self.formatJsonResponse)
         workflow.add_edge(START, "rephraseQuery")
         workflow.add_conditional_edges("rephraseQuery", self.router, {"continue": "generateCode", "interrupt": "formatJsonResponse"})
         workflow.add_edge("generateCode", "runInPythonSandbox")
-        workflow.add_edge("runInPythonSandbox", "formatJsonResponse")
+        workflow.add_conditional_edges("runInPythonSandbox", self.outputEvaluationRouter, {"pass": "formatJsonResponse", "fail": "failsafe"})
+        workflow.add_edge("failsafe", "failsafePythonSandbox")
+        workflow.add_edge("failsafePythonSandbox", "formatJsonResponse")
         workflow.add_edge("formatJsonResponse", END)
         workflow = workflow.compile()
         return workflow

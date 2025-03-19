@@ -8,6 +8,7 @@ metadataGeneratorPrompt: |
     ### Notes:
     - The terms `dataframe1`, `dataframe2`, `column1`, `column2`, etc., are placeholders and do not represent the actual names, column labels, or values from the dataset. Replace them with the real dataframe and column names provided in the dataset's metadata.
     - Ensure all descriptions and examples provided in the output JSON are consistent with the given dataset's structure and attributes.
+    - Ensure that all the dataframes and columns are mentioned in the expected format in the output metadata.
 
     ### Input Example:
     For each dataframe:
