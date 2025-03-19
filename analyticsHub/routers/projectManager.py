@@ -132,7 +132,17 @@ async def getMetadata(projectId: str, credentials: Annotated[HTTPAuthorizationCr
     try:
         if verifyToken(token = credentials.credentials):
             fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "")
-            return JSONResponse(status_code = 200, content = json.loads(urlopen(fileUrl).read()))
+            jsonData = json.loads(urlopen(fileUrl).read())
+            newJson = {"tables": []}
+            for key in jsonData:
+                tableJson = {
+                    "tableName": key,
+                    "tableDesc": jsonData.get(key).get("description"),
+                    "shape": jsonData.get(key).get("shape"),
+                    "columns": jsonData.get(key).get("columns")
+                }
+                newJson.get("tables").append(tableJson)
+            return JSONResponse(status_code = 200, content = newJson)
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
     except Exception as e:
