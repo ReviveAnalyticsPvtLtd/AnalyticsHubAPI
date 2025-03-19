@@ -75,4 +75,4 @@ class ReportingToolWorkflow:
         return workflow
     
 graph = ReportingToolWorkflow()
-workflow = graph.createWorkflow()
+reportingToolWorkflow = graph.createWorkflow()

@@ -1,7 +1,8 @@
 from ..components.metadataGenerator import MetadataGenerator
-from ..workflows.reportingWorkflow import workflow
+from ..workflows.reportingWorkflow import reportingToolWorkflow
 from ..utils.exceptions import CustomException
 from ..utils.functions import readYaml
+from ..components import replManager
 from supabase import create_client
 from ..utils.logger import logger
 import json
@@ -25,7 +26,7 @@ class CompletePipeline:
             for fileName in dataFiles:
                 dataframeName = fileName.replace(".parquet", "")
                 codeString = readYaml(self.yamlPath)["attributeInfoCode"].format(dataframeName = dataframeName, projectId = projectId)
-                results += self.replManager[projectId].run(codeString)
+                results += replManager.manager[projectId].run(codeString)
             metadataChain = self.metadataGenerator.getMetadataChain()
             metadata = metadataChain.invoke({"metadata": results})
             metadataParts = metadata.split("```")
@@ -38,7 +39,7 @@ class CompletePipeline:
 
     def generateChart(self, inputQuery: str, metadata: dict, projectId: str) -> dict:
         try:
-            response = workflow.invoke({
+            response = reportingToolWorkflow.invoke({
                 "inputQuery": inputQuery,
                 "metadata": metadata,
                 "projectId": projectId

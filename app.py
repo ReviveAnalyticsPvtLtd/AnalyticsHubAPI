@@ -1,4 +1,4 @@
-from analyticsHub.routers import authentication, projectManager, dataLoader
+from analyticsHub.routers import authentication, projectManager, dataLoader, reportingTool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI
 import uvicorn
@@ -23,6 +23,8 @@ app.add_middleware(
 app.include_router(authentication.router, prefix = "/auth", tags = ["Authentication"])
 app.include_router(projectManager.router, prefix = "/projects", tags = ["Project Management"])
 app.include_router(dataLoader.router, prefix = "/loaders", tags = ["Data Loader"])
+app.include_router(reportingTool.router, prefix = "/reportingTool", tags = ["Reporting Tool"])
+
 
 if __name__ == "__main__":
     uvicorn.run("app:app", host = "0.0.0.0", port = 8000, reload = True)
