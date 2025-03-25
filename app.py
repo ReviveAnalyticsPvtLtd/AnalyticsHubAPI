@@ -1,8 +1,8 @@
 from analyticsHub.routers import authentication, projectManager, dataLoader, reportingTool, utilities
-from fastapi.middleware.cors import CORSMiddleware
 from langchain_experimental.utilities import PythonREPL
+from fastapi.middleware.cors import CORSMiddleware
+from analyticsHub.utils.functions import readYaml
 from analyticsHub.components import replManager
-from ..utils.functions import readYaml
 from supabase import create_client
 from fastapi import FastAPI
 import uvicorn
