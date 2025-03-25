@@ -1,5 +1,6 @@
 from ..components.metadataGenerator import MetadataGenerator
 from ..workflows.reportingWorkflow import reportingToolWorkflow
+from ..components.speechToText import SpeechToText
 from ..utils.exceptions import CustomException
 from ..utils.functions import readYaml
 from ..components import replManager
@@ -12,6 +13,7 @@ class CompletePipeline:
     def __init__(self):
         logger.info("Initializing CompletePipeline components.")
         self.replManager = dict()
+        self.speechToTextModule = SpeechToText()
         self.metadataGenerator = MetadataGenerator()
         self.yamlPath = os.path.join(os.getcwd(), "params.yaml")
         self.supabaseClient = create_client(
@@ -48,3 +50,11 @@ class CompletePipeline:
         except Exception as e:
             logger.error(f"Error during loadData: {e}")
             raise CustomException(e)
+        
+    def speechToText(self, b64String: str) -> str:
+        try:
+            return self.speechToTextModule.getTranscript(b64String = b64String)
+        except Exception as e:
+            logger.error(f"Error during speech-to-text: {e}")
+            raise CustomException(e)
+        

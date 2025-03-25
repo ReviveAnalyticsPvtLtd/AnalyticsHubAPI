@@ -41,3 +41,6 @@ class CreateProject(BaseModel):
 class GenerateChartInput(BaseModel):
     inputQuery: str
     projectId: str
+
+class SpeechToTextModel(BaseModel):
+    b64String: str
