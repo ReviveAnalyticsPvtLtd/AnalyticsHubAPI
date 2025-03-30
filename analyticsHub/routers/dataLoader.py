@@ -1,5 +1,6 @@
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi import APIRouter, Depends, UploadFile, File, Form
+from ..models.requestModels import DeleteTable
 from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse
 from ..utils.functions import verifyToken
@@ -25,7 +26,7 @@ async def loadCsvData(projectId: Annotated[str, Form()], file: Annotated[UploadF
             project = client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", projectId).execute().data[0]                
             with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
                 duckdb.read_csv(io.BytesIO(await file.read())).write_parquet(temp.name, compression = "snappy")
-                response = client.storage.from_("AnalyticsHub").upload(
+                _ = client.storage.from_("AnalyticsHub").upload(
                     file = temp.name,
                     path = f"{projectId}/{os.path.splitext(file.filename)[0] + '.parquet'}"
                 )
@@ -33,10 +34,26 @@ async def loadCsvData(projectId: Annotated[str, Form()], file: Annotated[UploadF
                     projectData = project["dataTables"] + f", {os.path.splitext(file.filename)[0]}"
                 else:
                     projectData = os.path.splitext(file.filename)[0]
-                response = client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
+                _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
                 temp.close()
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Data loaded successfully"})
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+
+@router.delete("/deleteTable")
+async def deleteTable(tableDetails: DeleteTable, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+    try:
+        if verifyToken(token = credentials.credentials):
+            _ = client.storage.from_("AnalyticsHub").remove(f"{tableDetails.projectId}/{tableDetails.tableName}")
+            projectTables = client.table("Projects").select("dataTables").eq("projectId", tableDetails.projectId).execute()
+            projectTables = projectTables.split(", ")
+            projectTables.remove(tableDetails.tableName)
+            projectTables = ", ".join(projectTables)
+            _ = client.table("Projects").update({"dataTables": projectTables}).eq("projectId", tableDetails.projectId).execute()
+            return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Table deleted successfully"})
+        else:
+            return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
