@@ -14,6 +14,7 @@ langchain
 langchain-community
 langchain-core
 langchain-groq
+langchain-cerebras
 langchain-experimental
 langgraph
 fireducks

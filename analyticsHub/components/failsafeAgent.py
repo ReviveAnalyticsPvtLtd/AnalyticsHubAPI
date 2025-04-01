@@ -3,7 +3,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from ..utils.functions import readYaml, getConfig
 from ..utils.exceptions import CustomException
-from langchain_groq import ChatGroq
+from langchain_cerebras import ChatCerebras
 from ..utils.logger import logger
 import os
 
@@ -18,7 +18,7 @@ class FailsafeCodeGenerator:
             logger.info("Constructing failsafe code generation chain.")
             promptTemplate = readYaml(self.yamlPath)["codeGeneratorAgentPrompt"]
             codeGeneratorPrompt = PromptTemplate.from_template(promptTemplate)
-            llm = ChatGroq(
+            llm = ChatCerebras(
                 model=self.config.get("FAILSAFECODEGENERATOR", "model"),
                 temperature=self.config.getfloat("FAILSAFECODEGENERATOR", "temperature")
             )

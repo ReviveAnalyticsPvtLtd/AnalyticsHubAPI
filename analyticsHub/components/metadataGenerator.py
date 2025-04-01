@@ -3,7 +3,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
 from ..utils.functions import readYaml, getConfig
 from ..utils.exceptions import CustomException
-from langchain_groq import ChatGroq
+from langchain_cerebras import ChatCerebras
 from ..utils.logger import logger
 import os
 
@@ -18,7 +18,7 @@ class MetadataGenerator:
             logger.info("Constructing metadata generation chain.")
             promptTemplate = readYaml(self.yamlPath)["metadataGeneratorPrompt"]
             prompt = ChatPromptTemplate.from_template(promptTemplate)
-            llm = ChatGroq(
+            llm = ChatCerebras(
                 model=self.config.get("METADATAGENERATOR", "model"),
                 temperature=self.config.getfloat("METADATAGENERATOR", "temperature")
             )

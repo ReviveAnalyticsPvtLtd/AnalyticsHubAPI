@@ -3,7 +3,7 @@ from langchain_core.prompts import PromptTemplate
 from ..utils.functions import readYaml, getConfig
 from ..utils.exceptions import CustomException
 from pydantic import Field, BaseModel
-from langchain_groq import ChatGroq
+from langchain_cerebras import ChatCerebras
 from ..utils.logger import logger
 import os
 
@@ -30,11 +30,12 @@ class QueryRephaser:
                 input_variables = ["metadata", "query"],
                 partial_variables = {"format_instructions": queryRephraseParser.get_format_instructions()}
             )
-            llm = ChatGroq(
+            llm = ChatCerebras(
                 model=self.config.get("QUERYREPHRASER", "model"),
                 temperature=self.config.getfloat("QUERYREPHRASER", "temperature"),
-                max_tokens=350
+                max_tokens=self.config.getint("QUERYREPHRASER", "maxTokens")
             )
+
             queryRephraseChain = queryRephrasePrompt | llm | queryRephraseParser
             logger.info("Query rephraser chain constructed successfully.")
             return queryRephraseChain
