@@ -291,6 +291,7 @@ codeGeneratorAgentPrompt: |
     ### Data Transformation
     - Retrieve dataframes using the `fetch_data` function with the exact dataframe names as listed in the metadata.
     - Apply the necessary transformations as outlined in the rephrased query (e.g., filtering, joining, grouping, aggregation, metadata checks).
+    - Stick to basic filtering in pandas: use boolean indexing or .loc[] only. Always avoid .filter(), .query() and other complex methods.
     - Ensure that the final dataframe is named `final_df`.
     - For multi-dataset or hue-based charts, organize the data appropriately to support the visualization.
 
