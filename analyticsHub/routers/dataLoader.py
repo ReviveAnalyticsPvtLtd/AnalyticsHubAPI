@@ -47,7 +47,7 @@ async def deleteTable(tableDetails: DeleteTable, credentials: Annotated[HTTPAuth
     try:
         if verifyToken(token = credentials.credentials):
             _ = client.storage.from_("AnalyticsHub").remove(f"{tableDetails.projectId}/{tableDetails.tableName}")
-            projectTables = client.table("Projects").select("dataTables").eq("projectId", tableDetails.projectId).execute()
+            projectTables = client.table("Projects").select("dataTables").eq("projectId", tableDetails.projectId).execute().data[0]["dataTables"]
             projectTables = projectTables.split(", ")
             projectTables.remove(tableDetails.tableName)
             projectTables = ", ".join(projectTables)
