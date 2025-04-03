@@ -4,11 +4,13 @@ from ..models.requestModels import DeleteTable
 from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse
 from ..utils.functions import verifyToken
+from urllib.request import urlopen
 from supabase import create_client
 from fastapi import APIRouter
 from typing import Annotated
 import tempfile
 import duckdb
+import json
 import io
 import os
 
@@ -52,6 +54,13 @@ async def deleteTable(tableDetails: DeleteTable, credentials: Annotated[HTTPAuth
             projectTables.remove(tableDetails.tableName)
             projectTables = ", ".join(projectTables)
             _ = client.table("Projects").update({"dataTables": projectTables}).eq("projectId", tableDetails.projectId).execute()
+            fileUrl = os.environ["FILE_URL"].format(projectId = tableDetails.projectId, fileName = "metadata.json").replace(".parquet", "")
+            jsonData = json.loads(urlopen(fileUrl).read())
+            jsonData.pop(tableDetails.tableName)
+            with io.BytesIO() as buffer:
+                buffer.write(json.dumps(jsonData, indent=4).encode("utf-8"))
+                buffer.seek(0)
+                client.storage.from_("AnalyticsHub").upload(path = f"{tableDetails.projectId}/metadata.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Table deleted successfully"})
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
