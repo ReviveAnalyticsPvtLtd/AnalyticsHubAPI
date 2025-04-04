@@ -48,3 +48,10 @@ class SpeechToTextModel(BaseModel):
 class DeleteTable(BaseModel):
     projectId: str
     tableName: str
+
+class EditMetadata(BaseModel):
+    projectId: str
+    tableName: str
+    tableDescription: str | None = None
+    columnName: str | None = None
+    columnDescription: str | None = None

@@ -1,5 +1,5 @@
+from ..models.requestModels import UpdateProjectState, CreateProject, EditMetadata
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from ..models.requestModels import UpdateProjectState, CreateProject
 from langchain_experimental.utilities import PythonREPL
 from ..utils.functions import verifyToken, readYaml
 from fastapi.exceptions import HTTPException
@@ -143,6 +143,33 @@ async def getMetadata(projectId: str, credentials: Annotated[HTTPAuthorizationCr
                 }
                 newJson.get("tables").append(tableJson)
             return JSONResponse(status_code = 200, content = newJson)
+        else:
+            return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+
+@router.put("/editMetadata")
+async def editMetadata(modifiedMetadata: EditMetadata, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+    try:
+        if verifyToken(token = credentials.credentials):
+            fileUrl = os.environ["FILE_URL"].format(projectId = modifiedMetadata.projectId, fileName = "metadata.json").replace(".parquet", "")
+            jsonData = json.loads(urlopen(fileUrl).read())
+            if modifiedMetadata.tableDescription and not (modifiedMetadata.columnName or modifiedMetadata.columnDescription):
+                jsonData[modifiedMetadata.tableName]["description"] = modifiedMetadata.tableDescription
+            elif (modifiedMetadata.columnName and modifiedMetadata.columnDescription) and not modifiedMetadata.tableDescription:
+                columns = jsonData[modifiedMetadata.tableName]["columns"]
+                for column in columns:
+                    if column["name"] == modifiedMetadata.columnName:
+                        idx = columns.index(column)
+                columns[idx]["description"] = modifiedMetadata.columnDescription
+                jsonData[modifiedMetadata.tableName]["columns"] = columns
+            else:
+                raise AttributeError("Invalid combination of parameters provided")
+            with io.BytesIO() as buffer:
+                buffer.write(json.dumps(jsonData, indent=4).encode("utf-8"))
+                buffer.seek(0)
+                client.storage.from_("AnalyticsHub").upload(path = f"{modifiedMetadata.projectId}/metadata.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
+            return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "metadata": jsonData})
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
     except Exception as e:
