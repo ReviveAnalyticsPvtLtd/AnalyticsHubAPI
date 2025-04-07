@@ -52,8 +52,10 @@ class ReportingToolWorkflow:
             return "fail"
     def failsafe(self, state: State):
         response = failsafeCodeGeneratorChain.invoke({
-            "query": state["rephrasedQuery"],
-            "metadata": state["metadata"]
+            "user_query": state["rephrasedQuery"],
+            "metadata_context": state["metadata"],
+            "code_with_errors": state["generatedCode"],
+            "error_message": state["codeOutput"]
         })
         return {
             "generatedCode": response

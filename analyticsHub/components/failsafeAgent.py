@@ -16,7 +16,7 @@ class FailsafeCodeGenerator:
     def getFailsafeCodeGeneratorChain(self):
         try:
             logger.info("Constructing failsafe code generation chain.")
-            promptTemplate = readYaml(self.yamlPath)["codeGeneratorAgentPrompt"]
+            promptTemplate = readYaml(self.yamlPath)["codeDebuggerAgentPrompt"]
             codeGeneratorPrompt = PromptTemplate.from_template(promptTemplate)
             llm = ChatCerebras(
                 model=self.config.get("FAILSAFECODEGENERATOR", "model"),
