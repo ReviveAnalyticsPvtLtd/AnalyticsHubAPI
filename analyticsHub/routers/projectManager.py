@@ -174,3 +174,17 @@ async def editMetadata(modifiedMetadata: EditMetadata, credentials: Annotated[HT
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+
+@router.delete("/deleteProject")
+async def deleteProject(projectId: str, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+    try:
+        if verifyToken(token = credentials.credentials):
+            _ = client.table("Projects").delete().eq("projectId", projectId).execute()
+            allFiles = client.storage.from_("AnalyticsHub").list(projectId)
+            fileNames = [os.path.join(projectId, x.get("name")) for x in allFiles]
+            _ = client.storage.from_("AnalyticsHub").remove(fileNames)
+            return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Project deleted successfully"})
+        else:
+            return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
