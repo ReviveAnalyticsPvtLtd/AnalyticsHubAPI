@@ -115,13 +115,23 @@ async def updateTrash(updateTrashDetails: UpdateProjectState, credentials: Annot
 async def generateMetadata(projectId: str, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
         if verifyToken(token = credentials.credentials):
-            metadata = pipeline.generateMetadata(projectId = projectId)
-            _ = replManager.manager[projectId].run(f'metadata = {metadata}')
+            filenames = [x.get("name") for x in client.storage.from_("AnalyticsHub").list(projectId)]
+            if "metadata.json" in filenames:
+                fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "")
+                jsonData = json.loads(urlopen(fileUrl).read())
+                jsonDataTables = set(jsonData.keys())
+                newMetadata = pipeline.generateMetadata(projectId = projectId)
+                newMetadataTables = set(newMetadata.keys())
+                newKeys = newMetadataTables.difference(jsonDataTables)
+                for key in newKeys: jsonData[key] = newMetadata[key]
+            else:
+                jsonData = pipeline.generateMetadata(projectId = projectId)
+                _ = replManager.manager[projectId].run(f'metadata = {jsonData}')
             with io.BytesIO() as buffer:
-                buffer.write(json.dumps(metadata, indent=4).encode("utf-8"))
+                buffer.write(json.dumps(jsonData, indent=4).encode("utf-8"))
                 buffer.seek(0)
                 client.storage.from_("AnalyticsHub").upload(path = f"{projectId}/metadata.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
-            return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "metadata": metadata})
+            return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "metadata": jsonData})
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
     except Exception as e:
