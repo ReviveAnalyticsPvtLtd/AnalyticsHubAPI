@@ -300,6 +300,9 @@ codeGeneratorAgentPrompt: |
     ```json
     {{
         "chartType": "<chart_type>",
+        "title": "<Chart Title>",
+        "xLabels": "<X-Axis Label>",    # Only include for "bar" or "line"
+        "yLabels": "<Y-Axis Label>",    # Only include for "bar" or "line"
         "data": {{
             "labels": <labels>,
             "datasets": [
@@ -315,6 +318,9 @@ codeGeneratorAgentPrompt: |
     ```json
     {{
         "chartType": "<chart_type>",
+        "title": "<Chart Title>",
+        "xLabels": "<X-Axis Label>",    # Only include for "bar" or "line"
+        "yLabels": "<Y-Axis Label>",    # Only include for "bar" or "line"
         "data": {{
             "labels": <labels>,
             "datasets": [
@@ -335,11 +341,14 @@ codeGeneratorAgentPrompt: |
     ```json
     {{
         "chartType": "<chart_type>",
+        "title": "<Chart Title>",
+        "xLabels": "<X-Axis Label>",
+        "yLabels": "<Y-Axis Label>",
         "data": {{
             "datasets": [
                 {{
                     "label": "<dataset_name>",
-                    "data": [ {{"x": value, "y": value}} ]  # Include 'r' for bubble chart if required
+                    "data": [ {{"x": value, "y": value}} ]  # Include 'r' for bubble chart
                 }}
             ]
         }}
@@ -349,15 +358,18 @@ codeGeneratorAgentPrompt: |
     ```json
     {{
         "chartType": "<chart_type>",
+        "title": "<Chart Title>",
+        "xLabels": "<X-Axis Label>",
+        "yLabels": "<Y-Axis Label>",
         "data": {{
             "datasets": [
                 {{
                     "label": "<category1_name>",
-                    "data": [ {{"x": value, "y": value}} ]
+                    "data": [ {{"x": value, "y": value}} ]  # Include 'r' for bubble chart
                 }},
                 {{
                     "label": "<category2_name>",
-                    "data": [ {{"x": value, "y": value}} ]
+                    "data": [ {{"x": value, "y": value}} ]  # Include 'r' for bubble chart 
                 }}
                 // Additional categories as needed
             ]
@@ -368,6 +380,7 @@ codeGeneratorAgentPrompt: |
     ```json
     {{
         "chartType": "card",
+        "title": "<Chart Title>",
         "label": "<Descriptive label>",
         "data": "<Numeric value>"
     }}
@@ -426,6 +439,9 @@ codeGeneratorAgentPrompt: |
     # Generate Chart.js compatible JSON
     chart_data = {{
         "chartType": "bar",
+        "title": "Total Sales by Region",
+        "xLabels": "Region",
+        "yLabels": "Total Sales (in USD)",
         "data": {{
             "labels": final_df["region"].tolist(),
             "datasets": [
@@ -484,6 +500,9 @@ codeGeneratorAgentPrompt: |
     # Generate Chart.js compatible JSON
     chart_data = {{
         "chartType": "line",
+        "title": "Monthly Sales Comparison: 2023 vs 2024",
+        "xLabels": "Month",
+        "yLabels": "Total Sales (in USD)",
         "data": {{
             "labels": final_df["month"].tolist(),
             "datasets": [
@@ -525,6 +544,7 @@ codeGeneratorAgentPrompt: |
     # Generate card JSON following strict format
     print(json.dumps({{
         "chartType": "card",
+        "title": "Table Inventory Overview",
         "label": "Total Tables",
         "data": final_df["total_tables"].iloc[0]  # Extract single value
     }}, indent=4))
@@ -588,6 +608,9 @@ codeDebuggerAgentPrompt: |
     ```json
     {{
         "chartType": "<chart_type>",
+        "title": "<Chart Title>",
+        "xLabels": "<X-Axis Label>",    # Only include for "bar" or "line"
+        "yLabels": "<Y-Axis Label>",    # Only include for "bar" or "line"
         "data": {{
             "labels": <labels>,
             "datasets": [
@@ -604,6 +627,9 @@ codeDebuggerAgentPrompt: |
     ```json
     {{
         "chartType": "<chart_type>",
+        "title": "<Chart Title>",
+        "xLabels": "<X-Axis Label>",
+        "yLabels": "<Y-Axis Label>",
         "data": {{
             "labels": <labels>,
             "datasets": [
@@ -615,6 +641,7 @@ codeDebuggerAgentPrompt: |
                     "label": "<dataset2_name>",
                     "data": <values2>
                 }}
+                // Additional datasets as needed
             ]
         }}
     }}
@@ -624,6 +651,9 @@ codeDebuggerAgentPrompt: |
     ```json
     {{
         "chartType": "<chart_type>",
+        "title": "<Chart Title>",
+        "xLabels": "<X-Axis Label>",
+        "yLabels": "<Y-Axis Label>",
         "data": {{
             "datasets": [
                 {{
@@ -639,6 +669,7 @@ codeDebuggerAgentPrompt: |
     ```json
     {{
         "chartType": "card",
+        "title": "<Chart Title>",
         "label": "<Descriptive label>",
         "data": "<Numeric value>"
     }}
