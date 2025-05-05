@@ -55,3 +55,7 @@ class EditMetadata(BaseModel):
     tableDescription: str | None = None
     columnName: str | None = None
     columnDescription: str | None = None
+
+class GetFieldDetailsForChart(BaseModel):
+    projectId: str
+    chartType: str
