@@ -59,3 +59,9 @@ class EditMetadata(BaseModel):
 class GetFieldDetailsForChart(BaseModel):
     projectId: str
     chartType: str
+
+class CreateDataBlend(BaseModel):
+    projectId: str
+    blendName: str
+    tables: list[str]
+    joinTypes: list[str]

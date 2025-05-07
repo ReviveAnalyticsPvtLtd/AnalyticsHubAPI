@@ -35,7 +35,6 @@ class QueryRephaser:
                 temperature=self.config.getfloat("QUERYREPHRASER", "temperature"),
                 max_tokens=self.config.getint("QUERYREPHRASER", "maxTokens")
             )
-
             queryRephraseChain = queryRephrasePrompt | llm | queryRephraseParser
             logger.info("Query rephraser chain constructed successfully.")
             return queryRephraseChain
