@@ -36,6 +36,7 @@ async def createDataBlend(blendDetails: CreateDataBlend, credentials: Annotated[
         if verifyToken(token = credentials.credentials):
             joinConfig = {
                 "tables": blendDetails.tables,
+                "blendOn": blendDetails.blendOn,
                 "joinTypes": blendDetails.joinTypes
             }
             project = client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", blendDetails.projectId).execute().data[0]
@@ -53,10 +54,10 @@ async def createDataBlend(blendDetails: CreateDataBlend, credentials: Annotated[
                 pass
             elif project["dataTables"]:
                 projectData = project["dataTables"] + f", {blendDetails.blendName}"
-                _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
+                _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", blendDetails.projectId).execute()
             else:
                 projectData = blendDetails.blendName
-                _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
+                _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", blendDetails.projectId).execute()
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Blend created successfully."})
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})   

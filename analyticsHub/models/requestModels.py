@@ -62,6 +62,7 @@ class GetFieldDetailsForChart(BaseModel):
 
 class CreateDataBlend(BaseModel):
     projectId: str
+    blendOn: list[str]
     blendName: str
     tables: list[str]
     joinTypes: list[str]
