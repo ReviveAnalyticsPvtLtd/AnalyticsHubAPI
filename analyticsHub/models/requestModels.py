@@ -65,3 +65,7 @@ class CreateDataBlend(BaseModel):
     blendName: str
     tables: list[str]
     joinTypes: list[str]
+
+class GetFieldsFromSources(BaseModel):
+    projectId: str
+    tableName: str
