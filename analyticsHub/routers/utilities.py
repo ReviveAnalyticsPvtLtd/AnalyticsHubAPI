@@ -49,13 +49,13 @@ async def createDataBlend(blendDetails: CreateDataBlend, credentials: Annotated[
                 buffer.write(json.dumps(blendConfig, indent=4).encode("utf-8"))
                 buffer.seek(0)
                 _ = client.storage.from_("AnalyticsHub").upload(path = f"{blendDetails.projectId}/blendConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
-            if blendName in project["dataTables"].split(", "):
+            if blendDetails.blendName in project["dataTables"].split(", "):
                 pass
             elif project["dataTables"]:
-                projectData = project["dataTables"] + f", {blendName}"
+                projectData = project["dataTables"] + f", {blendDetails.blendName}"
                 _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
             else:
-                projectData = blendName
+                projectData = blendDetails.blendName
                 _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Blend created successfully."})
         else:
