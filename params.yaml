@@ -731,3 +731,88 @@ codeDebuggerAgentPrompt: |
     Return ONLY the corrected code block with no additional text. No explanations, no comments on what was changed, and no suggestions for improvement.
 
     Remember: Your entire response should be just the fixed code block. Nothing more.
+
+panelChartDataCode: |
+    def getDataForChart(projectId: str, chartType: str, xAxis: str, yAxis: str, aggregationMetric: str, tablesUsed: list[str] | str, joinTypes: list[str] | None, blendOn: list[str] | None):
+        import pandas as pd
+        import json
+        if type(tablesUsed) == list:
+            allTables = [fetch_data(projectId, x) for x in tablesUsed]
+            result = allTables[0]
+            for i in range(len(joinTypes)):
+                result = pd.merge(left = result, right = allTables[i+1], on = blendOn[i], how = joinTypes[i], suffixes = ['_left', '_right'])
+        else:
+            result = tablesUsed
+        if aggregationMetric == "sum":
+            finalResult = result.groupby(xAxis)[yAxis].sum().reset_index()
+        elif aggregationMetric == "mean":
+            finalResult = result.groupby(xAxis)[yAxis].mean().reset_index()
+        elif aggregationMetric == "median":
+            finalResult = result.groupby(xAxis)[yAxis].median().reset_index()
+        elif aggregationMetric == "max":
+            finalResult = result.groupby(xAxis)[yAxis].max().reset_index()
+        elif aggregationMetric == "min":
+            finalResult = result.groupby(xAxis)[yAxis].min().reset_index()
+        elif aggregationMetric == "count":
+            finalResult = result.groupby(xAxis)[yAxis].count().reset_index()
+        elif aggregationMetric == "std":
+            finalResult = result.groupby(xAxis)[yAxis].std().reset_index()
+        elif aggregationMetric == "var":
+            finalResult = result.groupby(xAxis)[yAxis].var().reset_index()
+        else:
+            finalResult = result
+        if chartType in ["bar", "line", "radar", "polarArea"]:
+            response = {
+                "chartType": chartType,
+                "title": f"{chartType.capitalize()} Chart of {xAxis} vs {yAxis}",
+                "xLabels": xAxis,
+                "yLabels": yAxis,
+                "data": {
+                    "labels": finalResult[xAxis].tolist(),
+                    "datasets": [
+                        {
+                            "label": f"{aggregationMetric} of {yAxis}",
+                            "data": finalResult[yAxis].tolist()
+                        }
+                    ]
+                }
+            }
+        elif chartType in ["pie", "doughnut"]:
+            response = {
+                "chartType": chartType,
+                "title": f"{chartType.capitalize()} Chart of {xAxis} vs {yAxis}",
+                "data": {
+                    "labels": finalResult[xAxis].tolist(),
+                    "datasets": [
+                        {
+                            "label": f"{aggregationMetric} of {yAxis}",
+                            "data": finalResult[yAxis].tolist()
+                        }
+                    ]
+                }
+            }
+        elif chartType == "scatter":
+            response = {
+                "chartType": chartType,
+                "title": f"{chartType.capitalize()} Chart of {xAxis} vs {yAxis}",
+                "xLabels": xAxis,
+                "yLabels": yAxis,
+                "data": {
+                    "datasets": [
+                        {
+                            "label": f"{aggregationMetric} of {yAxis}",
+                            "data": [
+                                {"x": row[xAxis], "y": row[yAxis]} for _, row in finalResult.iterrows()
+                            ]
+                        }
+                    ]
+                }
+            }
+        elif chartType == "card":
+            response = {
+                "chartType": "card",
+                "title": f"{chartType.capitalize()} Chart of {xAxis} vs {yAxis}",
+                "label": f"{aggregationMetric} of {yAxis}",
+                "data": finalResult[yAxis].tolist()
+            }
+        print(json.dumps(response, indent=4))

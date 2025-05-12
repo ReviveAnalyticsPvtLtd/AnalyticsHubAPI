@@ -56,9 +56,13 @@ class EditMetadata(BaseModel):
     columnName: str | None = None
     columnDescription: str | None = None
 
-class GetFieldDetailsForChart(BaseModel):
+class PanelChartDetails(BaseModel):
     projectId: str
     chartType: str
+    xAxis: str
+    yAxis: str
+    dataSource: str
+    aggregationMetric: str
 
 class CreateDataBlend(BaseModel):
     projectId: str

@@ -5,6 +5,7 @@ from ..utils.exceptions import CustomException
 from ..utils.functions import readYaml
 from ..components import replManager
 from supabase import create_client
+from urllib.request import urlopen
 from ..utils.logger import logger
 import json
 import os
@@ -12,7 +13,6 @@ import os
 class CompletePipeline:
     def __init__(self):
         logger.info("Initializing CompletePipeline components.")
-        self.replManager = dict()
         self.speechToTextModule = SpeechToText()
         self.metadataGenerator = MetadataGenerator()
         self.yamlPath = os.path.join(os.getcwd(), "params.yaml")
@@ -51,6 +51,24 @@ class CompletePipeline:
             logger.error(f"Error during loadData: {e}")
             raise CustomException(e)
         
+    def generateChartFromPanel(self, projectId: str, chartType: str, xAxis: str, yAxis: str, aggregationMetric: str, dataSource: str) -> dict:
+        try:
+            blendConfigUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "blendConfig.json").replace(".parquet", "")
+            blendConfig = json.loads(urlopen(blendConfigUrl).read())
+            blendedTables = list(blendConfig.keys())
+            if dataSource in blendedTables:
+                tablesUsed = blendConfig[dataSource].get("tables")
+                joinTypes = blendConfig[dataSource].get("joinTypes")
+                blendOn = blendConfig[dataSource].get("blendOn")
+                response = replManager.manager[projectId].run(f"getDataForChart(projectId='{projectId}', chartType='{chartType}', xAxis='{xAxis}', yAxis='{yAxis}', aggregationMetric='{aggregationMetric}', tablesUsed={tablesUsed}, joinKeys={joinTypes}, blendOn={blendOn})")
+            else:
+                response = replManager.manager[projectId].run(f"getDataForChart(projectId='{projectId}', chartType='{chartType}', xAxis='{xAxis}', yAxis='{yAxis}', aggregationMetric='{aggregationMetric}', tablesUsed='{tablesUsed}')")    
+            response = json.loads(response)
+            return response
+        except Exception as e:
+            logger.error(f"Error during loadData: {e}")
+            raise CustomException(e)
+
     def speechToText(self, b64String: str) -> str:
         try:
             return self.speechToTextModule.getTranscript(b64String = b64String)
