@@ -63,6 +63,7 @@ class CompletePipeline:
                 response = replManager.manager[projectId].run(f"getDataForChart(projectId='{projectId}', chartType='{chartType}', xAxis='{xAxis}', yAxis='{yAxis}', aggregationMetric='{aggregationMetric}', tablesUsed={tablesUsed}, joinKeys={joinTypes}, blendOn={blendOn})")
             else:
                 response = replManager.manager[projectId].run(f"getDataForChart(projectId='{projectId}', chartType='{chartType}', xAxis='{xAxis}', yAxis='{yAxis}', aggregationMetric='{aggregationMetric}', tablesUsed='{tablesUsed}')")    
+            logger.error(response)
             response = json.loads(response)
             return response
         except Exception as e:
