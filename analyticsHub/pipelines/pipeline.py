@@ -62,9 +62,9 @@ class CompletePipeline:
                 blendOn = blendConfig[dataSource].get("blendOn")
                 response = replManager.manager[projectId].run(f"getDataForChart(projectId='{projectId}', chartType='{chartType}', xAxis='{xAxis}', yAxis='{yAxis}', aggregationMetric='{aggregationMetric}', tablesUsed={tablesUsed}, joinTypes={joinTypes}, blendOn={blendOn})")
             else:
-                response = replManager.manager[projectId].run(f"getDataForChart(projectId='{projectId}', chartType='{chartType}', xAxis='{xAxis}', yAxis='{yAxis}', aggregationMetric='{aggregationMetric}', tablesUsed='{tablesUsed}')")    
-            logger.error(response)
+                response = replManager.manager[projectId].run(f"getDataForChart(projectId='{projectId}', chartType='{chartType}', xAxis='{xAxis}', yAxis='{yAxis}', aggregationMetric='{aggregationMetric}', tablesUsed='{dataSource}')")    
             response = json.loads(response)
+            logger.info(response)
             return response
         except Exception as e:
             logger.error(f"Error during loadData: {e}")
