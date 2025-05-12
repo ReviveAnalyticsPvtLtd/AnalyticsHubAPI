@@ -36,7 +36,7 @@ class CompletePipeline:
             metadata = json.loads("\n".join(metadata.split("\n")[1:]))
             return metadata
         except Exception as e:
-            logger.error(f"Error during loadData: {e}")
+            logger.error(CustomException(e))
             raise CustomException(e)
 
     def generateChart(self, inputQuery: str, metadata: dict, projectId: str) -> dict:
@@ -48,7 +48,7 @@ class CompletePipeline:
             })
             return response
         except Exception as e:
-            logger.error(f"Error during loadData: {e}")
+            logger.error(CustomException(e))
             raise CustomException(e)
         
     def generateChartFromPanel(self, projectId: str, chartType: str, xAxis: str, yAxis: str, aggregationMetric: str, dataSource: str) -> dict:
@@ -67,13 +67,13 @@ class CompletePipeline:
             logger.info(response)
             return response
         except Exception as e:
-            logger.error(f"Error during loadData: {e}")
+            logger.error(CustomException(e))
             raise CustomException(e)
 
     def speechToText(self, b64String: str) -> str:
         try:
             return self.speechToTextModule.getTranscript(b64String = b64String)
         except Exception as e:
-            logger.error(f"Error during speech-to-text: {e}")
+            logger.error(CustomException(e))
             raise CustomException(e)
         
