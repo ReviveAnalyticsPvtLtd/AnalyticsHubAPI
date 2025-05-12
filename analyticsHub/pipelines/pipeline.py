@@ -60,10 +60,10 @@ class CompletePipeline:
                 tablesUsed = blendConfig[dataSource].get("tables")
                 joinTypes = blendConfig[dataSource].get("joinTypes")
                 blendOn = blendConfig[dataSource].get("blendOn")
+                logger.info(f"{tablesUsed}, {joinTypes}, {blendOn}")
                 response = replManager.manager[projectId].run(f"getDataForChart(projectId='{projectId}', chartType='{chartType}', xAxis='{xAxis}', yAxis='{yAxis}', aggregationMetric='{aggregationMetric}', tablesUsed={tablesUsed}, joinTypes={joinTypes}, blendOn={blendOn})")
             else:
                 response = replManager.manager[projectId].run(f"getDataForChart(projectId='{projectId}', chartType='{chartType}', xAxis='{xAxis}', yAxis='{yAxis}', aggregationMetric='{aggregationMetric}', tablesUsed='{dataSource}')")    
-            logger.info(response)
             response = json.loads(response)
             return response
         except Exception as e:

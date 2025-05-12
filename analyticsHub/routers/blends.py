@@ -61,7 +61,7 @@ async def getDataSources(projectId: str, credentials: Annotated[HTTPAuthorizatio
                 blendConfig = json.loads(urlopen(blendConfigUrl).read())
                 blendedTables = list(blendConfig.keys())
                 blends = [
-                    {"blendName": x, "tables": blendConfig[x].get("tables"), "joinTypes": blendConfig[x].get("joinTypes")} for x in blendedTables
+                    {"blendName": x, "tables": blendConfig[x].get("tables"), "joinTypes": blendConfig[x].get("joinTypes"), "blendOn": blendConfig[x].get("blendOn")} for x in blendedTables
                 ]
             else:
                 blends, blendedTables = list(), list()
