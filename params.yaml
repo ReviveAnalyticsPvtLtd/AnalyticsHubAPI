@@ -742,7 +742,7 @@ panelChartDataCode: |
             for i in range(len(joinTypes)):
                 result = pd.merge(left = result, right = allTables[i+1], on = blendOn[i], how = joinTypes[i], suffixes = ['_left', '_right'])
         else:
-            result = tablesUsed
+            result = fetch_data(projectId, tablesUsed)
         if aggregationMetric == "sum":
             finalResult = result.groupby(xAxis)[yAxis].sum().reset_index()
         elif aggregationMetric == "mean":
@@ -809,10 +809,20 @@ panelChartDataCode: |
                 }
             }
         elif chartType == "card":
-            response = {
-                "chartType": "card",
-                "title": f"{chartType.capitalize()} Chart of {xAxis} vs {yAxis}",
-                "label": f"{aggregationMetric} of {yAxis}",
-                "data": finalResult[yAxis].tolist()
-            }
-        print(json.dumps(response, indent=4))
+            # For card type, ensure we return a single value
+            if len(finalResult) > 0:
+                single_value = finalResult[yAxis].iloc[0]
+                response = {
+                    "chartType": "card",
+                    "title": f"{chartType.capitalize()} Chart of {xAxis} vs {yAxis}",
+                    "label": f"{aggregationMetric} of {yAxis}",
+                    "data": single_value
+                }
+            else:
+                response = {
+                    "chartType": "card",
+                    "title": f"{chartType.capitalize()} Chart of {xAxis} vs {yAxis}",
+                    "label": f"{aggregationMetric} of {yAxis}",
+                    "data": 0
+                }
+        print(json.dumps(response, indent=4, default=serializer))
