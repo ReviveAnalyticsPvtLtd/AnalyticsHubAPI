@@ -104,7 +104,7 @@ jsonSerializer: |
 
 redisFunctionCode: |
     def fetch_data(projectId: str, tableName: str):
-        import fireducks.pandas as pd
+        import pandas as pd
         import redis
         import os
         import io
