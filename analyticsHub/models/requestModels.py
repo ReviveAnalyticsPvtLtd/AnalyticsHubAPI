@@ -74,3 +74,12 @@ class CreateDataBlend(BaseModel):
 class GetFieldsFromSources(BaseModel):
     projectId: str
     tableName: str
+
+class LoadMySQL(BaseModel):
+    projectId: str
+    user: str
+    password: str
+    host: str
+    port: int
+    db: str
+    table: str

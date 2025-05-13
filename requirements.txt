@@ -4,7 +4,9 @@ fsspec
 redis
 orjson
 fastapi
+pymysql
 supabase
+sqlalchemy
 python-dotenv
 python-jose
 pydantic

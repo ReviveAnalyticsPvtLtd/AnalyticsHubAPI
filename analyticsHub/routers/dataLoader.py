@@ -1,16 +1,16 @@
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi import APIRouter, Depends, UploadFile, File, Form
-from ..models.requestModels import DeleteTable
+from ..models.requestModels import DeleteTable, LoadMySQL
 from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse
 from ..utils.functions import verifyToken
+from sqlalchemy import create_engine
 from urllib.request import urlopen
 from supabase import create_client
 from fastapi import APIRouter
 import fireducks.pandas as pd
 from typing import Annotated
 import tempfile
-import duckdb
 import json
 import io
 import os
@@ -52,15 +52,44 @@ async def loadExcelData(projectId: Annotated[str, Form()], file: Annotated[Uploa
             project = client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", projectId).execute().data[0]                
             with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
                 pd.read_excel(io.BytesIO(await file.read()), sheet_name = sheetName).to_parquet(temp.name, compression = "snappy")
+                if sheetName == None:
+                    fileName = f"{os.path.splitext(file.filename)[0] + '.parquet'}"
+                else:
+                    fileName = f"{os.path.splitext(file.filename)[0] + '_' + sheetName + '.parquet'}"
                 _ = client.storage.from_("AnalyticsHub").upload(
                     file = temp.name,
-                    path = f"{projectId}/{os.path.splitext(file.filename)[0] + '.parquet'}"
+                    path = f"{projectId}/{fileName}"
                 )
                 if project["dataTables"]:
-                    projectData = project["dataTables"] + f", {os.path.splitext(file.filename)[0]}"
+                    projectData = project["dataTables"] + f", {fileName}"
                 else:
-                    projectData = os.path.splitext(file.filename)[0]
+                    projectData = fileName
                 _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
+                temp.close()
+            return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Data loaded successfully"})
+        else:
+            return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+
+@router.post("/loadMySql")
+async def loadMySql(connection: LoadMySQL, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+    try:
+        if verifyToken(token = credentials.credentials):
+            project = client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", connection.projectId).execute().data[0]                
+            with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
+                connStr = f"mysql+pymysql://{connection.user}:{connection.password}@{connection.host}:{connection.port}/{connection.db}"
+                engine = create_engine(connStr)
+                pd.read_sql(f"SELECT * FROM {connection.table}", engine).to_parquet(temp.name, compression = "snappy")
+                _ = client.storage.from_("AnalyticsHub").upload(
+                    file = temp.name,
+                    path = f"{connection.projectId}/{connection.table + '.parquet'}"
+                )
+                if project["dataTables"]:
+                    projectData = project["dataTables"] + f", {connection.table + '.parquet'}"
+                else:
+                    projectData = connection.table
+                _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", connection.projectId).execute()
                 temp.close()
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Data loaded successfully"})
         else:
