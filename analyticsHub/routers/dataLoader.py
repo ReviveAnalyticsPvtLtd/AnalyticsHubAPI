@@ -1,6 +1,6 @@
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi import APIRouter, Depends, UploadFile, File, Form
-from ..models.requestModels import DeleteTable, LoadExcelData
+from ..models.requestModels import DeleteTable
 from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse
 from ..utils.functions import verifyToken
