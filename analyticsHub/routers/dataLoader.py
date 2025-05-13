@@ -1,6 +1,6 @@
-from ..models.requestModels import DeleteTable, LoadExcelData, LoadCsvData
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi import APIRouter, Depends, UploadFile, File, Form
+from ..models.requestModels import DeleteTable, LoadExcelData
 from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse
 from ..utils.functions import verifyToken
@@ -23,21 +23,21 @@ client = create_client(
 )
 
 @router.post("/loadCsvData")
-async def loadCsvData(uploadedData: Annotated[LoadCsvData, Form()], file: Annotated[UploadFile, File()], credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+async def loadCsvData(projectId: Annotated[str, Form()], file: Annotated[UploadFile, File()], credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
         if verifyToken(token = credentials.credentials):
-            project = client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", uploadedData.projectId).execute().data[0]                
+            project = client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", projectId).execute().data[0]                
             with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
                 pd.read_csv(io.BytesIO(await file.read())).to_parquet(temp.name, compression = "snappy")
                 _ = client.storage.from_("AnalyticsHub").upload(
                     file = temp.name,
-                    path = f"{uploadedData.projectId}/{os.path.splitext(file.filename)[0] + '.parquet'}"
+                    path = f"{projectId}/{os.path.splitext(file.filename)[0] + '.parquet'}"
                 )
                 if project["dataTables"]:
                     projectData = project["dataTables"] + f", {os.path.splitext(file.filename)[0]}"
                 else:
                     projectData = os.path.splitext(file.filename)[0]
-                _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", uploadedData.projectId).execute()
+                _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
                 temp.close()
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Data loaded successfully"})
         else:
@@ -46,21 +46,21 @@ async def loadCsvData(uploadedData: Annotated[LoadCsvData, Form()], file: Annota
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
     
 @router.post("/loadExcelData")
-async def loadExcelData(uploadedData: Annotated[LoadExcelData, Form()], file: Annotated[UploadFile, File()], credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+async def loadExcelData(projectId: Annotated[str, Form()], file: Annotated[UploadFile, File()], credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)], sheetName: Annotated[str | None, Form()] = None):
     try:
         if verifyToken(token = credentials.credentials):
-            project = client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", uploadedData.projectId).execute().data[0]                
+            project = client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", projectId).execute().data[0]                
             with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
-                pd.read_excel(io.BytesIO(await file.read()), sheet_name = uploadedData.sheetName).to_parquet(temp.name, compression = "snappy")
+                pd.read_excel(io.BytesIO(await file.read()), sheet_name = sheetName).to_parquet(temp.name, compression = "snappy")
                 _ = client.storage.from_("AnalyticsHub").upload(
                     file = temp.name,
-                    path = f"{uploadedData.projectId}/{os.path.splitext(file.filename)[0] + '.parquet'}"
+                    path = f"{projectId}/{os.path.splitext(file.filename)[0] + '.parquet'}"
                 )
                 if project["dataTables"]:
                     projectData = project["dataTables"] + f", {os.path.splitext(file.filename)[0]}"
                 else:
                     projectData = os.path.splitext(file.filename)[0]
-                _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", uploadedData.projectId).execute()
+                _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
                 temp.close()
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Data loaded successfully"})
         else:
