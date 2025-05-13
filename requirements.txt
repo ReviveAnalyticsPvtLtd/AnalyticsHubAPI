@@ -6,6 +6,7 @@ orjson
 fastapi
 pymysql
 supabase
+openpyxl
 sqlalchemy
 python-dotenv
 python-jose
