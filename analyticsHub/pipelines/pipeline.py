@@ -7,7 +7,7 @@ from ..components import replManager
 from supabase import create_client
 from urllib.request import urlopen
 from ..utils.logger import logger
-import json
+import orjson
 import os
 
 class CompletePipeline:
@@ -33,7 +33,7 @@ class CompletePipeline:
             metadata = metadataChain.invoke({"metadata": results})
             metadataParts = metadata.split("```")
             metadata = metadataParts[-2]
-            metadata = json.loads("\n".join(metadata.split("\n")[1:]))
+            metadata = orjson.loads("\n".join(metadata.split("\n")[1:]).encode())
             return metadata
         except Exception as e:
             logger.error(CustomException(e))
@@ -54,7 +54,7 @@ class CompletePipeline:
     def generateChartFromPanel(self, projectId: str, chartType: str, xAxis: str, yAxis: str, aggregationMetric: str, dataSource: str) -> dict:
         try:
             blendConfigUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "blendConfig.json").replace(".parquet", "")
-            blendConfig = json.loads(urlopen(blendConfigUrl).read())
+            blendConfig = orjson.loads(urlopen(blendConfigUrl).read())
             blendedTables = list(blendConfig.keys())
             if dataSource in blendedTables:
                 tablesUsed = blendConfig[dataSource].get("tables")
@@ -63,7 +63,7 @@ class CompletePipeline:
                 response = replManager.manager[projectId].run(f"getDataForChart(projectId='{projectId}', chartType='{chartType}', xAxis='{xAxis}', yAxis='{yAxis}', aggregationMetric='{aggregationMetric}', tablesUsed={tablesUsed}, joinTypes={joinTypes}, blendOn={blendOn})")
             else:
                 response = replManager.manager[projectId].run(f"getDataForChart(projectId='{projectId}', chartType='{chartType}', xAxis='{xAxis}', yAxis='{yAxis}', aggregationMetric='{aggregationMetric}', tablesUsed='{dataSource}')")    
-            response = json.loads(response)
+            response = orjson.loads(response.encode())
             return response
         except Exception as e:
             logger.error(CustomException(e))

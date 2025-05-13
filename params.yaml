@@ -75,36 +75,41 @@ attributeInfoCode: |
 
 
 jsonSerializer: |
+    import numpy as np
+    import fireducks.pandas as pd
+    import datetime
+    import math
+    import json
     def serializer(obj):
-        import numpy as np
-        import pandas as pd
         # Handle NumPy types
-        if isinstance(obj, (np.integer, np.floating)):
-            return obj.item()  # Convert to native Python int/float
+        if isinstance(obj, (np.integer)):
+            return obj.item()  # Convert to native Python int
+        elif isinstance(obj, (np.floating)):
+            if np.isnan(obj) or np.isinf(obj):
+                return None  # Replace NaN/Infinity with JSON-compliant null
+            return obj.item()  # Convert to native Python float
         elif isinstance(obj, np.ndarray):
             return obj.tolist()  # Convert NumPy array to list
-
+        elif isinstance(obj, np.datetime64):
+            return str(obj)  # Convert to ISO 8601 string
         # Handle Pandas DataFrames and Series
         elif isinstance(obj, pd.DataFrame):
             return obj.to_dict(orient="records")  # Convert to list of dicts
         elif isinstance(obj, pd.Series):
             return obj.tolist()  # Convert Series to list
-
         # Handle datetime types
         elif isinstance(obj, (datetime.datetime, datetime.date)):
-            return obj.isoformat()  # Convert datetime to ISO 8601 string
-
-        # Handle sets and tuples (convert to list)
+            return obj.isoformat()  # Convert to ISO 8601 string
+        # Handle sets and tuples
         elif isinstance(obj, (set, tuple)):
             return list(obj)
-
-        # Handle all other custom objects (fallback)
-        return str(obj)  # Convert unknown objects to strings
-
+        # Handle complex numbers
+        elif isinstance(obj, complex):
+            return {"real": obj.real, "imag": obj.imag}  # Convert to dict
 
 redisFunctionCode: |
     def fetch_data(projectId: str, tableName: str):
-        import pandas as pd
+        import fireducks.pandas as pd
         import redis
         import os
         import io
@@ -734,7 +739,7 @@ codeDebuggerAgentPrompt: |
 
 panelChartDataCode: |
     def getDataForChart(projectId: str, chartType: str, xAxis: str, yAxis: str, aggregationMetric: str, tablesUsed: list[str] | str, joinTypes: list[str] | None, blendOn: list[str] | None):
-        import pandas as pd
+        import fireducks.pandas as pd
         import json
         if type(tablesUsed) == list:
             allTables = [fetch_data(projectId, x) for x in tablesUsed]

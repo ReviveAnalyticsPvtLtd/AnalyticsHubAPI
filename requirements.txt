@@ -2,6 +2,7 @@ pyyaml
 duckdb
 fsspec 
 redis
+orjson
 fastapi
 supabase
 python-dotenv
