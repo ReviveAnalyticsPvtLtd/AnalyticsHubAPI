@@ -74,3 +74,10 @@ class CreateDataBlend(BaseModel):
 class GetFieldsFromSources(BaseModel):
     projectId: str
     tableName: str
+
+class LoadExcelData(BaseModel):
+    projectId: str
+    sheetName: str | None = None
+
+class LoadCsvData(BaseModel):
+    projectId: str
