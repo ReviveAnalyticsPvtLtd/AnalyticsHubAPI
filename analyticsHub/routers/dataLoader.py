@@ -1,6 +1,6 @@
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from ..models.requestModels import DeleteTable, LoadMySQLorPostgreSQL
 from fastapi import APIRouter, Depends, UploadFile, File, Form
-from ..models.requestModels import DeleteTable, LoadMySQL
 from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse
 from ..utils.functions import verifyToken
@@ -73,12 +73,37 @@ async def loadExcelData(projectId: Annotated[str, Form()], file: Annotated[Uploa
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
 
 @router.post("/loadMySql")
-async def loadMySql(connection: LoadMySQL, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+async def loadMySql(connection: LoadMySQLorPostgreSQL, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
         if verifyToken(token = credentials.credentials):
             project = client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", connection.projectId).execute().data[0]                
             with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
                 connStr = f"mysql+pymysql://{connection.user}:{connection.password}@{connection.host}:{connection.port}/{connection.db}"
+                engine = create_engine(connStr)
+                pd.read_sql(f"SELECT * FROM {connection.table}", engine).to_parquet(temp.name, compression = "snappy")
+                _ = client.storage.from_("AnalyticsHub").upload(
+                    file = temp.name,
+                    path = f"{connection.projectId}/{connection.table + '.parquet'}"
+                )
+                if project["dataTables"]:
+                    projectData = project["dataTables"] + f", {connection.table + '.parquet'}"
+                else:
+                    projectData = connection.table
+                _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", connection.projectId).execute()
+                temp.close()
+            return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Data loaded successfully"})
+        else:
+            return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+    
+@router.post("/loadPostgreSQL")
+async def loadPostgreSQL(connection: LoadMySQLorPostgreSQL, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+    try:
+        if verifyToken(token = credentials.credentials):
+            project = client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", connection.projectId).execute().data[0]                
+            with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
+                connStr = f"postgresql+psycopg2://{connection.user}:{connection.password}@{connection.host}:{connection.port}/{connection.db}"
                 engine = create_engine(connStr)
                 pd.read_sql(f"SELECT * FROM {connection.table}", engine).to_parquet(temp.name, compression = "snappy")
                 _ = client.storage.from_("AnalyticsHub").upload(

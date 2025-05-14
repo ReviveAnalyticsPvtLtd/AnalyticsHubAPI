@@ -75,7 +75,7 @@ class GetFieldsFromSources(BaseModel):
     projectId: str
     tableName: str
 
-class LoadMySQL(BaseModel):
+class LoadMySQLorPostgreSQL(BaseModel):
     projectId: str
     user: str
     password: str
