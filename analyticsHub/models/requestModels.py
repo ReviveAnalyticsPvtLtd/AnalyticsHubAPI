@@ -83,3 +83,9 @@ class LoadMySQLorPostgreSQL(BaseModel):
     port: int
     db: str
     table: str
+
+class LoadMongoDB(BaseModel):
+    projectId: str
+    connectionString: str
+    collection: str
+    db: str

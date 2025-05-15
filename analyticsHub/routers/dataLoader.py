@@ -1,9 +1,11 @@
+from ..models.requestModels import DeleteTable, LoadMySQLorPostgreSQL, LoadMongoDB
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from ..models.requestModels import DeleteTable, LoadMySQLorPostgreSQL
 from fastapi import APIRouter, Depends, UploadFile, File, Form
 from fastapi.exceptions import HTTPException
+from pymongo.mongo_client import MongoClient
 from fastapi.responses import JSONResponse
 from ..utils.functions import verifyToken
+from pymongo.server_api import ServerApi
 from sqlalchemy import create_engine
 from urllib.request import urlopen
 from supabase import create_client
@@ -114,6 +116,30 @@ async def loadPostgreSQL(connection: LoadMySQLorPostgreSQL, credentials: Annotat
                     projectData = project["dataTables"] + f", {connection.table + '.parquet'}"
                 else:
                     projectData = connection.table
+                _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", connection.projectId).execute()
+                temp.close()
+            return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Data loaded successfully"})
+        else:
+            return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+    
+@router.post("/loadMongoDB")
+async def loadMongoDB(connection: LoadMongoDB, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+    try:
+        if verifyToken(token = credentials.credentials):
+            project = client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", connection.projectId).execute().data[0]                
+            with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
+                mongoClient = MongoClient(connection.connectionString, server_api=ServerApi('1'))
+                pd.DataFrame(mongoClient[connection.db][connection.collection].find()).drop("_id", axis = 1).to_parquet(temp.name, compression = "snappy")
+                _ = client.storage.from_("AnalyticsHub").upload(
+                    file = temp.name,
+                    path = f"{connection.projectId}/{connection.collection + '.parquet'}"
+                )
+                if project["dataTables"]:
+                    projectData = project["dataTables"] + f", {connection.collection + '.parquet'}"
+                else:
+                    projectData = connection.collection
                 _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", connection.projectId).execute()
                 temp.close()
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Data loaded successfully"})
