@@ -87,5 +87,5 @@ class LoadMySQLorPostgreSQL(BaseModel):
 class LoadMongoDB(BaseModel):
     projectId: str
     connectionString: str
-    collection: str
     db: str
+    collection: str

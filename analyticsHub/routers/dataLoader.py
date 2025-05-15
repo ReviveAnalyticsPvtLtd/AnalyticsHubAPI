@@ -131,7 +131,7 @@ async def loadMongoDB(connection: LoadMongoDB, credentials: Annotated[HTTPAuthor
             project = client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", connection.projectId).execute().data[0]                
             with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
                 mongoClient = MongoClient(connection.connectionString, server_api=ServerApi('1'))
-                pd.DataFrame(mongoClient[connection.db][connection.collection].find()).to_parquet(temp.name, compression = "snappy")
+                pd.DataFrame(mongoClient[connection.db][connection.collection].find()).drop("_id", axis = 1).to_parquet(temp.name, compression = "snappy")
                 _ = client.storage.from_("AnalyticsHub").upload(
                     file = temp.name,
                     path = f"{connection.projectId}/{connection.collection + '.parquet'}"
