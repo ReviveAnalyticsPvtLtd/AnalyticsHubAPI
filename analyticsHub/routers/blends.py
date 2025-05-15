@@ -79,7 +79,7 @@ async def getDataSources(projectId: str, credentials: Annotated[HTTPAuthorizatio
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
 
-@router.get("/getFieldsFromSources")
+@router.post("/getFieldsFromSources")
 async def getFieldsFromSources(details: GetFieldsFromSources, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
         if verifyToken(token = credentials.credentials):
