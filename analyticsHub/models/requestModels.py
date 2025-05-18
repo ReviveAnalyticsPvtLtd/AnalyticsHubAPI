@@ -89,3 +89,21 @@ class LoadMongoDB(BaseModel):
     connectionString: str
     db: str
     collection: str
+
+class CreatePage(BaseModel):
+    projectId: str
+    pageName: str
+
+class ExportToDashboard(BaseModel):
+    projectId: str
+    page: str
+    chartType: str
+    title: str
+    xLabels: list[str]
+    yLabels: list[str]
+    labels: list[str]
+    datasets: list[dict[str, str | list[str]]]
+    x: int
+    y: int
+    w: int
+    h: int

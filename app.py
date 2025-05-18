@@ -1,4 +1,4 @@
-from analyticsHub.routers import authentication, projectManager, dataLoader, reportingTool, utilities, blends
+from analyticsHub.routers import authentication, projectManager, dataLoader, reportingTool, utilities, blends, dashboard
 from langchain_experimental.utilities import PythonREPL
 from fastapi.middleware.cors import CORSMiddleware
 from analyticsHub.utils.functions import readYaml
@@ -35,6 +35,7 @@ app.include_router(projectManager.router, prefix = "/projects", tags = ["Project
 app.include_router(dataLoader.router, prefix = "/loaders", tags = ["Data Loader"])
 app.include_router(blends.router, prefix = "/blends", tags = ["Blends"])
 app.include_router(reportingTool.router, prefix = "/reportingTool", tags = ["Reporting Tool"])
+app.include_router(dashboard.router, prefix = "/dashboard", tags = ["Dashboard"])
 app.include_router(utilities.router, prefix = "/utils", tags = ["Utilities"])
 
 @app.on_event("startup")
