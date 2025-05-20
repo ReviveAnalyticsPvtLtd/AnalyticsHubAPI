@@ -40,7 +40,7 @@ async def createPage(details: CreatePage, credentials: Annotated[HTTPAuthorizati
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
     
-@router.post("/getAllPages")
+@router.get("/getAllPages")
 async def getAllPages(projectId: str, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
         if verifyToken(token = credentials.credentials):
@@ -74,12 +74,7 @@ async def exportToDashboard(details: ExportToDashboard, credentials: Annotated[H
                     "labels": details.labels,
                     "datasets": details.datasets
                 },
-                "layout": {
-                    "x": details.x,
-                    "y": details.y,
-                    "w": details.w,
-                    "h": details.h
-                }
+                "layout": details.layout
             }
             pageDict["widgets"].append(newWidget)
             dashboardConfig[details.page] = pageDict
@@ -94,7 +89,7 @@ async def exportToDashboard(details: ExportToDashboard, credentials: Annotated[H
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
     
 @router.get("/getData")
-async def getAllPages(projectId: str, page: str, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+async def getData(projectId: str, page: str, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
         if verifyToken(token = credentials.credentials):
             fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "dashboardConfig.json").replace(".parquet", "")
