@@ -255,6 +255,7 @@ queryRephraserAgentPrompt: |
 
   ### **Format Instructions:**
   - Return **ONLY the output JSON**—no extra text or commentary.
+  - Strictly follow format: `{format_instructions}`.
 
   #### **Provided Inputs:**
   - **Metadata (Already present in the `metadata` variable):** {metadata}
