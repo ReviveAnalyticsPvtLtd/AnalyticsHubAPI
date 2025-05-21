@@ -47,7 +47,7 @@ async def getAllPages(projectId: str, credentials: Annotated[HTTPAuthorizationCr
             if "dashboardConfig.json" in [x.get("name") for x in client.storage.from_("AnalyticsHub").list(path = projectId)]:
                 fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "dashboardConfig.json").replace(".parquet", "")
                 dashboardConfig = json.loads(urlopen(fileUrl).read())
-                pages = list(dashboardConfig.keys())
+                pages = [dashboardConfig[x]["name"] for x in dashboardConfig.keys()]
             else:
                 pages = list()
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "pages": pages})
