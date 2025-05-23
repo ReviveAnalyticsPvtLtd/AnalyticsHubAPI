@@ -102,5 +102,5 @@ class ExportToDashboard(BaseModel):
     xLabels: list[str]
     yLabels: list[str]
     labels: list[str]
-    datasets: list[dict[str, str | list[str]]]
+    data: dict[str, list]
     layout: dict[str, int]

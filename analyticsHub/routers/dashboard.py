@@ -70,10 +70,7 @@ async def exportToDashboard(details: ExportToDashboard, credentials: Annotated[H
                 "title": details.title,
                 "xLabels": details.xLabels,
                 "yLabels": details.yLabels,
-                "data": {
-                    "labels": details.labels,
-                    "datasets": details.datasets
-                },
+                "data": details.data,
                 "layout": details.layout
             }
             pageDict["widgets"].append(newWidget)
