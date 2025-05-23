@@ -62,7 +62,11 @@ async def exportToDashboard(details: ExportToDashboard, credentials: Annotated[H
         if verifyToken(token = credentials.credentials):
             fileUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "dashboardConfig.json").replace(".parquet", "")
             dashboardConfig = json.loads(urlopen(fileUrl).read())
-            pageDict = dashboardConfig.get(details.page)
+            for pageDict in dashboardConfig.values():
+                if pageDict.get("name") == details.page:
+                    pageDict = pageDict
+                else:
+                    continue
             widgetId = str(uuid.uuid4())
             newWidget = {
                 "id": widgetId,
