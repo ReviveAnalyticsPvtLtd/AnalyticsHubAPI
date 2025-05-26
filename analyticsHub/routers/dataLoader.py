@@ -10,7 +10,7 @@ from sqlalchemy import create_engine
 from urllib.request import urlopen
 from supabase import create_client
 from fastapi import APIRouter
-import fireducks.pandas as pd
+import pandas as pd
 from typing import Annotated
 import tempfile
 import json

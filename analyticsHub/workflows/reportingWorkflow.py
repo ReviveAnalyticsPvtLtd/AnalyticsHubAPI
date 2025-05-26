@@ -36,7 +36,7 @@ class ReportingToolWorkflow:
             "metadata": state["metadata"]
         })
         return {
-            "generatedCode": f'fetch_data("{state["projectId"]}", '.join(response.split("fetch_data(")).replace("import pandas", "import fireducks.pandas").replace('indent=4', 'default=serializer')
+            "generatedCode": f'fetch_data("{state["projectId"]}", '.join(response.split("fetch_data(")).replace('indent=4', 'default=serializer')
         }
     def runInPythonSandbox(self, state: State):
         code = "\n".join(state["generatedCode"].split("```")[-2].split("\n")[1:])

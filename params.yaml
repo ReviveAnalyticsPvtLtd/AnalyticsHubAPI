@@ -61,7 +61,7 @@ metadataGeneratorPrompt: |
 
 
 attributeInfoCode: |
-    import fireducks.pandas as pd
+    import pandas as pd
     import os
     {dataframeName} = pd.read_parquet(os.environ["FILE_URL"].format(projectId = "{projectId}", fileName = "{dataframeName}"))
     attributeInfo = 'DATAFRAME NAME: {dataframeName}\\n'
@@ -77,7 +77,7 @@ attributeInfoCode: |
 jsonSerializer: |
     def serializer(obj):
         import numpy as np
-        import fireducks.pandas as pd
+        import pandas as pd
         import datetime
         import math
         import json
@@ -815,7 +815,7 @@ codeDebuggerAgentPrompt: |
 
 panelChartDataCode: |
     def getDataForChart(projectId: str, chartType: str, xAxis: str, yAxis: str, aggregationMetric: str, tablesUsed: list[str] | str, joinTypes: list[str] | None, blendOn: list[str] | None):
-        import fireducks.pandas as pd
+        import pandas as pd
         import json
         if type(tablesUsed) == list:
             allTables = [fetch_data(projectId, x) for x in tablesUsed]
