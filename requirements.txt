@@ -12,6 +12,7 @@ python-dotenv
 python-jose
 pydantic
 pandas
+psutil
 uvicorn
 psycopg2-binary
 pymongo[srv]
@@ -22,7 +23,7 @@ langchain-core
 langchain-groq
 langchain-cerebras
 langchain-experimental
+fastapi-analytics
 langgraph
 fireducks
 dataclasses
--e .

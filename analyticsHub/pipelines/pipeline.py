@@ -28,7 +28,7 @@ class CompletePipeline:
             for fileName in dataFiles:
                 dataframeName = fileName.replace(".parquet", "")
                 codeString = readYaml(self.yamlPath)["attributeInfoCode"].format(dataframeName = dataframeName, projectId = projectId)
-                results += replManager.manager[projectId].run(codeString)
+                results += replManager.run(codeString)
             metadataChain = self.metadataGenerator.getMetadataChain()
             metadata = metadataChain.invoke({"metadata": results})
             metadataParts = metadata.split("```")
@@ -60,9 +60,9 @@ class CompletePipeline:
                 tablesUsed = blendConfig[dataSource].get("tables")
                 joinTypes = blendConfig[dataSource].get("joinTypes")
                 blendOn = blendConfig[dataSource].get("blendOn")
-                response = replManager.manager[projectId].run(f"getDataForChart(projectId='{projectId}', chartType='{chartType}', xAxis='{xAxis}', yAxis='{yAxis}', aggregationMetric='{aggregationMetric}', tablesUsed={tablesUsed}, joinTypes={joinTypes}, blendOn={blendOn})")
+                response = replManager.run(f"getDataForChart(projectId='{projectId}', chartType='{chartType}', xAxis='{xAxis}', yAxis='{yAxis}', aggregationMetric='{aggregationMetric}', tablesUsed={tablesUsed}, joinTypes={joinTypes}, blendOn={blendOn})")
             else:
-                response = replManager.manager[projectId].run(f"getDataForChart(projectId='{projectId}', chartType='{chartType}', xAxis='{xAxis}', yAxis='{yAxis}', aggregationMetric='{aggregationMetric}', tablesUsed='{dataSource}')")    
+                response = replManager.run(f"getDataForChart(projectId='{projectId}', chartType='{chartType}', xAxis='{xAxis}', yAxis='{yAxis}', aggregationMetric='{aggregationMetric}', tablesUsed='{dataSource}')")    
             response = orjson.loads(response.encode())
             return response
         except Exception as e:

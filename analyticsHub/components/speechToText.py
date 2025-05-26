@@ -1,4 +1,4 @@
-from ..utils.functions import readYaml, getConfig
+from ..utils.functions import getConfig
 from ..utils.exceptions import CustomException
 from ..utils.logger import logger
 from groq import Groq

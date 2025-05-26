@@ -40,7 +40,7 @@ class ReportingToolWorkflow:
         }
     def runInPythonSandbox(self, state: State):
         code = "\n".join(state["generatedCode"].split("```")[-2].split("\n")[1:])
-        response = replManager.manager.get(state["projectId"]).run(code)
+        response = replManager.run(code)
         return {
             "codeOutput": response
         }

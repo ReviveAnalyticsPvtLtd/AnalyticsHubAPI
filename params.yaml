@@ -75,12 +75,12 @@ attributeInfoCode: |
 
 
 jsonSerializer: |
-    import numpy as np
-    import fireducks.pandas as pd
-    import datetime
-    import math
-    import json
     def serializer(obj):
+        import numpy as np
+        import fireducks.pandas as pd
+        import datetime
+        import math
+        import json
         # Handle NumPy types
         if isinstance(obj, (np.integer)):
             return obj.item()  # Convert to native Python int
@@ -126,7 +126,7 @@ redisFunctionCode: |
         return df
 
 queryRephraserAgentPrompt: |
-  You are a **Query Rewriter AI Agent**, ensuring user queries are **clear, valid, and executable** based on dataset metadata.
+  You are a **Query Rewriter AI Agent**, ensuring user queries are **clear, valid, and executable** based on the given **dataset metadata**.
 
   ### **1. Understand the Query**
   - Analyze the query within dataset context.
@@ -251,14 +251,13 @@ queryRephraserAgentPrompt: |
 
   ### **Environment Constraints:**
   - **Data is retrieved using the `fetch_data` function which takes the dataframe name as a string parameter.**
-  - **The input metadata is available as a dictionary in the `metadata` variable.** Mention use of the `metadata` variable explicitly if used in transformations.
-
+  - **The `metadata` variable is not preloaded. If a query needs metadata, first define `metadata` as a dictionary using the prompt, then refer to it explicitly in any transformations.**
+  
   ### **Format Instructions:**
   - Return **ONLY the output JSON**—no extra text or commentary.
-  - Strictly follow format: `{format_instructions}`.
 
   #### **Provided Inputs:**
-  - **Metadata (Already present in the `metadata` variable):** {metadata}
+  - **Metadata (To be defined as a `metadata` variable if needed):** {metadata}
   - **Query:** {query}
 
 
@@ -275,8 +274,8 @@ codeGeneratorAgentPrompt: |
         - For example: `sales_data = fetch_data("sales_data")`
     - **The `fetch_data` function is already defined in the environment - do not redefine it**
 
-    2. **The `metadata` variable is already present in the environment - do not redefine it or modify it**
-    - Use the metadata variable directly to access dataset information when needed
+    2. **The `metadata` variable is NOT preloaded in the environment.**
+    - If metadata is required, you must define the `metadata` variable correctly using the information provided in the prompt before using it in your code. No room for any modification to the metadata.
 
     3. **DO NOT assume any new data or create placeholder/sample data.**
 
@@ -402,7 +401,7 @@ codeGeneratorAgentPrompt: |
         - **type:** The data type (e.g., "int64", "float64", "object").
         - **description:** A brief description of the column's content.
     - **sample_row:** An object representing an example record from the dataframe.
-    - The metadata is accessible through the `metadata` variable. Use this information to verify columns and structure.
+    - If you need to access metadata, define a `metadata` variable using the JSON/YAML structure provided in the prompt. Then use it to verify dataset structure and column names.
 
     ### Python Script Requirements
     - **Imports:** Include necessary imports (e.g., `json`, `pandas`).
@@ -531,35 +530,110 @@ codeGeneratorAgentPrompt: |
     ### Example 3: Metadata variable usage
 
     **User Query:**
-    "Display total number of tables using a card. Steps: 1) Access metadata from the metadata variable, 2) Count keys using len(), 3) Create final_df with count value"
+    "Display total number of tables using a card. Steps: 1) Define the metadata variable using the provided input, 2) Count keys using len() to get the number of tables, 3) Create final_df with count value"
 
+    **Metadata:**
+    {{
+        "sales": {{
+            "description": "Sales records for 2023 and 2024",
+            "shape": [1000, 5],
+            "columns": [
+                {{"name": "date", "type": "datetime64", "description": "Transaction date"}},
+                {{"name": "region", "type": "object", "description": "Sales region"}},
+                {{"name": "amount", "type": "float64", "description": "Sale amount"}},
+                {{"name": "product", "type": "object", "description": "Product name"}},
+                {{"name": "channel", "type": "object", "description": "Sales channel"}}
+            ],
+            "sample_row": {{
+                "date": "2024-05-12",
+                "region": "North",
+                "amount": 1234.56,
+                "product": "Laptop",
+                "channel": "Online"
+            }}
+        }},
+        "customers": {{
+            "description": "Customer demographic data",
+            "shape": [500, 4],
+            "columns": [
+                {{"name": "customer_id", "type": "int64", "description": "Unique customer ID"}},
+                {{"name": "age", "type": "int64", "description": "Age of customer"}},
+                {{"name": "gender", "type": "object", "description": "Gender of customer"}},
+                {{"name": "region", "type": "object", "description": "Region of residence"}}
+            ],
+            "sample_row": {{
+                "customer_id": 101,
+                "age": 34,
+                "gender": "Female",
+                "region": "West"
+            }}
+        }}
+    }}
+    
     **Expected Output:**
-    ```python
     import pandas as pd
     import json
 
-    # METADATA-ONLY SOLUTION: No fetch_data() required
-    # Access metadata directly to get table count directly, no need to load it again in any variable
+    # Step 1: Define metadata manually from the provided input
+    metadata = {{
+        "sales": {{
+            "description": "Sales records for 2023 and 2024",
+            "shape": [1000, 5],
+            "columns": [
+                {{"name": "date", "type": "datetime64", "description": "Transaction date"}},
+                {{"name": "region", "type": "object", "description": "Sales region"}},
+                {{"name": "amount", "type": "float64", "description": "Sale amount"}},
+                {{"name": "product", "type": "object", "description": "Product name"}},
+                {{"name": "channel", "type": "object", "description": "Sales channel"}}
+            ],
+            "sample_row": {{
+                "date": "2024-05-12",
+                "region": "North",
+                "amount": 1234.56,
+                "product": "Laptop",
+                "channel": "Online"
+            }}
+        }},
+        "customers": {{
+            "description": "Customer demographic data",
+            "shape": [500, 4],
+            "columns": [
+                {{"name": "customer_id", "type": "int64", "description": "Unique customer ID"}},
+                {{"name": "age", "type": "int64", "description": "Age of customer"}},
+                {{"name": "gender", "type": "object", "description": "Gender of customer"}},
+                {{"name": "region", "type": "object", "description": "Region of residence"}}
+            ],
+            "sample_row": {{
+                "customer_id": 101,
+                "age": 34,
+                "gender": "Female",
+                "region": "West"
+            }}
+        }}
+    }}
+
+    # Step 2: Count total number of tables
     table_count = len(metadata.keys())
 
-    # Create required final_df with count (single KPI format)
+    # Step 3: Create final_df with table count
     final_df = pd.DataFrame({{
         "total_tables": [table_count]
     }})
 
-    # Generate card JSON following strict format
+    # Generate card JSON
     print(json.dumps({{
         "chartType": "card",
         "title": "Table Inventory Overview",
         "label": "Total Tables",
-        "data": final_df["total_tables"].iloc[0]  # Extract single value
+        "data": final_df["total_tables"].iloc[0]
     }}, indent=4))
-    ```
+
 
     ## Final Guidelines
 
     - **ALWAYS use the `fetch_data` function to retrieve the dataframes you need.**
-    - **The `metadata` variable and `fetch_data` function are already defined - DO NOT redefine them.**
+    - **The `fetch_data` function is already defined - DO NOT redefine it.**
+    - **The `metadata` variable is NOT preloaded in the environment and needs to be defined correctly from the input.**
     - **Only retrieve datasets that are specifically needed for the query.**
     - **Ensure 100% JSON serializability.**
     - **Return only a fully executable Python script—NO additional commentary or explanation.**
@@ -567,7 +641,7 @@ codeGeneratorAgentPrompt: |
     - **The final transformed dataframe must always be named `final_df`.**
 
     ## **Provided Inputs:**
-    - **Metadata (Already present in the `metadata` variable):** {metadata}
+    - **Metadata (Define a `metadata` variable if needed):** {metadata}
     - **Query:** {query}
 
 
@@ -586,11 +660,11 @@ codeDebuggerAgentPrompt: |
 
     ## CRITICAL ENVIRONMENT KNOWLEDGE
 
-    1. **The `fetch_data` function is already defined** - Do not redefine it, but ensure it's used correctly with the exact dataframe names from metadata.
-    2. **The `metadata` variable is already present** - Never redefine it, just ensure it's accessed properly.
-    3. **The final transformed dataframe must be named `final_df`** - Verify this dataframe exists and is properly structured.
-    4. **Chart.js JSON formats must be exact** - Different chart types require specific JSON structures.
-    5. **A custom serializer function is available** - The code calls `json.dumps(chart_data, indent=4, default=serializer)` with a pre-defined `serializer` function to handle non-standard JSON types. Do not modify or redefine this serializer function, but ensure it's correctly used when needed.
+    1. **The `fetch_data` function may not be predefined** – If missing from the code, it must be assumed to be already defined **only if referenced**. Do not define it yourself.  
+    2. **The `metadata` needs to be defined** – If metadata is used, it must be **explicitly defined** from the provided metadata input. Do not assume it already exists. Also, it needs to be defined correctly as is given in the input. No room for any modification to the metadata or mistakes.  
+    3. **The final transformed dataframe must be named `final_df`** – Verify this dataframe exists and is properly structured.  
+    4. **Chart.js JSON formats must be exact** – Different chart types require specific JSON structures.  
+    5. **A custom serializer function is available** – The code calls `json.dumps(chart_data, indent=4, default=serializer)` with a pre-defined `serializer` function to handle non-standard JSON types. Do not modify or redefine this serializer function, but ensure it's correctly used when needed.
 
     ## INPUT DATA
 
@@ -685,7 +759,8 @@ codeDebuggerAgentPrompt: |
 
     ### Environment & Setup Errors
     - Missing or incorrect imports
-    - Incorrect access to metadata or fetch_data
+    - Incorrect or missing definition of metadata
+    - Incorrect access to `metadata` or `fetch_data`
     - Redefinition of provided functions/variables
 
     ### Data Processing Errors

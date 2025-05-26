@@ -7,8 +7,10 @@ from fastapi import APIRouter, Depends
 from urllib.request import urlopen
 from typing import Annotated
 from . import pipeline
+import psutil
 import json
 import os
+import gc
 
 router = APIRouter()
 security = HTTPBearer()
@@ -23,6 +25,11 @@ async def generateChart(chartDetails: GenerateChartInput, credentials: Annotated
                 projectId = chartDetails.projectId,
                 metadata = json.loads(urlopen(fileUrl).read())
             )
+            gc.collect()
+            memory = psutil.virtual_memory()
+            cpuUsage = psutil.cpu_percent(interval=1, percpu=True)
+            print(f"RAM Usage Percentage: {memory.percent}%")
+            print(f"Total CPU Usage: {cpuUsage}")
             return JSONResponse(status_code = 200, content = response)
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
@@ -41,6 +48,11 @@ async def generatePanelChart(panelChartDetails: PanelChartDetails, credentials: 
                 aggregationMetric = panelChartDetails.aggregationMetric,
                 dataSource = panelChartDetails.dataSource
             )
+            gc.collect()
+            memory = psutil.virtual_memory()
+            cpuUsage = psutil.cpu_percent(interval=1, percpu=True)
+            print(f"RAM Usage Percentage: {memory.percent}%")
+            print(f"Total CPU Usage: {cpuUsage}")
             return JSONResponse(status_code = 200, content = response)
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
