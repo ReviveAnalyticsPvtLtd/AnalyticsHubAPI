@@ -25,4 +25,5 @@ langchain-cerebras
 langchain-experimental
 fastapi-analytics
 langgraph
+pyarrow
 dataclasses
