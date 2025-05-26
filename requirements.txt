@@ -25,5 +25,4 @@ langchain-cerebras
 langchain-experimental
 fastapi-analytics
 langgraph
-fireducks
 dataclasses

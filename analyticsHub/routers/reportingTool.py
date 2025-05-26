@@ -28,8 +28,10 @@ async def generateChart(chartDetails: GenerateChartInput, credentials: Annotated
             gc.collect()
             memory = psutil.virtual_memory()
             cpuUsage = psutil.cpu_percent(interval=1, percpu=True)
+            totalUsage = psutil.cpu_count(interval=1)
             print(f"RAM Usage Percentage: {memory.percent}%")
-            print(f"Total CPU Usage: {cpuUsage}")
+            print(f"Total CPU Usage: {totalUsage}")
+            print(f"CPU Usage Per Core: {cpuUsage}")
             return JSONResponse(status_code = 200, content = response)
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
@@ -51,8 +53,10 @@ async def generatePanelChart(panelChartDetails: PanelChartDetails, credentials: 
             gc.collect()
             memory = psutil.virtual_memory()
             cpuUsage = psutil.cpu_percent(interval=1, percpu=True)
+            totalUsage = psutil.cpu_count(interval=1)
             print(f"RAM Usage Percentage: {memory.percent}%")
-            print(f"Total CPU Usage: {cpuUsage}")
+            print(f"Total CPU Usage: {totalUsage}")
+            print(f"CPU Usage Per Core: {cpuUsage}")
             return JSONResponse(status_code = 200, content = response)
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
