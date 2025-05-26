@@ -51,4 +51,4 @@ app.include_router(dashboard.router, prefix = "/dashboard", tags = ["Dashboard"]
 app.include_router(utilities.router, prefix = "/utils", tags = ["Utilities"])
 
 if __name__ == "__main__":
-    uvicorn.run("app:app", host = "0.0.0.0", port = 7860)
+    uvicorn.run("app:app", host = "0.0.0.0", port = 7860, workers = 5)
