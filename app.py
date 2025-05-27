@@ -1,5 +1,6 @@
 from analyticsHub.routers import authentication, projectManager, dataLoader, reportingTool, utilities, blends, dashboard
 from fastapi.middleware.cors import CORSMiddleware
+from analyticsHub.utils.functions import getConfig
 from api_analytics.fastapi import Analytics
 from supabase import create_client
 from fastapi import FastAPI
@@ -7,6 +8,7 @@ import uvicorn
 import psutil
 import os
 
+config = getConfig(os.path.join(os.getcwd(), "config.ini"))
 client = create_client(
     supabase_url = os.environ["SUPABASE_URL"],
     supabase_key = os.environ["SUPABASE_KEY"]
@@ -51,4 +53,9 @@ app.include_router(dashboard.router, prefix = "/dashboard", tags = ["Dashboard"]
 app.include_router(utilities.router, prefix = "/utils", tags = ["Utilities"])
 
 if __name__ == "__main__":
-    uvicorn.run("app:app", host = "0.0.0.0", port = 7860, workers = 5)
+    uvicorn.run(
+        "app:app",
+        host = config.get("APPLICATION", "host"),
+        port = config.getint("APPLICATION", "port"),
+        workers = config.getint("APPLICATION", "workers")
+    )
