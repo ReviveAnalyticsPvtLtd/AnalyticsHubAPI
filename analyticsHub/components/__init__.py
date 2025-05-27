@@ -26,9 +26,13 @@ class REPLManager:
         self.__stderr.truncate(0)
         self.__stderr.seek(0)
         self.__globals = dict(self.__persistentGlobals)
-        if error == "":
+        if (output != "") & (error == ""):
             return output
-        else:
+        elif (output != "") & (error != ""):
+            return output
+        elif (output == "") & (error != ""):
             return error
+        else:
+            return output
 
 replManager = REPLManager()
