@@ -9,6 +9,7 @@ from urllib.request import urlopen
 from typing import Annotated
 import uuid
 import json
+import time
 import os
 import io
 
@@ -25,7 +26,7 @@ async def createPage(details: CreatePage, credentials: Annotated[HTTPAuthorizati
         if verifyToken(token = credentials.credentials):
             pageId = str(uuid.uuid4())
             if "dashboardConfig.json" in [x.get("name") for x in client.storage.from_("AnalyticsHub").list(path = details.projectId)]:
-                fileUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "dashboardConfig.json").replace(".parquet", "")
+                fileUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "dashboardConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
                 dashboardConfig = json.loads(urlopen(fileUrl).read())
                 dashboardConfig[pageId] = {"name": details.pageName, "widgets": []}
             else:
@@ -45,7 +46,7 @@ async def getAllPages(projectId: str, credentials: Annotated[HTTPAuthorizationCr
     try:
         if verifyToken(token = credentials.credentials):
             if "dashboardConfig.json" in [x.get("name") for x in client.storage.from_("AnalyticsHub").list(path = projectId)]:
-                fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "dashboardConfig.json").replace(".parquet", "")
+                fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "dashboardConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
                 dashboardConfig = json.loads(urlopen(fileUrl).read())
                 pages = [{"pageName": dashboardConfig[x]["name"], "pageId": x} for x in dashboardConfig.keys()]
             else:
@@ -60,7 +61,7 @@ async def getAllPages(projectId: str, credentials: Annotated[HTTPAuthorizationCr
 async def exportToDashboard(details: ExportToDashboard, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
         if verifyToken(token = credentials.credentials):
-            fileUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "dashboardConfig.json").replace(".parquet", "")
+            fileUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "dashboardConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             dashboardConfig = json.loads(urlopen(fileUrl).read())
             pageDict = dashboardConfig.get(details.page)
             widgetId = str(uuid.uuid4())
@@ -89,7 +90,7 @@ async def exportToDashboard(details: ExportToDashboard, credentials: Annotated[H
 async def getData(projectId: str, page: str, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
         if verifyToken(token = credentials.credentials):
-            fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "dashboardConfig.json").replace(".parquet", "")
+            fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "dashboardConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             dashboardConfig = json.loads(urlopen(fileUrl).read())
             pageInfo = dashboardConfig.get(page)
             pageInfo["id"] = page

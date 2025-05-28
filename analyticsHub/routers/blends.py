@@ -8,6 +8,7 @@ from urllib.request import urlopen
 from supabase import create_client
 from typing import Annotated
 import json
+import time
 import os
 import io
 
@@ -29,7 +30,7 @@ async def createDataBlend(blendDetails: CreateDataBlend, credentials: Annotated[
             }
             project = client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", blendDetails.projectId).execute().data[0]
             if "blendConfig.json" in [x.get("name") for x in client.storage.from_("AnalyticsHub").list(path = blendDetails.projectId)]:
-                fileUrl = os.environ["FILE_URL"].format(projectId = blendDetails.projectId, fileName = "blendConfig.json").replace(".parquet", "")
+                fileUrl = os.environ["FILE_URL"].format(projectId = blendDetails.projectId, fileName = "blendConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
                 blendConfig = json.loads(urlopen(fileUrl).read())
                 blendConfig[blendDetails.blendName] = joinConfig
             else:
@@ -57,7 +58,7 @@ async def getDataSources(projectId: str, credentials: Annotated[HTTPAuthorizatio
     try:
         if verifyToken(token = credentials.credentials):
             if "blendConfig.json" in [x.get("name") for x in client.storage.from_("AnalyticsHub").list(path = projectId)]:
-                blendConfigUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "blendConfig.json").replace(".parquet", "")
+                blendConfigUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "blendConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
                 blendConfig = json.loads(urlopen(blendConfigUrl).read())
                 blendedTables = list(blendConfig.keys())
                 blends = [
@@ -65,7 +66,7 @@ async def getDataSources(projectId: str, credentials: Annotated[HTTPAuthorizatio
                 ]
             else:
                 blends, blendedTables = list(), list()
-            metadataUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "")
+            metadataUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             metadata = json.loads(urlopen(metadataUrl).read())
             rawTables = list(metadata.keys())
             dataSources = {
@@ -83,8 +84,8 @@ async def getDataSources(projectId: str, credentials: Annotated[HTTPAuthorizatio
 async def getFieldsFromSources(details: GetFieldsFromSources, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
         if verifyToken(token = credentials.credentials):
-            blendConfigUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "blendConfig.json").replace(".parquet", "")
-            metadataUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "metadata.json").replace(".parquet", "")
+            blendConfigUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "blendConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            metadataUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             blendConfig = json.loads(urlopen(blendConfigUrl).read())
             metadata = json.loads(urlopen(metadataUrl).read())
             blendedTables = list(blendConfig.keys())

@@ -8,6 +8,7 @@ from supabase import create_client
 from urllib.request import urlopen
 from ..utils.logger import logger
 import orjson
+import time
 import os
 
 class CompletePipeline:
@@ -53,7 +54,7 @@ class CompletePipeline:
         
     def generateChartFromPanel(self, projectId: str, chartType: str, xAxis: str, yAxis: str, aggregationMetric: str, dataSource: str) -> dict:
         try:
-            blendConfigUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "blendConfig.json").replace(".parquet", "")
+            blendConfigUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "blendConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             blendConfig = orjson.loads(urlopen(blendConfigUrl).read())
             blendedTables = list(blendConfig.keys())
             if dataSource in blendedTables:

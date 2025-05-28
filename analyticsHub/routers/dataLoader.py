@@ -14,6 +14,7 @@ import pandas as pd
 from typing import Annotated
 import tempfile
 import json
+import time
 import io
 import os
 
@@ -160,7 +161,7 @@ async def deleteTable(tableDetails: DeleteTable, credentials: Annotated[HTTPAuth
             projectTables.remove(tableDetails.tableName)
             projectTables = ", ".join(projectTables)
             _ = client.table("Projects").update({"dataTables": projectTables}).eq("projectId", tableDetails.projectId).execute()
-            fileUrl = os.environ["FILE_URL"].format(projectId = tableDetails.projectId, fileName = "metadata.json").replace(".parquet", "")
+            fileUrl = os.environ["FILE_URL"].format(projectId = tableDetails.projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             jsonData = json.loads(urlopen(fileUrl).read())
             jsonData.pop(tableDetails.tableName)
             with io.BytesIO() as buffer:

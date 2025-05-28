@@ -9,6 +9,7 @@ from typing import Annotated
 from . import pipeline
 import psutil
 import json
+import time
 import os
 import gc
 
@@ -19,7 +20,7 @@ security = HTTPBearer()
 async def generateChart(chartDetails: GenerateChartInput, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
         if verifyToken(token = credentials.credentials):
-            fileUrl = os.environ["FILE_URL"].format(projectId = chartDetails.projectId, fileName = "metadata.json").replace(".parquet", "")
+            fileUrl = os.environ["FILE_URL"].format(projectId = chartDetails.projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             response = pipeline.generateChart(
                 inputQuery = chartDetails.inputQuery,
                 projectId = chartDetails.projectId,

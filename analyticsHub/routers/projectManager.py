@@ -12,6 +12,7 @@ from jose import jwt
 import pandas as pd
 import uuid
 import json
+import time
 import os
 import io
 
@@ -110,7 +111,7 @@ async def generateMetadata(projectId: str, credentials: Annotated[HTTPAuthorizat
         if verifyToken(token = credentials.credentials):
             filenames = [x.get("name") for x in client.storage.from_("AnalyticsHub").list(projectId)]
             if "metadata.json" in filenames:
-                fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "")
+                fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
                 jsonData = json.loads(urlopen(fileUrl).read())
                 jsonDataTables = set(jsonData.keys())
                 newMetadata = pipeline.generateMetadata(projectId = projectId)
@@ -133,7 +134,7 @@ async def generateMetadata(projectId: str, credentials: Annotated[HTTPAuthorizat
 async def getMetadata(projectId: str, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
         if verifyToken(token = credentials.credentials):
-            fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "")
+            fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             jsonData = json.loads(urlopen(fileUrl).read())
             newJson = {"tables": []}
             for key in jsonData:
@@ -154,7 +155,7 @@ async def getMetadata(projectId: str, credentials: Annotated[HTTPAuthorizationCr
 async def editMetadata(modifiedMetadata: EditMetadata, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
         if verifyToken(token = credentials.credentials):
-            fileUrl = os.environ["FILE_URL"].format(projectId = modifiedMetadata.projectId, fileName = "metadata.json").replace(".parquet", "")
+            fileUrl = os.environ["FILE_URL"].format(projectId = modifiedMetadata.projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             jsonData = json.loads(urlopen(fileUrl).read())
             if modifiedMetadata.tableDescription and not (modifiedMetadata.columnName or modifiedMetadata.columnDescription):
                 jsonData[modifiedMetadata.tableName]["description"] = modifiedMetadata.tableDescription
