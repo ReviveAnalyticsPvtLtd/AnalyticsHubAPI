@@ -47,7 +47,7 @@ async def getAllPages(projectId: str, credentials: Annotated[HTTPAuthorizationCr
             if "dashboardConfig.json" in [x.get("name") for x in client.storage.from_("AnalyticsHub").list(path = projectId)]:
                 fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "dashboardConfig.json").replace(".parquet", "")
                 dashboardConfig = json.loads(urlopen(fileUrl).read())
-                pages = [dashboardConfig[x]["name"] for x in dashboardConfig.keys()]
+                pages = [{"pageName": dashboardConfig[x]["name"], "pageId": x} for x in dashboardConfig.keys()]
             else:
                 pages = list()
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "pages": pages})
@@ -62,11 +62,7 @@ async def exportToDashboard(details: ExportToDashboard, credentials: Annotated[H
         if verifyToken(token = credentials.credentials):
             fileUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "dashboardConfig.json").replace(".parquet", "")
             dashboardConfig = json.loads(urlopen(fileUrl).read())
-            for pageDict in dashboardConfig.values():
-                if pageDict.get("name") == details.page:
-                    pageDict = pageDict
-                else:
-                    continue
+            pageDict = dashboardConfig.get(details.page)
             widgetId = str(uuid.uuid4())
             newWidget = {
                 "id": widgetId,
