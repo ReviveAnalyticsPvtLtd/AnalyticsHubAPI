@@ -25,5 +25,6 @@ langchain-cerebras
 langchain-experimental
 fastapi-analytics
 langgraph
+scikit-learn
 pyarrow
 dataclasses
