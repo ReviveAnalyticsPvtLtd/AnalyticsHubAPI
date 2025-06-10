@@ -24,7 +24,7 @@ class ReportingToolWorkflow:
         pass
     def rephraseQuery(self, state: State):
         response = queryRephraseChain.invoke({
-            "query": state["inputQuery"],
+            "query": state["inputQuery"] + " /no_think",
             "metadata": state["metadata"]
         })
         return {
@@ -32,7 +32,7 @@ class ReportingToolWorkflow:
         }
     def generateCode(self, state: State):
         response = codeGeneratorChain.invoke({
-            "query": state["rephrasedQuery"],
+            "query": state["rephrasedQuery"] + " /no_think",
             "metadata": state["metadata"]
         })
         return {
@@ -52,7 +52,7 @@ class ReportingToolWorkflow:
             return "fail"
     def failsafe(self, state: State):
         response = failsafeCodeGeneratorChain.invoke({
-            "user_query": state["rephrasedQuery"],
+            "user_query": state["rephrasedQuery"] + " /no_think",
             "metadata_context": state["metadata"],
             "code_with_errors": state["generatedCode"],
             "error_message": state["codeOutput"]
