@@ -99,7 +99,7 @@ class ExportToDashboard(BaseModel):
     page: str
     chartType: str
     title: str
-    xLabels: list[str]
-    yLabels: list[str]
+    xLabels: list[str] | None = None
+    yLabels: list[str] | None = None
     data: dict[str, list]
     layout: dict[str, int]
