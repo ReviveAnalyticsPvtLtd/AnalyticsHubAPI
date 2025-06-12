@@ -101,5 +101,5 @@ class ExportToDashboard(BaseModel):
     title: str
     xLabels: list[str] | None = None
     yLabels: list[str] | None = None
-    data: dict[str, list]
+    data: dict[str, list] | str
     layout: dict[str, int]
