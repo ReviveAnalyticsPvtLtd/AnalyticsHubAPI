@@ -3,9 +3,11 @@ duckdb
 fsspec 
 redis
 orjson
+celery
 fastapi
 pymysql
 supabase
+gunicorn
 openpyxl
 sqlalchemy
 python-dotenv

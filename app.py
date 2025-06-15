@@ -4,7 +4,6 @@ from analyticsHub.utils.functions import getConfig
 from api_analytics.fastapi import Analytics
 from supabase import create_client
 from fastapi import FastAPI
-import uvicorn
 import psutil
 import os
 
@@ -51,11 +50,3 @@ app.include_router(blends.router, prefix = "/blends", tags = ["Blends"])
 app.include_router(reportingTool.router, prefix = "/reportingTool", tags = ["Reporting Tool"])
 app.include_router(dashboard.router, prefix = "/dashboard", tags = ["Dashboard"])
 app.include_router(utilities.router, prefix = "/utils", tags = ["Utilities"])
-
-if __name__ == "__main__":
-    uvicorn.run(
-        "app:app",
-        host = config.get("APPLICATION", "host"),
-        port = config.getint("APPLICATION", "port"),
-        workers = config.getint("APPLICATION", "workers")
-    )
