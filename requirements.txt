@@ -13,6 +13,7 @@ sqlalchemy
 python-dotenv
 python-jose
 pydantic
+lightgbm
 pandas
 psutil
 uvicorn
