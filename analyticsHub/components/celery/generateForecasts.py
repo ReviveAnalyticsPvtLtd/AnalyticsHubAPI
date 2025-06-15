@@ -17,7 +17,7 @@ warnings.filterwarnings(action = "ignore")
 
 def generateAndSendForecasts():
     engine = create_engine(
-        f"postgresql+psycopg2://{os.environ.get("POSTGRE_USER")}:{os.environ.get("POSTGRE_PASSWORD")}@{os.environ.get("POSTGRE_HOST")}:{os.environ.get("POSTGRE_PORT")}/{os.environ.get("POSTGRE_DB")}"
+        f'postgresql+psycopg2://{os.environ.get("POSTGRE_USER")}:{os.environ.get("POSTGRE_PASSWORD")}@{os.environ.get("POSTGRE_HOST")}:{os.environ.get("POSTGRE_PORT")}/{os.environ.get("POSTGRE_DB")}'
     )
 
     dfOrig = pd.read_sql("emptykegsdata", engine).rename(columns={"sum(Quantity)": "Quantity"})
