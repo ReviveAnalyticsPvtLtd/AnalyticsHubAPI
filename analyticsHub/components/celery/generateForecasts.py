@@ -158,7 +158,7 @@ def generateAndSendForecasts():
 
     # running the inference on all time series
     logging.info("Running inference on all time series")
-    for seriesName in tqdm(list(completeData.keys())[:10]):
+    for seriesName in tqdm(list(completeData.keys())):
         try:
             series = completeData[seriesName]
             if ((series.iloc[-1, 0] == 2024) & (len(series) >= 60)):
@@ -208,6 +208,7 @@ def generateAndSendForecasts():
             "email": "admin@rauhanahmed.in"
         },
         "to": [
+            {"email": "reviveanalyticsdocs@gmail.com", "name": "Modi Daryani"},
             {"email": "defa22200@gmail.com", "name": "Rauhan"}
         ],
         "subject": "CSV Output File - AnalyticsHub",
