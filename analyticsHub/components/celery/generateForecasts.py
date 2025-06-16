@@ -308,4 +308,3 @@ def generateAndSendForecasts():
           json=failure_payload
         )
         return 500
-    
