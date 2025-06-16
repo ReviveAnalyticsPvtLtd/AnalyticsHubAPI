@@ -3,6 +3,7 @@ from sqlalchemy import create_engine
 from lightgbm import LGBMRegressor
 from functools import lru_cache
 from tqdm import tqdm
+import html
 import pandas as pd
 import numpy as np
 import statistics
@@ -12,19 +13,21 @@ import datetime
 import logging
 import base64
 import os
+import io
 
-warnings.filterwarnings(action = "ignore")
+log_stream = io.StringIO()
+logger = logging.getLogger()  
+logger.setLevel(logging.INFO)
 
-# Configure logging
-log_file_path = "forecast_generation.log"
-logging.basicConfig(
-    filename=log_file_path,
-    filemode="a",
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    level=logging.INFO
+stream_handler = logging.StreamHandler(log_stream)
+stream_handler.setFormatter(
+    logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 )
+logger.addHandler(stream_handler)
 
 def generateAndSendForecasts():
+    log_stream.truncate(0)
+    log_stream.seek(0)
     try:
 
         logging.info("Reading data from source")
@@ -33,6 +36,7 @@ def generateAndSendForecasts():
             f'postgresql+psycopg2://{os.environ.get("POSTGRE_USER")}:{os.environ.get("POSTGRE_PASSWORD")}@{os.environ.get("POSTGRE_HOST")}:{os.environ.get("POSTGRE_PORT")}/{os.environ.get("POSTGRE_DB")}'
         )
         dfOrig = pd.read_sql("emptykegsdata", engine).rename(columns={"sum(Quantity)": "Quantity"})
+        logging.info(f"Loaded {len(dfOrig)} rows")
         data = dfOrig.copy()
 
         data["Quantity"] = data["Quantity"].astype(float)
@@ -214,115 +218,93 @@ def generateAndSendForecasts():
 
         logging.info("Writing predictions to source database in forecasts table")
         df.to_sql("forecasts", engine, index = False, if_exists = "replace")
-        b64String = base64.b64encode(df.to_csv(index = False).encode()).decode()
+        logging.info("Finished generating predictions, preparing CSV")
+        b64_csv = base64.b64encode(df.to_csv(index=False).encode()).decode()
 
-        logging.info("Sending predictions and logs to the specified e-mail address")
-        with open(log_file_path, "rb") as f:
-            logFileEncoded = base64.b64encode(f.read()).decode()
+        logging.info("Encoding in-memory log for embedding")
+        raw_logs = log_stream.getvalue()
+        # escape HTML and preserve line breaks
+        embedded_logs = html.escape(raw_logs).replace('\n', '<br>')
 
-        # Prepare the payload
+        # ── Success payload with embedded logs ──────────────────────────────────
+        success_html = f"""
+        <html>
+          <body style="font-family:Arial, sans-serif; padding:20px; color:#333;">
+            <h2>📊 Forecast Results Attached</h2>
+            <p>Please find the CSV attached below.</p>
+            <h3>Process Logs</h3>
+            <div style="background:#f0f0f0; padding:10px; border-radius:4px;
+                        font-family:monospace; white-space:pre-wrap;">
+              {embedded_logs}
+            </div>
+          </body>
+        </html>
+        """
+
         payload = {
-            "sender": {
-                "name": "Rauhan Ahmed",
-                "email": "admin@rauhanahmed.in"
-            },
-            "to": [
-                {"email": "reviveanalyticsdocs@gmail.com", "name": "Modi Daryani"},
-                {"email": "defa22200@gmail.com", "name": "Rauhan"}
-            ],
-            "subject": "CSV Output File - AnalyticsHub",
-            "htmlContent": """
-                <html>
-                    <body style="font-family: Arial, sans-serif; background-color: #f9f9f9; padding: 20px; color: #333;">
-                        <div style="max-width: 600px; margin: auto; background-color: #ffffff; padding: 30px; border: 1px solid #ddd; border-radius: 6px;">
-                            <p style="font-size: 16px; margin-bottom: 20px;">Dear Recipient,</p>
-                            <p style="font-size: 15px; margin-bottom: 20px;">
-                                Please find the attached CSV file containing the output data.
-                            </p>
-                            <p style="font-size: 15px;">Best regards,<br><strong>AnalyticsHub Bot</strong></p>
-                        </div>
-                    </body>
-                </html>
-            """,
-            "attachment": [
-                {
-                    "name": "outputLGBM.csv",
-                    "content": b64String
-                },
-                {
-                    "name": "logFile.log",
-                    "content": logFileEncoded
-                }
-            ]
+          "sender": {"name": "AnalyticsHub Bot", "email": "admin@rauhanahmed.in"},
+          "to": [
+            {"email": "reviveanalyticsdocs@gmail.com", "name": "Modi Daryani"},
+            {"email": "defa22200@gmail.com", "name": "Rauhan"}
+          ],
+          "subject": "✅ CSV Output File - AnalyticsHub",
+          "htmlContent": success_html,
+          "attachment": [
+            {"name": "outputLGBM.csv", "content": b64_csv}
+          ]
         }
 
-        # Send the request
         response = requests.post(
-            "https://api.brevo.com/v3/smtp/email",
-            headers={
-                "accept": "application/json",
-                "api-key": os.environ.get("BREVO_API_KEY"),
-                "content-type": "application/json"
-            },
-            json=payload
+          "https://api.brevo.com/v3/smtp/email",
+          headers={
+            "accept": "application/json",
+            "api-key": os.environ["BREVO_API_KEY"],
+            "content-type": "application/json"
+          },
+          json=payload
         )
-        
-        if os.path.exists(log_file_path):
-            os.remove(log_file_path)
 
         return response.status_code
     
     except Exception as e:
         logging.error("Failure in script", exc_info=True)
-    # Encode the log file
-    with open(log_file_path, "rb") as f:
-        logFileEncoded = base64.b64encode(f.read()).decode()
 
-    # Failure payload structure
-    failure_payload = {
-        "sender": {
-            "name": "Rauhan Ahmed",
-            "email": "admin@rauhanahmed.in"
-        },
-        "to": [
+        logging.exception("Unhandled failure during forecast generation")
+
+        raw_logs = log_stream.getvalue()
+        embedded_logs = html.escape(raw_logs).replace('\n', '<br>')
+
+        # ── Failure payload with embedded logs ──────────────────────────────────
+        failure_html = f"""
+        <html>
+          <body style="font-family:Arial, sans-serif; padding:20px; color:#900;">
+            <h2>⚠️ Forecast Generation Failed</h2>
+            <p>An error occurred. See logs below:</p>
+            <div style="background:#fdecea; padding:10px; border-radius:4px;
+                        font-family:monospace; white-space:pre-wrap;">
+              {embedded_logs}
+            </div>
+          </body>
+        </html>
+        """
+
+        failure_payload = {
+          "sender": {"name": "AnalyticsHub Bot", "email": "admin@rauhanahmed.in"},
+          "to": [
             {"email": "reviveanalyticsdocs@gmail.com", "name": "Modi Daryani"},
             {"email": "defa22200@gmail.com", "name": "Rauhan"}
-        ],
-        "subject": "⚠️ Forecast Generation Failed - AnalyticsHub",
-        "htmlContent": """
-            <html>
-                <body style="font-family: Arial, sans-serif; background-color: #fff3f3; padding: 20px; color: #990000;">
-                    <div style="max-width: 600px; margin: auto; background-color: #ffffff; padding: 30px; border: 1px solid #e0b4b4; border-radius: 6px;">
-                        <p style="font-size: 16px; margin-bottom: 20px;"><strong>Forecast Generation Failed</strong></p>
-                        <p style="font-size: 15px; margin-bottom: 20px;">
-                            An error occurred during the forecast generation process. Please refer to the attached log file for details.
-                        </p>
-                        <p style="font-size: 15px;">Best regards,<br><strong>AnalyticsHub Bot</strong></p>
-                    </div>
-                </body>
-            </html>
-        """,
-        "attachment": [
-            {
-                "name": "forecast_generation.log",
-                "content": logFileEncoded
-            }
-        ]
-    }
+          ],
+          "subject": "⚠️ Forecast Generation Failed - AnalyticsHub",
+          "htmlContent": failure_html
+        }
 
-    # Send failure email
-    response = requests.post(
-        "https://api.brevo.com/v3/smtp/email",
-        headers={
+        requests.post(
+          "https://api.brevo.com/v3/smtp/email",
+          headers={
             "accept": "application/json",
-            "api-key": os.environ.get("BREVO_API_KEY"),
+            "api-key": os.environ["BREVO_API_KEY"],
             "content-type": "application/json"
-        },
-        json=failure_payload
-    )
-
-    # Optionally delete the log after sending
-    if os.path.exists(log_file_path):
-        os.remove(log_file_path)
-
-    return 500
+          },
+          json=failure_payload
+        )
+        return 500
