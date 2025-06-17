@@ -1,7 +1,7 @@
 from ..models.requestModels import GenerateChartInput, PanelChartDetails
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.exceptions import HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import ORJSONResponse
 from ..utils.functions import verifyToken
 from fastapi import APIRouter, Depends
 from urllib.request import urlopen
@@ -33,9 +33,9 @@ async def generateChart(chartDetails: GenerateChartInput, credentials: Annotated
             print(f"RAM Usage Percentage: {memory.percent}%")
             print(f"Total CPU Usage: {totalUsage}")
             print(f"CPU Usage Per Core: {cpuUsage}")
-            return JSONResponse(status_code = 200, content = response)
+            return ORJSONResponse(status_code = 200, content = response)
         else:
-            return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
+            return ORJSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
     
@@ -58,8 +58,8 @@ async def generatePanelChart(panelChartDetails: PanelChartDetails, credentials: 
             print(f"RAM Usage Percentage: {memory.percent}%")
             print(f"Total CPU Usage: {totalUsage}")
             print(f"CPU Usage Per Core: {cpuUsage}")
-            return JSONResponse(status_code = 200, content = response)
+            return ORJSONResponse(status_code = 200, content = response)
         else:
-            return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
+            return ORJSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
