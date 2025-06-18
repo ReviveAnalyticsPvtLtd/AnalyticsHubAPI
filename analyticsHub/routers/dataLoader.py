@@ -64,9 +64,9 @@ async def loadExcelData(projectId: Annotated[str, Form()], file: Annotated[Uploa
                     path = f"{projectId}/{fileName}"
                 )
                 if project["dataTables"]:
-                    projectData = project["dataTables"] + f", {fileName}"
+                    projectData = project["dataTables"] + f", {'.'.join(fileName.split('.')[:-1])}"
                 else:
-                    projectData = fileName
+                    projectData = '.'.join(fileName.split('.')[:-1])
                 _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
                 temp.close()
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Data loaded successfully"})
@@ -89,7 +89,7 @@ async def loadMySql(connection: LoadMySQLorPostgreSQL, credentials: Annotated[HT
                     path = f"{connection.projectId}/{connection.table + '.parquet'}"
                 )
                 if project["dataTables"]:
-                    projectData = project["dataTables"] + f", {connection.table + '.parquet'}"
+                    projectData = project["dataTables"] + f", {connection.table}"
                 else:
                     projectData = connection.table
                 _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", connection.projectId).execute()
@@ -114,7 +114,7 @@ async def loadPostgreSQL(connection: LoadMySQLorPostgreSQL, credentials: Annotat
                     path = f"{connection.projectId}/{connection.table + '.parquet'}"
                 )
                 if project["dataTables"]:
-                    projectData = project["dataTables"] + f", {connection.table + '.parquet'}"
+                    projectData = project["dataTables"] + f", {connection.table}"
                 else:
                     projectData = connection.table
                 _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", connection.projectId).execute()
@@ -140,7 +140,7 @@ async def loadMongoDB(connection: LoadMongoDB, credentials: Annotated[HTTPAuthor
                     path = f"{connection.projectId}/{connection.collection + '.parquet'}"
                 )
                 if project["dataTables"]:
-                    projectData = project["dataTables"] + f", {connection.collection + '.parquet'}"
+                    projectData = project["dataTables"] + f", {connection.collection}"
                 else:
                     projectData = connection.collection
                 _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", connection.projectId).execute()
