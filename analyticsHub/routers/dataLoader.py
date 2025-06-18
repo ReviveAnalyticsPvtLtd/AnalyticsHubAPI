@@ -34,13 +34,18 @@ async def loadCsvData(projectId: Annotated[str, Form()], file: Annotated[UploadF
                 pd.read_csv(io.BytesIO(await file.read())).to_parquet(temp.name, compression = "snappy")
                 _ = client.storage.from_("AnalyticsHub").upload(
                     file = temp.name,
-                    path = f"{projectId}/{os.path.splitext(file.filename)[0] + '.parquet'}"
+                    path = f"{projectId}/{os.path.splitext(file.filename)[0] + '.parquet'}",
+                    file_options = {"upsert": "true"}
                 )
                 if project["dataTables"]:
-                    projectData = project["dataTables"] + f", {os.path.splitext(file.filename)[0]}"
+                    if os.path.splitext(file.filename)[0] not in project["dataTables"]:
+                        projectData = project["dataTables"] + f", {os.path.splitext(file.filename)[0]}"
+                        _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
+                    else:
+                        pass
                 else:
                     projectData = os.path.splitext(file.filename)[0]
-                _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
+                    _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
                 temp.close()
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Data loaded successfully"})
         else:
@@ -61,13 +66,18 @@ async def loadExcelData(projectId: Annotated[str, Form()], file: Annotated[Uploa
                     fileName = f"{os.path.splitext(file.filename)[0] + '_' + sheetName + '.parquet'}"
                 _ = client.storage.from_("AnalyticsHub").upload(
                     file = temp.name,
-                    path = f"{projectId}/{fileName}"
+                    path = f"{projectId}/{fileName}",
+                    file_options = {"upsert": "true"}
                 )
                 if project["dataTables"]:
-                    projectData = project["dataTables"] + f", {'.'.join(fileName.split('.')[:-1])}"
+                    if '.'.join(fileName.split('.')[:-1]) not in project["dataTables"]:
+                        projectData = project["dataTables"] + f", {'.'.join(fileName.split('.')[:-1])}"
+                        _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
+                    else:
+                        pass
                 else:
                     projectData = '.'.join(fileName.split('.')[:-1])
-                _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
+                    _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
                 temp.close()
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Data loaded successfully"})
         else:
@@ -86,13 +96,18 @@ async def loadMySql(connection: LoadMySQLorPostgreSQL, credentials: Annotated[HT
                 pd.read_sql(f"SELECT * FROM {connection.table}", engine).to_parquet(temp.name, compression = "snappy")
                 _ = client.storage.from_("AnalyticsHub").upload(
                     file = temp.name,
-                    path = f"{connection.projectId}/{connection.table + '.parquet'}"
+                    path = f"{connection.projectId}/{connection.table + '.parquet'}",
+                    file_options = {"upsert": "true"}
                 )
                 if project["dataTables"]:
-                    projectData = project["dataTables"] + f", {connection.table}"
+                    if connection.table not in project["dataTables"]:
+                        projectData = project["dataTables"] + f", {connection.table}"
+                        _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", connection.projectId).execute()
+                    else:
+                        pass
                 else:
                     projectData = connection.table
-                _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", connection.projectId).execute()
+                    _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", connection.projectId).execute()
                 temp.close()
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Data loaded successfully"})
         else:
@@ -111,13 +126,18 @@ async def loadPostgreSQL(connection: LoadMySQLorPostgreSQL, credentials: Annotat
                 pd.read_sql(f"SELECT * FROM {connection.table}", engine).to_parquet(temp.name, compression = "snappy")
                 _ = client.storage.from_("AnalyticsHub").upload(
                     file = temp.name,
-                    path = f"{connection.projectId}/{connection.table + '.parquet'}"
+                    path = f"{connection.projectId}/{connection.table + '.parquet'}",
+                    file_options = {"upsert": "true"}
                 )
                 if project["dataTables"]:
-                    projectData = project["dataTables"] + f", {connection.table}"
+                    if connection.table not in project["dataTables"]:
+                        projectData = project["dataTables"] + f", {connection.table}"
+                        _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", connection.projectId).execute()
+                    else:
+                        pass
                 else:
                     projectData = connection.table
-                _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", connection.projectId).execute()
+                    _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", connection.projectId).execute()
                 temp.close()
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Data loaded successfully"})
         else:
@@ -137,13 +157,18 @@ async def loadMongoDB(connection: LoadMongoDB, credentials: Annotated[HTTPAuthor
                 pd.DataFrame(records).to_parquet(temp.name, compression = "snappy")
                 _ = client.storage.from_("AnalyticsHub").upload(
                     file = temp.name,
-                    path = f"{connection.projectId}/{connection.collection + '.parquet'}"
+                    path = f"{connection.projectId}/{connection.collection + '.parquet'}",
+                    file_options = {"upsert": "true"}
                 )
                 if project["dataTables"]:
-                    projectData = project["dataTables"] + f", {connection.collection}"
+                    if connection.collection not in project["dataTables"]:
+                        projectData = project["dataTables"] + f", {connection.collection}"
+                        _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", connection.projectId).execute()
+                    else:
+                        pass
                 else:
                     projectData = connection.collection
-                _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", connection.projectId).execute()
+                    _ = client.table("Projects").update({"dataTables": projectData}).eq("projectId", connection.projectId).execute()
                 temp.close()
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Data loaded successfully"})
         else:
