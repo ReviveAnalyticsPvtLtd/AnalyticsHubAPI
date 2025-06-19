@@ -10,6 +10,7 @@ from typing import Annotated
 from . import pipeline
 from jose import jwt
 import pandas as pd
+import datetime
 import uuid
 import json
 import time
@@ -109,15 +110,23 @@ async def updateTrash(updateTrashDetails: UpdateProjectState, credentials: Annot
 async def generateMetadata(projectId: str, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
         if verifyToken(token = credentials.credentials):
-            filenames = [x.get("name") for x in client.storage.from_("AnalyticsHub").list(projectId)]
+            files = client.storage.from_("AnalyticsHub").list(projectId)
+            filenames = [x.get("name") for x in files]
             if "metadata.json" in filenames:
                 fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
                 jsonData = json.loads(urlopen(fileUrl).read())
-                jsonDataTables = set(jsonData.keys())
                 newMetadata = pipeline.generateMetadata(projectId = projectId)
-                newMetadataTables = set(newMetadata.keys())
-                newKeys = newMetadataTables.difference(jsonDataTables)
-                for key in newKeys: jsonData[key] = newMetadata[key]
+                dataFiles = list()
+                for file in files:
+                    if file["name"] == "metadata.json":
+                        metadataLastModifiedTime = datetime.datetime.strptime(file["metadata"]["lastModified"], '%Y-%m-%dT%H:%M:%S.000Z')
+                    elif os.path.splitext(file["name"])[-1] == ".parquet":
+                        dataFiles.append(file)
+                    else:
+                        continue
+                updatedFiles = filter(lambda x: datetime.datetime.strptime(x["metadata"]["lastModified"], '%Y-%m-%dT%H:%M:%S.000Z') > metadataLastModifiedTime, dataFiles)
+                updatedFiles = [x.get("name") for x in updatedFiles]
+                for key in updatedFiles: jsonData[key] = newMetadata[key]
             else:
                 jsonData = pipeline.generateMetadata(projectId = projectId)
             with io.BytesIO() as buffer:
