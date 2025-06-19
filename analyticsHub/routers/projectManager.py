@@ -125,7 +125,7 @@ async def generateMetadata(projectId: str, credentials: Annotated[HTTPAuthorizat
                     else:
                         continue
                 updatedFiles = filter(lambda x: datetime.datetime.strptime(x["metadata"]["lastModified"], '%Y-%m-%dT%H:%M:%S.000Z') > metadataLastModifiedTime, dataFiles)
-                updatedFiles = [x.get("name") for x in updatedFiles]
+                updatedFiles = [os.path.splitext(x.get("name"))[0] for x in updatedFiles]
                 for key in updatedFiles: jsonData[key] = newMetadata[key]
             else:
                 jsonData = pipeline.generateMetadata(projectId = projectId)
