@@ -46,7 +46,7 @@ async def getTaskStatus(websocket: WebSocket):
     if not authHeader or not authHeader.startswith("Bearer"):
         await websocket.close(code = status.WS_1008_POLICY_VIOLATION)
         return 
-    token = int(token.split(" ")[1])
+    token = int(authHeader.split(" ")[1])
     if not verifyToken(token = token):
         await websocket.close(code = status.WS_1008_POLICY_VIOLATION)
         return 
