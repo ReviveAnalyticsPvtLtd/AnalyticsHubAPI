@@ -51,7 +51,7 @@ async def getTaskStatus(websocket: WebSocket):
         await websocket.close(code = status.WS_1008_POLICY_VIOLATION)
         return 
     await websocket.accept()
-    await websocket.send_json({"status": "task initialized"})
+    await websocket.send_json({"status": "handshake successful"})
     try:
         taskId = websocket.query_params.get("taskId")
         r = task.celeryApp.AsyncResult(taskId)
