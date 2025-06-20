@@ -56,7 +56,7 @@ async def getTaskStatus(websocket: WebSocket):
         taskId = websocket.query_params.get("taskId")
         r = task.celeryApp.AsyncResult(taskId)
         while not r.ready():
-            asyncio.sleep(5)
+            await asyncio.sleep(5)
             continue            
         await websocket.send_json({
             "taskId": r.task_id,
