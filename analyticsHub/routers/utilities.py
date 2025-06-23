@@ -42,15 +42,11 @@ async def sendForecasts(credentials: Annotated[HTTPAuthorizationCredentials, Dep
     
 @router.websocket("/ws/getTaskStatus")
 async def getTaskStatus(websocket: WebSocket):
-    authHeader = websocket.headers.get("authorization")
-    if not authHeader or not authHeader.startswith("Bearer"):
-        await websocket.close(code = status.WS_1008_POLICY_VIOLATION)
-        return 
-    token = authHeader.split(" ")[1]
-    if not verifyToken(token = token):
-        await websocket.close(code = status.WS_1008_POLICY_VIOLATION)
-        return 
     await websocket.accept()
+    token = websocket.query_params.get("token")
+    if not token or not verifyToken(token = token):
+        await websocket.close(code = status.WS_1008_POLICY_VIOLATION)
+        return 
     await websocket.send_json({"status": "handshake successful"})
     try:
         taskId = websocket.query_params.get("taskId")
