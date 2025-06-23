@@ -203,3 +203,15 @@ async def deleteProject(projectId: str, credentials: Annotated[HTTPAuthorization
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+    
+@router.get("/listTriggers")
+async def listTriggers(projectId: str, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+    try:
+        if verifyToken(token = credentials.credentials):
+            searchResult = list(filter(lambda x: True if x["projectId"] == projectId else False, client.table("Projects").select("*").execute().data))[0]
+            triggers = searchResult.get("triggers").split(", ")
+            return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "triggers": triggers})    
+        else:
+            return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
