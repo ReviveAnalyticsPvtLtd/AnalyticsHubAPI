@@ -34,7 +34,7 @@ async def sendForecasts(credentials: Annotated[HTTPAuthorizationCredentials, Dep
     try:
         if verifyToken(token = credentials.credentials):
             r = task.sendForecasts.delay()
-            return JSONResponse(status_code = 200, content = {"taskId": r.task_id, "taskStatus": r.status})
+            return JSONResponse(status_code = 200, content = {"taskId": r.task_id, "triggerName": "forecast", "taskStatus": r.status})
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
     except Exception as e:
