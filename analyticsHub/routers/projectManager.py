@@ -204,7 +204,7 @@ async def deleteProject(projectId: str, credentials: Annotated[HTTPAuthorization
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
     
-@router.get("/listTriggers")
+@router.get("/listTriggers/{projectId}")
 async def listTriggers(projectId: str, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
         if verifyToken(token = credentials.credentials):
