@@ -56,7 +56,7 @@ async def getTaskStatus(websocket: WebSocket):
             continue            
         await websocket.send_json({
             "taskId": r.task_id,
-            "taskStatus": r.status,
+            "status": r.status,
             "taskResponseCode": r.get()
         })
         await websocket.close()
