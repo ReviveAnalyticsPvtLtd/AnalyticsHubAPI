@@ -47,7 +47,7 @@ async def getTaskStatus(websocket: WebSocket):
     if not token or not verifyToken(token = token):
         await websocket.close(code = status.WS_1008_POLICY_VIOLATION)
         return 
-    await websocket.send_json({"status": "handshake successful"})
+    await websocket.send_json({"status": "RUNNING"})
     try:
         taskId = websocket.query_params.get("taskId")
         r = task.celeryApp.AsyncResult(taskId)
