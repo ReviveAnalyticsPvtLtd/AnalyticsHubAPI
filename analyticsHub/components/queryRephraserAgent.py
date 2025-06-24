@@ -3,7 +3,8 @@ from langchain_core.prompts import PromptTemplate
 from ..utils.functions import readYaml, getConfig
 from ..utils.exceptions import CustomException
 from pydantic import Field, BaseModel
-from langchain_cerebras import ChatCerebras
+# from langchain_cerebras import ChatCerebras
+from langchain_openai import ChatOpenAI
 from ..utils.logger import logger
 import os
 
@@ -30,10 +31,17 @@ class QueryRephaser:
                 input_variables = ["metadata", "query"],
                 partial_variables = {"format_instructions": queryRephraseParser.get_format_instructions()}
             )
-            llm = ChatCerebras(
-                model=self.config.get("QUERYREPHRASER", "model"),
-                temperature=self.config.getfloat("QUERYREPHRASER", "temperature"),
-                max_tokens=self.config.getint("QUERYREPHRASER", "maxTokens")
+            # llm = ChatCerebras(
+            #     model=self.config.get("QUERYREPHRASER", "model"),
+            #     temperature=self.config.getfloat("QUERYREPHRASER", "temperature"),
+            #     max_tokens=self.config.getint("QUERYREPHRASER", "maxTokens")
+            # )
+            llm = ChatOpenAI(
+                openai_api_key = os.environ["OPENAI_API_KEY"],
+                openai_api_base = os.environ["OPENAI_API_BASE"],
+                model_name = self.config.get("QUERYREPHRASER", "model"),
+                temperature = self.config.getfloat("QUERYREPHRASER", "temperature"),
+                max_tokens = self.config.getint("QUERYREPHRASER", "maxTokens")
             )
             queryRephraseChain = queryRephrasePrompt | llm | queryRephraseParser
             logger.info("Query rephraser chain constructed successfully.")

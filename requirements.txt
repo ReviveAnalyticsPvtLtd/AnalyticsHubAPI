@@ -24,6 +24,7 @@ langchain
 langchain-community
 langchain-core
 langchain-groq
+langchain-openai
 langchain-cerebras
 langchain-experimental
 fastapi-analytics

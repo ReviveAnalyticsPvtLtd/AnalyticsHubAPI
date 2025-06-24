@@ -3,7 +3,8 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from ..utils.functions import readYaml, getConfig
 from ..utils.exceptions import CustomException
-from langchain_cerebras import ChatCerebras
+# from langchain_cerebras import ChatCerebras
+from langchain_openai import ChatOpenAI
 from ..utils.logger import logger
 import os
 
@@ -18,9 +19,15 @@ class CodeGenerator:
             logger.info("Constructing code generation chain.")
             promptTemplate = readYaml(self.yamlPath)["codeGeneratorAgentPrompt"]
             codeGeneratorPrompt = PromptTemplate.from_template(promptTemplate)
-            llm = ChatCerebras(
-                model=self.config.get("CODEGENERATOR", "model"),
-                temperature=self.config.getfloat("CODEGENERATOR", "temperature")
+            # llm = ChatCerebras(
+            #     model=self.config.get("CODEGENERATOR", "model"),
+            #     temperature=self.config.getfloat("CODEGENERATOR", "temperature")
+            # )
+            llm = ChatOpenAI(
+                openai_api_key = os.environ["OPENAI_API_KEY"],
+                openai_api_base = os.environ["OPENAI_API_BASE"],
+                model_name = self.config.get("CODEGENERATOR", "model"),
+                temperature = self.config.getfloat("CODEGENERATOR", "temperature")
             )
             codeGeneratorParser = StrOutputParser()
             codeGeneratorChain = RunnablePassthrough() | codeGeneratorPrompt | llm | codeGeneratorParser
