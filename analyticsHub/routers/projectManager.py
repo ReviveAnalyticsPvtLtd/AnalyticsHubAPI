@@ -209,8 +209,12 @@ async def listTriggers(projectId: str, credentials: Annotated[HTTPAuthorizationC
     try:
         if verifyToken(token = credentials.credentials):
             searchResult = list(filter(lambda x: True if x["projectId"] == projectId else False, client.table("Projects").select("*").execute().data))[0]
-            triggers = searchResult.get("triggers").split(", ")
-            return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "triggers": triggers})    
+            triggers = searchResult.get("triggers")
+            if triggers:
+                triggers = triggers.split(", ")
+                return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "triggers": triggers})    
+            else:
+                return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "triggers": list()})
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
     except Exception as e:
