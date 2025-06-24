@@ -27,7 +27,8 @@ class FailsafeCodeGenerator:
                 openai_api_key = os.environ["OPENAI_API_KEY"],
                 openai_api_base = os.environ["OPENAI_API_BASE"],
                 model_name = self.config.get("FAILSAFECODEGENERATOR", "model"),
-                temperature = self.config.getfloat("FAILSAFECODEGENERATOR", "temperature")
+                temperature = self.config.getfloat("FAILSAFECODEGENERATOR", "temperature"),
+                max_tokens = self.config.getint("FAILSAFECODEGENERATOR", "maxTokens")
             )
             codeGeneratorParser = StrOutputParser()
             failsafeCodeGeneratorChain = RunnablePassthrough() | codeGeneratorPrompt | llm | codeGeneratorParser

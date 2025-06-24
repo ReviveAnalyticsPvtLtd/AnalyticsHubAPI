@@ -27,7 +27,8 @@ class MetadataGenerator:
                 openai_api_key = os.environ["OPENAI_API_KEY"],
                 openai_api_base = os.environ["OPENAI_API_BASE"],
                 model_name = self.config.get("METADATAGENERATOR", "model"),
-                temperature = self.config.getfloat("METADATAGENERATOR", "temperature")
+                temperature = self.config.getfloat("METADATAGENERATOR", "temperature"),
+                max_tokens = self.config.getint("METADATAGENERATOR", "maxTokens")
             )
             outputParser = StrOutputParser()
             chain = {

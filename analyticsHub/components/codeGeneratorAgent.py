@@ -27,7 +27,8 @@ class CodeGenerator:
                 openai_api_key = os.environ["OPENAI_API_KEY"],
                 openai_api_base = os.environ["OPENAI_API_BASE"],
                 model_name = self.config.get("CODEGENERATOR", "model"),
-                temperature = self.config.getfloat("CODEGENERATOR", "temperature")
+                temperature = self.config.getfloat("CODEGENERATOR", "temperature"),
+                max_tokens = self.config.getint("CODEGENERATOR", "maxTokens")
             )
             codeGeneratorParser = StrOutputParser()
             codeGeneratorChain = RunnablePassthrough() | codeGeneratorPrompt | llm | codeGeneratorParser
