@@ -17,7 +17,9 @@ lightgbm
 pandas
 psutil
 uvicorn
+beautifulsoup4
 psycopg2-binary
+ydata-profiling
 pymongo[srv]
 python-multipart
 langchain

@@ -1,5 +1,7 @@
-from ..components.metadataGenerator import MetadataGenerator
 from ..workflows.reportingWorkflow import reportingToolWorkflow
+from ..components.metadataGenerator import MetadataGenerator
+from ..components.reportGenerator import ReportGenerator
+from concurrent.futures import ProcessPoolExecutor
 from ..components.speechToText import SpeechToText
 from ..utils.exceptions import CustomException
 from ..utils.functions import readYaml
@@ -10,6 +12,7 @@ from ..utils.logger import logger
 import orjson
 import time
 import os
+import io
 
 class CompletePipeline:
     def __init__(self):
@@ -77,3 +80,20 @@ class CompletePipeline:
             logger.error(CustomException(e))
             raise CustomException(e)
         
+    def generateReport(self, projectId: str) -> dict:
+        try:
+            reportGeneratorObj = ReportGenerator()
+            allTables = reportGeneratorObj.getAllTables(projectId = projectId)
+            with ProcessPoolExecutor(max_workers = 5) as executor:
+                futures = [executor.submit(reportGeneratorObj.getProfilingReport, projectId, tableName) for tableName in allTables]
+            results = [x.result() for x in futures]
+            dct = dict(zip(allTables, results))
+            with io.BytesIO() as buffer:
+                output = orjson.dumps(dct)
+                buffer.write(output)
+                buffer.seek(0)
+                _ = self.supabaseClient.storage.from_("AnalyticsHub").upload(path = f"{projectId}/generatedReport.json", file = buffer.getvalue(), file_options = {"upsert": "true"})  
+            return output.decode("utf-8")
+        except Exception as e:
+            logger.error(CustomException(e))
+            raise CustomException(e)

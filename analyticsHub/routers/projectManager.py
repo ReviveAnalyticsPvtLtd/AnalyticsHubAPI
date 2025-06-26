@@ -238,3 +238,14 @@ async def listTriggers(credentials: Annotated[HTTPAuthorizationCredentials, Depe
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+    
+@router.post("/generateReport/{projectId}")
+async def generateReport(projectId: str, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+    try:
+        if verifyToken(token = credentials.credentials):
+            reports = pipeline.generateReport(projectId = projectId)
+            return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "reportHtmlContent": reports})
+        else:
+            return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})   
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
