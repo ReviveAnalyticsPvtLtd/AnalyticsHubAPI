@@ -219,3 +219,22 @@ async def listTriggers(projectId: str, credentials: Annotated[HTTPAuthorizationC
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+    
+@router.get("/listTriggersUnderUserId")
+async def listTriggers(credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+    try:
+        if verifyToken(token = credentials.credentials):
+            userId = jwt.decode(token = credentials.credentials, key = os.environ["SECRET_KEY"], algorithms = ["HS256"]).get("userId")
+            allProjects = pd.DataFrame(client.table("Projects").select("*").execute().data)
+            allProjects = allProjects[allProjects["ownerUserId"] == userId]
+            allTriggers = list()
+            if allProjects.isna().all():
+                pass
+            else:
+                for trigger in allProjects["triggers"]:
+                    allTriggers += trigger.split(", ")
+            return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "triggersAssignedToUser": allTriggers})    
+        else:
+            return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
