@@ -228,7 +228,7 @@ async def listTriggers(credentials: Annotated[HTTPAuthorizationCredentials, Depe
             allProjects = pd.DataFrame(client.table("Projects").select("*").execute().data)
             allProjects = allProjects[allProjects["ownerUserId"] == userId]
             allTriggers = list()
-            if allProjects.isna().all():
+            if allProjects["triggers"].isna().all():
                 pass
             else:
                 for trigger in allProjects["triggers"]:
