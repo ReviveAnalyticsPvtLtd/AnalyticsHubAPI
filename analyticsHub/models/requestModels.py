@@ -103,3 +103,8 @@ class ExportToDashboard(BaseModel):
     yLabels: list[str] | None = None
     data: dict[str, list] | str
     layout: dict[str, int]
+
+class EditWidgetPosition(BaseModel):
+    projectId: str
+    pageId: str
+    widgets: list[dict]

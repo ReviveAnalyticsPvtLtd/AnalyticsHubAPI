@@ -1,4 +1,4 @@
-from ..models.requestModels import CreatePage, ExportToDashboard
+from ..models.requestModels import CreatePage, ExportToDashboard, EditWidgetPosition
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse
@@ -94,6 +94,32 @@ async def getData(projectId: str, page: str, credentials: Annotated[HTTPAuthoriz
             dashboardConfig = json.loads(urlopen(fileUrl).read())
             pageInfo = dashboardConfig.get(page)
             pageInfo["id"] = page
+            return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "pageData": pageInfo})
+        else:
+            return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+    
+@router.post("/editWidgetPosition")
+async def editWidgetPosition(details: EditWidgetPosition, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+    try:
+        if verifyToken(token = credentials.credentials):
+            fileUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "dashboardConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            dashboardConfig = json.loads(urlopen(fileUrl).read())
+            pageInfo = dashboardConfig.get(details.pageId)
+            widgets = pageInfo.get("widgets")
+            for newWidget in details.widgets:
+                newWidgetId = newWidget.get("id")
+                for widget in widgets:
+                    widgetId = widget.get("id")
+                    if widgetId == newWidgetId:
+                        widget["layout"] = newWidget["layout"]
+                    else:
+                        continue
+            with io.BytesIO() as buffer:
+                buffer.write(json.dumps(dashboardConfig, indent = 4).encode("utf-8"))
+                buffer.seek(0)
+                client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/dashboardConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "pageData": pageInfo})
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
