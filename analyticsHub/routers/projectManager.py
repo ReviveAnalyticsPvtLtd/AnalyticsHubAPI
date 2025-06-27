@@ -1,7 +1,7 @@
 from ..models.requestModels import UpdateProjectState, CreateProject, EditMetadata
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.exceptions import HTTPException
-from fastapi.responses import JSONResponse
 from ..utils.functions import verifyToken
 from fastapi import APIRouter, Depends
 from supabase import create_client
@@ -256,8 +256,8 @@ async def getReport(projectId: str, tableName: str, credentials: Annotated[HTTPA
         if verifyToken(token = credentials.credentials):
             fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "generatedReport.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             jsonData = json.loads(urlopen(fileUrl).read())
-            jsonData = jsonData.get(tableName)
-            return JSONResponse(status_code = 200, content = {"report": jsonData})
+            htmlContent = jsonData.get(tableName)
+            return HTMLResponse(status_code = 200, content = htmlContent)
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
     except Exception as e:

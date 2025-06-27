@@ -33,7 +33,7 @@ app.add_middleware(
 app.add_middleware(
     GZipMiddleware, 
     minimum_size=1000, 
-    compresslevel=5
+    compresslevel=7
 )
 app.add_middleware(
     Analytics,
