@@ -1,5 +1,6 @@
 from analyticsHub.routers import authentication, projectManager, dataLoader, reportingTool, utilities, blends, dashboard
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from analyticsHub.utils.functions import getConfig
 from api_analytics.fastapi import Analytics
 from supabase import create_client
@@ -28,6 +29,11 @@ app.add_middleware(
     allow_credentials = True,
     allow_methods = ["*"],
     allow_headers = ["*"],
+)
+app.add_middleware(
+    GZipMiddleware, 
+    minimum_size=1000, 
+    compresslevel=5
 )
 app.add_middleware(
     Analytics,

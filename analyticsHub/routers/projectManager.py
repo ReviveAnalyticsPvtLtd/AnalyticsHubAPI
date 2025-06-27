@@ -257,7 +257,7 @@ async def getReport(projectId: str, tableName: str, credentials: Annotated[HTTPA
             fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "generatedReport.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             jsonData = json.loads(urlopen(fileUrl).read())
             jsonData = jsonData.get(tableName)
-            return JSONResponse(status_code = 200, content = jsonData)
+            return JSONResponse(status_code = 200, content = {"report": jsonData})
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
     except Exception as e:
