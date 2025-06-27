@@ -249,3 +249,15 @@ async def generateReport(projectId: str, credentials: Annotated[HTTPAuthorizatio
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})   
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+    
+@router.get("/getReport/{projectId}")
+async def getReport(projectId: str, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+    try:
+        if verifyToken(token = credentials.credentials):
+            fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "generatedReport.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            jsonData = json.loads(urlopen(fileUrl).read())
+            return JSONResponse(status_code = 200, content = jsonData)
+        else:
+            return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
