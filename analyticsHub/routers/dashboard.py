@@ -72,7 +72,8 @@ async def exportToDashboard(details: ExportToDashboard, credentials: Annotated[H
                 "xLabels": details.xLabels,
                 "yLabels": details.yLabels,
                 "data": details.data,
-                "layout": details.layout
+                "layout": details.layout,
+                "generatedCode": details.generatedCode
             }
             pageDict["widgets"].append(newWidget)
             dashboardConfig[details.page] = pageDict
@@ -94,6 +95,7 @@ async def getData(projectId: str, page: str, credentials: Annotated[HTTPAuthoriz
             dashboardConfig = json.loads(urlopen(fileUrl).read())
             pageInfo = dashboardConfig.get(page)
             pageInfo["id"] = page
+            pageInfo.pop("generatedCode")
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "pageData": pageInfo})
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
