@@ -14,6 +14,10 @@ class FailsafeCodeGenerator:
         self.yamlPath = os.path.join(os.getcwd(), "params.yaml")
         self.config = getConfig(os.path.join(os.getcwd(), "config.ini"))
 
+    def _removeThinkTokens(self, inputStr: str) -> str:
+        inputStr = inputStr.replace("<think>", "").replace("</think>", "")
+        return inputStr
+
     def getFailsafeCodeGeneratorChain(self):
         try:
             logger.info("Constructing failsafe code generation chain.")
@@ -31,7 +35,7 @@ class FailsafeCodeGenerator:
             #     max_tokens = self.config.getint("FAILSAFECODEGENERATOR", "maxTokens")
             # )
             codeGeneratorParser = StrOutputParser()
-            failsafeCodeGeneratorChain = RunnablePassthrough() | codeGeneratorPrompt | llm | codeGeneratorParser
+            failsafeCodeGeneratorChain = RunnablePassthrough() | codeGeneratorPrompt | llm | self._removeThinkTokens | codeGeneratorParser
             logger.info("failsafe code generation chain constructed successfully.")
             return failsafeCodeGeneratorChain
         except Exception as e:

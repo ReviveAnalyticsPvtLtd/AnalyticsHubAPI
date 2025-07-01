@@ -14,6 +14,10 @@ class CodeGenerator:
         self.yamlPath = os.path.join(os.getcwd(), "params.yaml")
         self.config = getConfig(os.path.join(os.getcwd(), "config.ini"))
 
+    def _removeThinkTokens(self, inputStr: str) -> str:
+        inputStr = inputStr.replace("<think>", "").replace("</think>", "")
+        return inputStr
+
     def getCodeGeneratorChain(self):
         try:
             logger.info("Constructing code generation chain.")
@@ -31,7 +35,7 @@ class CodeGenerator:
             #     max_tokens = self.config.getint("CODEGENERATOR", "maxTokens")
             # )
             codeGeneratorParser = StrOutputParser()
-            codeGeneratorChain = RunnablePassthrough() | codeGeneratorPrompt | llm | codeGeneratorParser
+            codeGeneratorChain = RunnablePassthrough() | codeGeneratorPrompt | llm | self._removeThinkTokens | codeGeneratorParser
             logger.info("code generation chain constructed successfully.")
             return codeGeneratorChain
         except Exception as e:

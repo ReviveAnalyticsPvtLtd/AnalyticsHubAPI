@@ -22,6 +22,10 @@ class QueryRephaser:
         self.yamlPath = os.path.join(os.getcwd(), "params.yaml")
         self.config = getConfig(os.path.join(os.getcwd(), "config.ini"))
 
+    def _removeThinkTokens(self, inputStr: str) -> str:
+        inputStr = inputStr.replace("<think>", "").replace("</think>", "")
+        return inputStr
+
     def getQueryRephraserChain(self):
         try:
             logger.info("Constructing query rephraser chain.")
@@ -43,7 +47,7 @@ class QueryRephaser:
             #     temperature = self.config.getfloat("QUERYREPHRASER", "temperature"),
             #     max_tokens = self.config.getint("QUERYREPHRASER", "maxTokens")
             # )
-            queryRephraseChain = queryRephrasePrompt | llm | queryRephraseParser
+            queryRephraseChain = queryRephrasePrompt | llm | self._removeThinkTokens | queryRephraseParser
             logger.info("Query rephraser chain constructed successfully.")
             return queryRephraseChain
         except Exception as e:

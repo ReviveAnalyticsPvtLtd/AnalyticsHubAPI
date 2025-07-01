@@ -14,6 +14,10 @@ class MetadataGenerator:
         self.yamlPath = os.path.join(os.getcwd(), "params.yaml")
         self.config = getConfig(os.path.join(os.getcwd(), "config.ini"))
 
+    def _removeThinkTokens(self, inputStr: str) -> str:
+        inputStr = inputStr.replace("<think>", "").replace("</think>", "")
+        return inputStr
+
     def getMetadataChain(self):
         try:
             logger.info("Constructing metadata generation chain.")
@@ -33,7 +37,7 @@ class MetadataGenerator:
             outputParser = StrOutputParser()
             chain = {
                 "metadata": RunnableLambda(lambda x: x["metadata"])
-            } | prompt | llm | outputParser
+            } | prompt | llm | self._removeThinkTokens | outputParser
             logger.info("Metadata generation chain constructed successfully.")
             return chain
         except Exception as e:
