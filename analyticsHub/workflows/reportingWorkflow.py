@@ -39,7 +39,10 @@ class ReportingToolWorkflow:
             "generatedCode": f'fetch_data("{state["projectId"]}", '.join(response.split("fetch_data(")).replace('indent=4', 'default=serializer')
         }
     def runInPythonSandbox(self, state: State):
-        code = "\n".join(state["generatedCode"].split("```")[-2].split("\n")[1:])
+        if "```" in state["generatedCode"]:
+            code = "\n".join(state["generatedCode"].split("```")[-2].split("\n")[1:])
+        else:
+            code = state["generatedCode"]
         response = replManager.run(code)
         return {
             "codeOutput": response
