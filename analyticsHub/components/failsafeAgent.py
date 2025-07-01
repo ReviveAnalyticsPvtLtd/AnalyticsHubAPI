@@ -2,6 +2,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from ..utils.functions import readYaml, getConfig
+from langchain_core.messages import AIMessage
 from ..utils.exceptions import CustomException
 from langchain_cerebras import ChatCerebras
 # from langchain_openai import ChatOpenAI
@@ -14,9 +15,9 @@ class FailsafeCodeGenerator:
         self.yamlPath = os.path.join(os.getcwd(), "params.yaml")
         self.config = getConfig(os.path.join(os.getcwd(), "config.ini"))
 
-    def _removeThinkTokens(self, inputStr: str) -> str:
-        inputStr = inputStr.replace("<think>", "").replace("</think>", "")
-        return inputStr
+    def _removeThinkTokens(self, inputStr: AIMessage) -> AIMessage:
+        inputStr = inputStr.text().replace("<think>", "").replace("</think>", "")
+        return AIMessage(inputStr)
 
     def getFailsafeCodeGeneratorChain(self):
         try:

@@ -3,6 +3,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
 from ..utils.functions import readYaml, getConfig
 from ..utils.exceptions import CustomException
+from langchain_core.messages import AIMessage
 from langchain_cerebras import ChatCerebras
 # from langchain_openai import ChatOpenAI
 from ..utils.logger import logger
@@ -14,9 +15,9 @@ class MetadataGenerator:
         self.yamlPath = os.path.join(os.getcwd(), "params.yaml")
         self.config = getConfig(os.path.join(os.getcwd(), "config.ini"))
 
-    def _removeThinkTokens(self, inputStr: str) -> str:
-        inputStr = inputStr.replace("<think>", "").replace("</think>", "")
-        return inputStr
+    def _removeThinkTokens(self, inputStr: AIMessage) -> AIMessage:
+        inputStr = inputStr.text().replace("<think>", "").replace("</think>", "")
+        return AIMessage(inputStr)
 
     def getMetadataChain(self):
         try:
