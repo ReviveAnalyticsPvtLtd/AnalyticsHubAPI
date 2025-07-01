@@ -42,7 +42,7 @@ class ReportingToolWorkflow:
         if "```" in state["generatedCode"]:
             code = "\n".join(state["generatedCode"].split("```")[-2].split("\n")[1:])
         else:
-            code = state["generatedCode"]
+            code = state["generatedCode"].split("</think>")[-1]
         response = replManager.run(code)
         return {
             "codeOutput": response
