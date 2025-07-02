@@ -95,7 +95,7 @@ async def getData(projectId: str, page: str, credentials: Annotated[HTTPAuthoriz
             dashboardConfig = json.loads(urlopen(fileUrl).read())
             pageInfo = dashboardConfig.get(page)
             pageInfo["id"] = page
-            pageInfo.pop("generatedCode")
+            for widget in pageInfo["widgets"]: widget.pop("generatedCode")
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "pageData": pageInfo})
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
