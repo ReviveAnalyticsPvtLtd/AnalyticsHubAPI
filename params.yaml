@@ -1107,7 +1107,7 @@ codeDebuggerAgentPrompt: |
     Remember: Your entire response should be just the fixed code block. Nothing more.
 
 panelChartDataCode: |
-    def getDataForChart(projectId: str, chartType: str, xAxis: str, yAxis: str, aggregationMetric: str, tablesUsed: list[str] | str, joinTypes: list[str] | None, blendOn: list[str] | None):
+    def getDataForChart(projectId: str, chartType: str, xAxis: str, yAxis: str, aggregationMetric: str, tablesUsed: list[str] | str, joinTypes: list[str] | None = None, blendOn: list[str] | None = None):
         import pandas as pd
         import json
         if type(tablesUsed) == list:

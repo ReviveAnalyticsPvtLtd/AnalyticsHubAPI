@@ -57,10 +57,10 @@ class CompletePipeline:
         
     def generateChartFromPanel(self, projectId: str, chartType: str, xAxis: str, yAxis: str, aggregationMetric: str, dataSource: str) -> dict:
         try:
-            blendConfigUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "blendConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
-            blendConfig = orjson.loads(urlopen(blendConfigUrl).read())
-            blendedTables = list(blendConfig.keys())
-            if dataSource in blendedTables:
+            allFiles = [x.get("name") for x in self.supabaseClient.storage.from_("AnalyticsHub").list(path = projectId)]
+            if "blendConfig.json" in allFiles:
+                blendConfigUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "blendConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+                blendConfig = orjson.loads(urlopen(blendConfigUrl).read())
                 tablesUsed = blendConfig[dataSource].get("tables")
                 joinTypes = blendConfig[dataSource].get("joinTypes")
                 blendOn = blendConfig[dataSource].get("blendOn")
