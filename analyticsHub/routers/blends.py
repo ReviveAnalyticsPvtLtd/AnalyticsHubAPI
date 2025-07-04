@@ -84,13 +84,14 @@ async def getDataSources(projectId: str, credentials: Annotated[HTTPAuthorizatio
 async def getFieldsFromSources(details: GetFieldsFromSources, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
         if verifyToken(token = credentials.credentials):
-            blendConfigUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "blendConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            allFiles = [x.get("name") for x in client.storage.from_("AnalyticsHub").list(path = details.projectId)]
             metadataUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
-            blendConfig = json.loads(urlopen(blendConfigUrl).read())
             metadata = json.loads(urlopen(metadataUrl).read())
-            blendedTables = list(blendConfig.keys())
-            allFields = list()
-            if details.tableName in blendedTables:
+            if "blendConfig.json" in allFiles:
+                blendConfigUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "blendConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+                blendConfig = json.loads(urlopen(blendConfigUrl).read())
+                blendedTables = list(blendConfig.keys())
+                allFields = list()
                 tablesUsed = blendConfig[details.tableName].get("tables")
                 for table in tablesUsed:
                     allFields.extend(metadata[table]["columns"])
