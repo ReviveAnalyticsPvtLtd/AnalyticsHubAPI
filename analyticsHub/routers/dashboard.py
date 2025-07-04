@@ -69,6 +69,7 @@ async def exportToDashboard(details: ExportToDashboard, credentials: Annotated[H
                 "id": widgetId,
                 "chartType": details.chartType,
                 "title": details.title,
+                "label": details.label,
                 "xLabels": details.xLabels,
                 "yLabels": details.yLabels,
                 "data": details.data,

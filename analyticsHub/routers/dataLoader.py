@@ -31,7 +31,7 @@ async def loadCsvData(projectId: Annotated[str, Form()], file: Annotated[UploadF
         if verifyToken(token = credentials.credentials):
             project = client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", projectId).execute().data[0]                
             with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
-                pd.read_csv(io.BytesIO(await file.read())).to_parquet(temp.name, compression = "snappy")
+                pd.read_csv(io.BytesIO(await file.read()), parse_dates = True).to_parquet(temp.name, compression = "snappy")
                 _ = client.storage.from_("AnalyticsHub").upload(
                     file = temp.name,
                     path = f"{projectId}/{os.path.splitext(file.filename)[0] + '.parquet'}",
@@ -59,7 +59,7 @@ async def loadExcelData(projectId: Annotated[str, Form()], file: Annotated[Uploa
         if verifyToken(token = credentials.credentials):
             project = client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", projectId).execute().data[0]                
             with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
-                pd.read_excel(io.BytesIO(await file.read()), sheet_name = sheetName).to_parquet(temp.name, compression = "snappy")
+                pd.read_excel(io.BytesIO(await file.read()), sheet_name = sheetName, parse_dates = True).to_parquet(temp.name, compression = "snappy")
                 if sheetName == None:
                     fileName = f"{os.path.splitext(file.filename)[0] + '.parquet'}"
                 else:
@@ -93,7 +93,7 @@ async def loadMySql(connection: LoadMySQLorPostgreSQL, credentials: Annotated[HT
             with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
                 connStr = f"mysql+pymysql://{connection.user}:{connection.password}@{connection.host}:{connection.port}/{connection.db}"
                 engine = create_engine(connStr)
-                pd.read_sql(f"SELECT * FROM {connection.table}", engine).to_parquet(temp.name, compression = "snappy")
+                pd.read_sql(f"SELECT * FROM {connection.table}", engine, parse_dates = True).to_parquet(temp.name, compression = "snappy")
                 _ = client.storage.from_("AnalyticsHub").upload(
                     file = temp.name,
                     path = f"{connection.projectId}/{connection.table + '.parquet'}",
@@ -123,7 +123,7 @@ async def loadPostgreSQL(connection: LoadMySQLorPostgreSQL, credentials: Annotat
             with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
                 connStr = f"postgresql+psycopg2://{connection.user}:{connection.password}@{connection.host}:{connection.port}/{connection.db}"
                 engine = create_engine(connStr)
-                pd.read_sql(f"SELECT * FROM {connection.table}", engine).to_parquet(temp.name, compression = "snappy")
+                pd.read_sql(f"SELECT * FROM {connection.table}", engine, parse_dates = True).to_parquet(temp.name, compression = "snappy")
                 _ = client.storage.from_("AnalyticsHub").upload(
                     file = temp.name,
                     path = f"{connection.projectId}/{connection.table + '.parquet'}",
