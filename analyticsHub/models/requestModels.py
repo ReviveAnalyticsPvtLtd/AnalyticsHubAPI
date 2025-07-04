@@ -110,3 +110,8 @@ class EditWidgetPosition(BaseModel):
     projectId: str
     pageId: str
     widgets: list[dict]
+
+class GetData(BaseModel):
+    projectId: str
+    page: str
+    filters: list[dict] | None = None

@@ -1,9 +1,10 @@
-from ..models.requestModels import CreatePage, ExportToDashboard, EditWidgetPosition
+from ..models.requestModels import CreatePage, ExportToDashboard, EditWidgetPosition, GetData
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse
 from ..utils.functions import verifyToken
 from fastapi import APIRouter, Depends
+from ..components import replManager
 from supabase import create_client
 from urllib.request import urlopen
 from typing import Annotated
@@ -12,6 +13,7 @@ import json
 import time
 import os
 import io
+import re
 
 router = APIRouter()
 security = HTTPBearer()
@@ -89,14 +91,35 @@ async def exportToDashboard(details: ExportToDashboard, credentials: Annotated[H
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
     
 @router.get("/getData")
-async def getData(projectId: str, page: str, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+async def getData(details: GetData, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
         if verifyToken(token = credentials.credentials):
-            fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "dashboardConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            fileUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "dashboardConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             dashboardConfig = json.loads(urlopen(fileUrl).read())
-            pageInfo = dashboardConfig.get(page)
-            pageInfo["id"] = page
-            for widget in pageInfo["widgets"]: widget.pop("generatedCode")
+            pageInfo = dashboardConfig.get(details.page)
+            pageInfo["id"] = details.page
+            if not details.filters:
+                for widget in pageInfo["widgets"]: widget.pop("generatedCode")
+            else:
+                widgets = pageInfo.get("widgets")
+                codes = {x.get("id"): x.get("generatedCode") for x in widgets}
+                keys = codes.keys()
+                for key in keys:
+                    if "```" in codes.get(key):
+                        newCode = "\n".join(codes.get(key).split("```")[-2].split("\n")[1:])
+                        newCode = re.sub(r'fetch_data\(([^)]+)\)', r'fetch_data(\1, {filters})'.format(filters = details.filters), newCode)
+                        for widget in widgets:
+                            if widget.get("id") == key:
+                                widget.update(json.loads(replManager.run(newCode)))
+                            else:
+                                continue
+                    else:
+                        newCode = re.sub(r'fetch_data\(([^)]+)\)', r'fetch_data(\1, {filters})'.format(filters = details.filters), codes[key])
+                        for widget in widgets:
+                            if widget.get("id") == key:
+                                widget.update(json.loads(replManager.run(newCode)))
+                            else:
+                                continue
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "pageData": pageInfo})
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
