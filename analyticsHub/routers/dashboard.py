@@ -90,7 +90,7 @@ async def exportToDashboard(details: ExportToDashboard, credentials: Annotated[H
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
     
-@router.get("/getData")
+@router.post("/getData")
 async def getData(details: GetData, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
         if verifyToken(token = credentials.credentials):
