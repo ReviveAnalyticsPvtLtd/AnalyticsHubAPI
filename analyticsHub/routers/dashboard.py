@@ -110,6 +110,7 @@ async def getData(details: GetData, credentials: Annotated[HTTPAuthorizationCred
                         newCode = re.sub(r'fetch_data\(([^)]+)\)', r'fetch_data(\1, {filters})'.format(filters = details.filters), newCode)
                         for widget in widgets:
                             if widget.get("id") == key:
+                                widget.pop("generatedCode")
                                 widget.update(json.loads(replManager.run(newCode)))
                             else:
                                 continue
@@ -117,6 +118,7 @@ async def getData(details: GetData, credentials: Annotated[HTTPAuthorizationCred
                         newCode = re.sub(r'fetch_data\(([^)]+)\)', r'fetch_data(\1, {filters})'.format(filters = details.filters), codes[key])
                         for widget in widgets:
                             if widget.get("id") == key:
+                                widget.pop("generatedCode")
                                 widget.update(json.loads(replManager.run(newCode)))
                             else:
                                 continue
