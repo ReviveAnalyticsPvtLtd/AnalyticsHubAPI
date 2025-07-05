@@ -8,9 +8,12 @@ from ..components.celery import task
 from supabase import create_client
 from typing import Annotated
 from . import pipeline
+import seaborn as sns
+import pandas as pd
 import asyncio
 import os
 
+sampleDataset = sns.load_dataset("tips")
 router = APIRouter()
 security = HTTPBearer()
 client = create_client(
@@ -35,6 +38,24 @@ async def sendForecasts(credentials: Annotated[HTTPAuthorizationCredentials, Dep
         if verifyToken(token = credentials.credentials):
             r = task.sendForecasts.delay()
             return JSONResponse(status_code = 200, content = {"taskId": r.task_id, "triggerName": "forecast", "taskStatus": r.status})
+        else:
+            return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+
+@router.get("/temp/{num}")
+async def tempFunc(num: int, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+    try:
+        if verifyToken(token = credentials.credentials):
+            if num == 1:
+                result = sampleDataset.to_dict(orient = "records")
+            elif num == 2:
+                result = pd.pivot_table(sampleDataset, index="day", columns=["sex"], aggfunc="count", values=["total_bill"]).to_dict(orient = "records")
+            elif num == 3:
+                result = pd.pivot_table(sampleDataset, index="day", columns=["sex", "time"], aggfunc="count", values=["total_bill"]).to_dict(orient = "records")
+            else:
+                result = pd.pivot_table(sampleDataset, index="day", columns=["sex", "time"], aggfunc="count", values=["total_bill", "tip"]).to_dict(orient = "records")
+            return JSONResponse(status_code = 200, content = result)
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
     except Exception as e:
