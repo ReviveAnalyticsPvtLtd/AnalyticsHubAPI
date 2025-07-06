@@ -48,13 +48,13 @@ async def tempFunc(num: int, credentials: Annotated[HTTPAuthorizationCredentials
     try:
         if verifyToken(token = credentials.credentials):
             if num == 1:
-                result = sampleDataset.to_json(orient = "records")
+                result = sampleDataset.to_json()
             elif num == 2:
-                result = pd.pivot_table(sampleDataset, index="day", columns=["sex"], aggfunc="count", values=["total_bill"]).to_json(orient = "records")
+                result = pd.pivot_table(sampleDataset, index="day", columns=["sex"], aggfunc="count", values=["total_bill"]).to_json()
             elif num == 3:
-                result = pd.pivot_table(sampleDataset, index="day", columns=["sex", "time"], aggfunc="count", values=["total_bill"]).to_json(orient = "records")
+                result = pd.pivot_table(sampleDataset, index="day", columns=["sex", "time"], aggfunc="count", values=["total_bill"]).to_json()
             else:
-                result = pd.pivot_table(sampleDataset, index="day", columns=["sex", "time"], aggfunc="count", values=["total_bill", "tip"]).to_json(orient = "records")
+                result = pd.pivot_table(sampleDataset, index="day", columns=["sex", "time"], aggfunc="count", values=["total_bill", "tip"]).to_json()
             return JSONResponse(status_code = 200, content = result)
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
