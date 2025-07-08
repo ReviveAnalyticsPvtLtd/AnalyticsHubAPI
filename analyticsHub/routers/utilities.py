@@ -48,7 +48,7 @@ async def tempFunc(num: int, credentials: Annotated[HTTPAuthorizationCredentials
     try:
         if verifyToken(token = credentials.credentials):
             if num == 1:
-                result = sampleDataset.to_json()
+                result = sampleDataset.to_dict(orient = "records")
             elif num == 2:
                 result = pd.pivot_table(sampleDataset, index="day", columns=["sex"], aggfunc="count", values=["total_bill"]).to_json()
             elif num == 3:
