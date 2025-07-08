@@ -94,11 +94,11 @@ async def exportToDashboard(details: ExportToDashboard, credentials: Annotated[H
 async def getData(details: GetData, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
         if verifyToken(token = credentials.credentials):
-            fileUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "dashboardConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "dashboardConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             dashboardConfig = json.loads(urlopen(fileUrl).read())
-            pageInfo = dashboardConfig.get(details.page)
-            pageInfo["id"] = details.page
-            if not details.filters:
+            pageInfo = dashboardConfig.get(page)
+            pageInfo["id"] = page
+            if not filters:
                 for widget in pageInfo["widgets"]: widget.pop("generatedCode")
             else:
                 widgets = pageInfo.get("widgets")
@@ -107,19 +107,43 @@ async def getData(details: GetData, credentials: Annotated[HTTPAuthorizationCred
                 for key in keys:
                     if "```" in codes.get(key):
                         newCode = "\n".join(codes.get(key).split("```")[-2].split("\n")[1:])
-                        newCode = re.sub(r'fetch_data\(([^)]+)\)', r'fetch_data(\1, {filters})'.format(filters = details.filters), newCode)
+                        newCode = re.sub(r'fetch_data\(([^)]+)\)', r'fetch_data(\1, {filters})'.format(filters = filters), newCode)
                         for widget in widgets:
                             if widget.get("id") == key:
                                 widget.pop("generatedCode")
-                                widget.update(json.loads(replManager.run(newCode)))
+                                result = replManager.run(newCode)
+                                try:
+                                    resultDict = json.loads(result)
+                                    widget.update(resultDict)
+                                except:
+                                    widgetChartType = widget.get("chartType")
+                                    if widgetChartType == "card":
+                                        widget["data"] = None
+                                    else:
+                                        dataKey = widget.get("data")
+                                        datasets = dataKey.get("datasets")
+                                        for dataset in datasets:
+                                            dataset["data"] = list()
                             else:
                                 continue
                     else:
-                        newCode = re.sub(r'fetch_data\(([^)]+)\)', r'fetch_data(\1, {filters})'.format(filters = details.filters), codes[key])
+                        newCode = re.sub(r'fetch_data\(([^)]+)\)', r'fetch_data(\1, {filters})'.format(filters = filters), codes[key])
                         for widget in widgets:
                             if widget.get("id") == key:
                                 widget.pop("generatedCode")
-                                widget.update(json.loads(replManager.run(newCode)))
+                                result = replManager.run(newCode)
+                                try:
+                                    resultDict = json.loads(result)
+                                    widget.update(resultDict)
+                                except:
+                                    widgetChartType = widget.get("chartType")
+                                    if widgetChartType == "card":
+                                        widget["data"] = None
+                                    else:
+                                        dataKey = widget.get("data")
+                                        datasets = dataKey.get("datasets")
+                                        for dataset in datasets:
+                                            dataset["data"] = list()
                             else:
                                 continue
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "pageData": pageInfo})
