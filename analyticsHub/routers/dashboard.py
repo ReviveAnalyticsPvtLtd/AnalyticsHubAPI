@@ -94,10 +94,10 @@ async def exportToDashboard(details: ExportToDashboard, credentials: Annotated[H
 async def getData(details: GetData, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
         if verifyToken(token = credentials.credentials):
-            fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "dashboardConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            fileUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "dashboardConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             dashboardConfig = json.loads(urlopen(fileUrl).read())
-            pageInfo = dashboardConfig.get(page)
-            pageInfo["id"] = page
+            pageInfo = dashboardConfig.get(details.page)
+            pageInfo["id"] = details.page
             if not filters:
                 for widget in pageInfo["widgets"]: widget.pop("generatedCode")
             else:
