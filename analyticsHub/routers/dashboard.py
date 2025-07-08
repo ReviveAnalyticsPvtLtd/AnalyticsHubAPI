@@ -98,7 +98,7 @@ async def getData(details: GetData, credentials: Annotated[HTTPAuthorizationCred
             dashboardConfig = json.loads(urlopen(fileUrl).read())
             pageInfo = dashboardConfig.get(details.page)
             pageInfo["id"] = details.page
-            if not filters:
+            if not details.filters:
                 for widget in pageInfo["widgets"]: widget.pop("generatedCode")
             else:
                 widgets = pageInfo.get("widgets")
@@ -107,7 +107,7 @@ async def getData(details: GetData, credentials: Annotated[HTTPAuthorizationCred
                 for key in keys:
                     if "```" in codes.get(key):
                         newCode = "\n".join(codes.get(key).split("```")[-2].split("\n")[1:])
-                        newCode = re.sub(r'fetch_data\(([^)]+)\)', r'fetch_data(\1, {filters})'.format(filters = filters), newCode)
+                        newCode = re.sub(r'fetch_data\(([^)]+)\)', r'fetch_data(\1, {filters})'.format(filters = details.filters), newCode)
                         for widget in widgets:
                             if widget.get("id") == key:
                                 widget.pop("generatedCode")
@@ -127,7 +127,7 @@ async def getData(details: GetData, credentials: Annotated[HTTPAuthorizationCred
                             else:
                                 continue
                     else:
-                        newCode = re.sub(r'fetch_data\(([^)]+)\)', r'fetch_data(\1, {filters})'.format(filters = filters), codes[key])
+                        newCode = re.sub(r'fetch_data\(([^)]+)\)', r'fetch_data(\1, {filters})'.format(filters = details.filters), codes[key])
                         for widget in widgets:
                             if widget.get("id") == key:
                                 widget.pop("generatedCode")
