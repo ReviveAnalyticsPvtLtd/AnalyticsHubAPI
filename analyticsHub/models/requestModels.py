@@ -115,3 +115,8 @@ class GetData(BaseModel):
     projectId: str
     page: str
     filters: list[dict] | None = None
+
+class DeleteDashboardElement(BaseModel):
+    projectId: str
+    deletionObject: str
+    id: str
