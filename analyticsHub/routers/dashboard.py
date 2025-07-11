@@ -152,7 +152,7 @@ async def getData(details: GetData, credentials: Annotated[HTTPAuthorizationCred
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
     
-@router.post("/editWidgetPosition")
+@router.put("/editWidgetPosition")
 async def editWidgetPosition(details: EditWidgetPosition, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
     try:
         if verifyToken(token = credentials.credentials):
