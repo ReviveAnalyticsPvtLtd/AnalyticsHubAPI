@@ -159,6 +159,7 @@ async def editWidgetPosition(details: EditWidgetPosition, credentials: Annotated
             fileUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "dashboardConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             dashboardConfig = json.loads(urlopen(fileUrl).read())
             pageInfo = dashboardConfig.get(details.pageId)
+            pageInfo["name"] = details.pageName
             widgets = pageInfo.get("widgets")
             for newWidget in details.widgets:
                 newWidgetId = newWidget.get("id")
@@ -205,3 +206,4 @@ async def deleteDashboardElement(details: DeleteDashboardElement, credentials: A
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+
