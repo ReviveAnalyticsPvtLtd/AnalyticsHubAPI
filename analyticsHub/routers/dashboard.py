@@ -161,14 +161,15 @@ async def editWidgetPosition(details: EditWidgetPosition, credentials: Annotated
             pageInfo = dashboardConfig.get(details.pageId)
             pageInfo["name"] = details.pageName
             widgets = pageInfo.get("widgets")
-            for newWidget in details.widgets:
-                newWidgetId = newWidget.get("id")
-                for widget in widgets:
-                    widgetId = widget.get("id")
-                    if widgetId == newWidgetId:
-                        widget["layout"] = newWidget["layout"]
-                    else:
-                        continue
+            if details.widgets:
+                for newWidget in details.widgets:
+                    newWidgetId = newWidget.get("id")
+                    for widget in widgets:
+                        widgetId = widget.get("id")
+                        if widgetId == newWidgetId:
+                            widget["layout"] = newWidget["layout"]
+                        else:
+                            continue
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(dashboardConfig, indent = 4).encode("utf-8"))
                 buffer.seek(0)
