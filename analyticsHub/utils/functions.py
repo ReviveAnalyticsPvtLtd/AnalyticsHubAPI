@@ -29,7 +29,7 @@ def getConfig(path: str) -> dict:
 
 def getDataTypes(projectId: str, tableName: str) -> list[dict]:   
     fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = tableName)
-    df = pd.read_parquet(fileUrl, )
+    df = pd.read_parquet(fileUrl)
     numericals = ["int64", "float64", "float32", "int32"]
     categoricals = ["bool", "category", "object", "string"]
     datetimeTypes = ["datetime64[ns]", "datetime64[ns, tz]"]

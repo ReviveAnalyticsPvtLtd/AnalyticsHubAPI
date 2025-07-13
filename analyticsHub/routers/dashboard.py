@@ -218,7 +218,7 @@ async def getAllColumns(projectId: str, credentials: Annotated[HTTPAuthorization
                 results = executor.map(getDataTypes, [projectId] * len(dataTables), dataTables)
             results = list(results)
             results = {x: y for x, y in zip(dataTables, results)}
-            return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "element deleted successfully."})
+            return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "details": results})
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
     except Exception as e:
