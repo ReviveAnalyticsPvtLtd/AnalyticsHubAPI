@@ -1,9 +1,9 @@
 from ..models.requestModels import CreatePage, ExportToDashboard, EditWidgetPosition, GetData, DeleteDashboardElement
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.responses import JSONResponse, ORJSONResponse
 from ..utils.functions import verifyToken, getDataTypes
 from concurrent.futures import ThreadPoolExecutor
 from fastapi.exceptions import HTTPException
-from fastapi.responses import JSONResponse
 from fastapi import APIRouter, Depends
 from ..components import replManager
 from supabase import create_client
@@ -218,8 +218,8 @@ async def getAllColumns(projectId: str, credentials: Annotated[HTTPAuthorization
                 results = executor.map(getDataTypes, [projectId] * len(dataTables), dataTables)
             results = list(results)
             results = {x: y for x, y in zip(dataTables, results)}
-            return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "details": results})
+            return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "details": results})
         else:
-            return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
+            return ORJSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
