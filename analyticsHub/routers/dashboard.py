@@ -1,8 +1,9 @@
 from ..models.requestModels import CreatePage, ExportToDashboard, EditWidgetPosition, GetData, DeleteDashboardElement
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from ..utils.functions import verifyToken, getDataTypes
+from concurrent.futures import ThreadPoolExecutor
 from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse
-from ..utils.functions import verifyToken
 from fastapi import APIRouter, Depends
 from ..components import replManager
 from supabase import create_client
@@ -208,3 +209,17 @@ async def deleteDashboardElement(details: DeleteDashboardElement, credentials: A
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
 
+@router.get("/getAllColumns/{projectId}")
+async def getAllColumns(projectId: str, credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]):
+    try:
+        if verifyToken(token = credentials.credentials):
+            dataTables = ["".join(os.path.splitext(x.get("name"))[:-1]) for x in client.storage.from_("AnalyticsHub").list(path = projectId) if x.get("name").endswith(".parquet")]
+            with ThreadPoolExecutor(max_workers = 5) as executor:
+                results = executor.map(getDataTypes, [projectId] * len(dataTables), dataTables)
+            results = list(results)
+            results = {x: y for x, y in zip(dataTables, results)}
+            return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "element deleted successfully."})
+        else:
+            return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
