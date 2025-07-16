@@ -128,32 +128,36 @@ redisFunctionCode: |
         if baseFilters:
             for filter in baseFilters:
                 for column, condition in filter.items():
-                    if column not in df.columns:
-                        continue
-
-                    if isinstance(condition, dict):
-                        if df[column].dtype == "object":
-                            if "contains" in condition:
-                                df = df[df[column].str.contains(condition["contains"], case=False, na=False)]
-                                continue
-                            if "startswith" in condition:
-                                df = df[df[column].str.startswith(condition["startswith"], na=False)]
-                                continue
-                            if "endswith" in condition:
-                                df = df[df[column].str.endswith(condition["endswith"], na=False)]
-                                continue
-                        if "min" in condition:
-                            df = df[df[column] >= condition["min"]]
-                            continue
-                        if "max" in condition:
-                            df = df[df[column] <= condition["max"]]
+                    columnTable, column = column.split(".")
+                    if columnTable == tableName: 
+                        if column not in df.columns:
                             continue
 
-                    if isinstance(condition, (list, tuple, set)):
-                        df = df[df[column].isin(condition)]
-                        continue
+                        if isinstance(condition, dict):
+                            if df[column].dtype == "object":
+                                if "contains" in condition:
+                                    df = df[df[column].str.contains(condition["contains"], case=False, na=False)]
+                                    continue
+                                if "startswith" in condition:
+                                    df = df[df[column].str.startswith(condition["startswith"], na=False)]
+                                    continue
+                                if "endswith" in condition:
+                                    df = df[df[column].str.endswith(condition["endswith"], na=False)]
+                                    continue
+                            if "min" in condition:
+                                df = df[df[column] >= condition["min"]]
+                                continue
+                            if "max" in condition:
+                                df = df[df[column] <= condition["max"]]
+                                continue
+
+                        if isinstance(condition, (list, tuple, set)):
+                            df = df[df[column].isin(condition)]
+                            continue
+                        else:
+                            df = df[df[column] == condition]
+                            continue
                     else:
-                        df = df[df[column] == condition]
                         continue
         return df
 
