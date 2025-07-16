@@ -57,3 +57,11 @@ def getDataTypes(projectId: str, tableName: str) -> list[dict]:
             columnInfo["uniqueValues"] = df[column].unique().tolist()
             allColumns.append(columnInfo)
     return allColumns
+
+def attributeInfoFunc(projectId: str, dataframeName: str) -> str:
+    df = pd.read_parquet(os.environ["FILE_URL"].format(projectId = projectId, fileName = dataframeName))
+    attributeInfo = f'DATAFRAME NAME: {dataframeName}\n'
+    for column in df.columns: attributeInfo += '- ' + str(column) + ' (' + df.get(column).dtype.name + ')\n'
+    attributeInfo += 'SHAPE: ' + str(df.shape) + '\n'
+    attributeInfo += 'SAMPLE ROW:\n' + str(df.loc[df.index[:1]].to_string()) + '\n'
+    return attributeInfo

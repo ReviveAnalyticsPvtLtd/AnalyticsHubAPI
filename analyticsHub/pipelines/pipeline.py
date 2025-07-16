@@ -1,10 +1,10 @@
 from ..workflows.reportingWorkflow import reportingToolWorkflow
 from ..components.metadataGenerator import MetadataGenerator
+from ..utils.functions import readYaml, attributeInfoFunc
 from ..components.reportGenerator import ReportGenerator
 from concurrent.futures import ProcessPoolExecutor
 from ..components.speechToText import SpeechToText
 from ..utils.exceptions import CustomException
-from ..utils.functions import readYaml
 from ..components import replManager
 from supabase import create_client
 from urllib.request import urlopen
@@ -31,8 +31,9 @@ class CompletePipeline:
             results = ""
             for fileName in dataFiles:
                 dataframeName = fileName.replace(".parquet", "")
-                codeString = readYaml(self.yamlPath)["attributeInfoCode"].format(dataframeName = dataframeName, projectId = projectId)
-                results += replManager.run(codeString)
+                results += attributeInfoFunc(projectId = projectId, dataframeName = dataframeName)
+                # codeString = readYaml(self.yamlPath)["attributeInfoCode"].format(dataframeName = dataframeName, projectId = projectId)
+                # results += replManager.run(codeString)
             metadataChain = self.metadataGenerator.getMetadataChain()
             metadata = metadataChain.invoke({"metadata": results})
             metadataParts = metadata.split("```")
