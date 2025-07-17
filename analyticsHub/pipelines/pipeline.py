@@ -65,24 +65,24 @@ class CompletePipeline:
                 blendOn = blendConfig[dataSource].get("blendOn")
                 response = replManager.run(f"getDataForChart(projectId='{projectId}', chartType='{chartType}', xAxis='{xAxis}', yAxis='{yAxis}', aggregationMetric='{aggregationMetric}', tablesUsed={tablesUsed}, joinTypes={joinTypes}, blendOn={blendOn})")
                 generatedCode = self.codeTemplates.get("panelChartWithBlend").format(
-                    "projectId" = projectId,
-                    "chartType" = chartType,
-                    "xAxis" = xAxis,
-                    "yAxis" = yAxis,
-                    "aggregationMetric" = aggregationMetric,
-                    "tablesUsed" = tabledUsed,
-                    "joinTypes" = joinTypes,
-                    "blendOn" = blendOn
+                    projectId = projectId,
+                    chartType = chartType,
+                    xAxis = xAxis,
+                    yAxis = yAxis,
+                    aggregationMetric = aggregationMetric,
+                    tablesUsed = tabledUsed,
+                    joinTypes = joinTypes,
+                    blendOn = blendOn
                 )
             else:
                 response = replManager.run(f"getDataForChart(projectId='{projectId}', chartType='{chartType}', xAxis='{xAxis}', yAxis='{yAxis}', aggregationMetric='{aggregationMetric}', tablesUsed='{dataSource}')")    
                 generatedCode = self.codeTemplates.get("panelChartWithoutBlend").format(
-                    "projectId" = projectId,
-                    "chartType" = chartType,
-                    "xAxis" = xAxis,
-                    "yAxis" = yAxis,
-                    "aggregationMetric" = aggregationMetric,
-                    "tablesUsed" = dataSource
+                    projectId = projectId,
+                    chartType = chartType,
+                    xAxis = xAxis,
+                    yAxis = yAxis,
+                    aggregationMetric = aggregationMetric,
+                    tablesUsed = dataSource
                 )
             response.update({"generatedCode": generatedCode})
             response = orjson.loads(response.encode())
