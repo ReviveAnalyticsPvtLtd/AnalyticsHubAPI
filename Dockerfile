@@ -4,7 +4,7 @@ WORKDIR /app
 
 COPY . .
 
-COPY /app/supervisord.conf /etc/supervisord.conf
+COPY supervisord.conf /etc/supervisord.conf
 
 RUN apt-get update && apt-get install -y \
     supervisor \
