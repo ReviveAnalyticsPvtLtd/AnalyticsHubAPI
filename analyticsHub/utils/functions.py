@@ -149,7 +149,7 @@ def fetch_data(projectId: str, tableName: str, baseFilters: list = list()):
     return df
 
 def getDataForChart(projectId: str, chartType: str, xAxis: str, yAxis: str, aggregationMetric: str, tablesUsed: list[str] | str, joinTypes: list[str] | None = None, blendOn: list[str] | None = None):
-    if type(tablesUsed) == list:
+    if isinstance(tablesUsed, list):
         allTables = [fetch_data(projectId, x) for x in tablesUsed]
         result = allTables[0]
         for i in range(len(joinTypes)):

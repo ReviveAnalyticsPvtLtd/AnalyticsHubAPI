@@ -5,7 +5,6 @@ import io
 
 class REPLManager:
     def __init__(self):
-        params = readYaml("params.yaml")
         self.__persistentGlobals = {
             "fetch_data": fetch_data,
             "serializer": serializer,

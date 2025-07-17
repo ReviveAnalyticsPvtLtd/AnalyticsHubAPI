@@ -20,7 +20,7 @@ class QueryRephraseOutput(BaseModel):
 class QueryRephaser:
     def __init__(self):
         logger.info("Initializing QueryRephaser.")
-        self.yamlPath = os.path.join(os.getcwd(), "params.yaml")
+        self.yamlPath = os.path.join(os.getcwd(), "prompts.yaml")
         self.config = getConfig(os.path.join(os.getcwd(), "config.ini"))
 
     def _removeThinkTokens(self, inputStr: AIMessage) -> AIMessage:

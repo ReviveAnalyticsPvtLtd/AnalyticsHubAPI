@@ -19,7 +19,7 @@ class CompletePipeline:
         logger.info("Initializing CompletePipeline components.")
         self.speechToTextModule = SpeechToText()
         self.metadataGenerator = MetadataGenerator()
-        self.yamlParams = readYaml(os.path.join(os.getcwd(), "params.yaml"))
+        self.codeTemplates = readYaml(os.path.join(os.getcwd(), "codeTemplates.yaml"))
         self.supabaseClient = create_client(
             supabase_url = os.environ["SUPABASE_URL"],
             supabase_key = os.environ["SUPABASE_KEY"]
@@ -64,8 +64,27 @@ class CompletePipeline:
                 joinTypes = blendConfig[dataSource].get("joinTypes")
                 blendOn = blendConfig[dataSource].get("blendOn")
                 response = replManager.run(f"getDataForChart(projectId='{projectId}', chartType='{chartType}', xAxis='{xAxis}', yAxis='{yAxis}', aggregationMetric='{aggregationMetric}', tablesUsed={tablesUsed}, joinTypes={joinTypes}, blendOn={blendOn})")
+                generatedCode = self.codeTemplates.get("panelChartWithBlend").format(
+                    "projectId" = projectId,
+                    "chartType" = chartType,
+                    "xAxis" = xAxis,
+                    "yAxis" = yAxis,
+                    "aggregationMetric" = aggregationMetric,
+                    "tablesUsed" = tabledUsed,
+                    "joinTypes" = joinTypes,
+                    "blendOn" = blendOn
+                )
             else:
                 response = replManager.run(f"getDataForChart(projectId='{projectId}', chartType='{chartType}', xAxis='{xAxis}', yAxis='{yAxis}', aggregationMetric='{aggregationMetric}', tablesUsed='{dataSource}')")    
+                generatedCode = self.codeTemplates.get("panelChartWithoutBlend").format(
+                    "projectId" = projectId,
+                    "chartType" = chartType,
+                    "xAxis" = xAxis,
+                    "yAxis" = yAxis,
+                    "aggregationMetric" = aggregationMetric,
+                    "tablesUsed" = dataSource
+                )
+            response.update({"generatedCode": generatedCode})
             response = orjson.loads(response.encode())
             return response
         except Exception as e:
