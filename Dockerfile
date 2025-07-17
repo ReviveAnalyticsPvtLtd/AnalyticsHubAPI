@@ -12,10 +12,12 @@ RUN apt-get update && apt-get install -y \
 
 COPY supervisord.conf /etc/supervisord.conf
 
-RUN pip install uv && uv sync
+RUN pip install uv
+
+RUN uv add -r requirements.txt
 
 RUN chmod +x /app/startup.sh
 
 EXPOSE 7860
 
-CMD ["startup.sh"]
+CMD ["/app/startup.sh"]
