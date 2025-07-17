@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y \
 
 RUN pip install uv
 
-RUN uv sync
+RUN uv venv .venv && . .venv/bin/activate && uv sync
 
 RUN chmod +x /app/startup.sh
 
