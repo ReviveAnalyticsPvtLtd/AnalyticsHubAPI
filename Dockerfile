@@ -10,11 +10,9 @@ RUN apt-get update && apt-get install -y \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*
 
-COPY supervisord.conf /etc/supervisord.conf
-
 RUN pip install uv
 
-RUN uv add -r requirements.txt
+RUN uv venv .venv && . .venv/bin/activate && uv sync
 
 RUN chmod +x /app/startup.sh
 
