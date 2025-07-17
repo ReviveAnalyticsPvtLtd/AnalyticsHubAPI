@@ -89,7 +89,6 @@ class CompletePipeline:
                 )
             response = orjson.loads(response.encode("utf-8"))
             response.update({"generatedCode": generatedCode})
-            response = orjson.loads(response.encode())
             return response
         except Exception as e:
             logger.error(CustomException(e))
