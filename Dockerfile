@@ -1,5 +1,9 @@
 FROM python:3.10-slim
 
+ENV UV_TOOL_BIN_DIR=/usr/local/bin
+
+ENV PATH="/usr/local/bin:${PATH}"
+
 WORKDIR /app
 
 COPY . .
@@ -15,9 +19,6 @@ RUN apt-get update && apt-get install -y \
 RUN pip install uv
 
 RUN uv sync
-
-RUN echo "CELERY path: $(uv which celery)" && \
-    echo "GUNICORN path: $(uv which gunicorn)"
 
 RUN chmod +x /app/startup.sh
 
