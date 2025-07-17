@@ -20,7 +20,7 @@ uvicorn
 beautifulsoup4
 psycopg2-binary
 ydata-profiling
-pymongo[srv]
+pymongo
 python-multipart
 langchain
 langchain-community
