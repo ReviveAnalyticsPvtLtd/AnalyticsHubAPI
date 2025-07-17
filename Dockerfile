@@ -18,4 +18,4 @@ RUN chmod +x /app/startup.sh
 
 EXPOSE 7860
 
-CMD ["./startup.sh"]
+CMD ["startup.sh"]
