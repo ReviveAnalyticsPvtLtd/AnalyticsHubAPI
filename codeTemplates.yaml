@@ -93,7 +93,7 @@ panelChartWithBlend: |
                     "data": 0
                 }
         print(json.dumps(response, indent=4, default=serializer))
-    panelChart(projectId = "{projectId}", chartType = "{chartType}", xAxis = "{xAxis}", yAxis = "{yAxis}", aggregationMetric = "{aggregationMetric}", tablesUsed = {tablesUsed}, joinTypes = {joinTypes}, blendOn = {blendOn})
+    panelChart(projectId = "$projectId", chartType = "$chartType", xAxis = "$xAxis", yAxis = "$yAxis", aggregationMetric = "$aggregationMetric", tablesUsed = $tablesUsed, joinTypes = $joinTypes, blendOn = $blendOn)
     ```
 
 panelChartWithoutBlend: |
@@ -191,5 +191,5 @@ panelChartWithoutBlend: |
                     "data": 0
                 }
         print(json.dumps(response, indent=4, default=serializer))
-    panelChart(projectId = "{projectId}", chartType = "{chartType}", xAxis = "{xAxis}", yAxis = "{yAxis}", aggregationMetric = "{aggregationMetric}", tablesUsed = "{tablesUsed}")
+    panelChart(projectId = "$projectId", chartType = "$chartType", xAxis = "$xAxis", yAxis = "$yAxis", aggregationMetric = "$aggregationMetric", tablesUsed = "$tablesUsed")    
     ```

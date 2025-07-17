@@ -9,6 +9,7 @@ from ..components import replManager
 from supabase import create_client
 from urllib.request import urlopen
 from ..utils.logger import logger
+from string import Template
 import orjson
 import time
 import os
@@ -64,7 +65,8 @@ class CompletePipeline:
             joinTypes = blendConfig[dataSource].get("joinTypes")
             blendOn = blendConfig[dataSource].get("blendOn")
             response = replManager.run(f"getDataForChart(projectId='{projectId}', chartType='{chartType}', xAxis='{xAxis}', yAxis='{yAxis}', aggregationMetric='{aggregationMetric}', tablesUsed={tablesUsed}, joinTypes={joinTypes}, blendOn={blendOn})")
-            generatedCode = self.codeTemplates.get("panelChartWithBlend").format(
+            generatedCodeTemplate = Template(self.codeTemplates.get("panelChartWithBlend"))
+            generatedCode = generatedCodeTemplate.substitute(
                 projectId = projectId,
                 chartType = chartType,
                 xAxis = xAxis,
@@ -76,7 +78,8 @@ class CompletePipeline:
             )
         else:
             response = replManager.run(f"getDataForChart(projectId='{projectId}', chartType='{chartType}', xAxis='{xAxis}', yAxis='{yAxis}', aggregationMetric='{aggregationMetric}', tablesUsed='{dataSource}')")    
-            generatedCode = self.codeTemplates.get("panelChartWithoutBlend").format(
+            generatedCodeTemplate = Template(self.codeTemplates.get("panelChartWithoutBlend"))
+            generatedCode = generatedCodeTemplate.substitute(
                 projectId = projectId,
                 chartType = chartType,
                 xAxis = xAxis,
