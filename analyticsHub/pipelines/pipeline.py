@@ -56,43 +56,44 @@ class CompletePipeline:
             raise CustomException(e)
         
     def generateChartFromPanel(self, projectId: str, chartType: str, xAxis: str, yAxis: str, aggregationMetric: str, dataSource: str) -> dict:
-        # try:
-        allFiles = [x.get("name") for x in self.supabaseClient.storage.from_("AnalyticsHub").list(path = projectId)]
-        if "blendConfig.json" in allFiles:
-            blendConfigUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "blendConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
-            blendConfig = orjson.loads(urlopen(blendConfigUrl).read())
-            tablesUsed = blendConfig[dataSource].get("tables")
-            joinTypes = blendConfig[dataSource].get("joinTypes")
-            blendOn = blendConfig[dataSource].get("blendOn")
-            response = replManager.run(f"getDataForChart(projectId='{projectId}', chartType='{chartType}', xAxis='{xAxis}', yAxis='{yAxis}', aggregationMetric='{aggregationMetric}', tablesUsed={tablesUsed}, joinTypes={joinTypes}, blendOn={blendOn})")
-            generatedCodeTemplate = Template(self.codeTemplates.get("panelChartWithBlend"))
-            generatedCode = generatedCodeTemplate.substitute(
-                projectId = projectId,
-                chartType = chartType,
-                xAxis = xAxis,
-                yAxis = yAxis,
-                aggregationMetric = aggregationMetric,
-                tablesUsed = tablesUsed,
-                joinTypes = joinTypes,
-                blendOn = blendOn
-            )
-        else:
-            response = replManager.run(f"getDataForChart(projectId='{projectId}', chartType='{chartType}', xAxis='{xAxis}', yAxis='{yAxis}', aggregationMetric='{aggregationMetric}', tablesUsed='{dataSource}')")    
-            generatedCodeTemplate = Template(self.codeTemplates.get("panelChartWithoutBlend"))
-            generatedCode = generatedCodeTemplate.substitute(
-                projectId = projectId,
-                chartType = chartType,
-                xAxis = xAxis,
-                yAxis = yAxis,
-                aggregationMetric = aggregationMetric,
-                tablesUsed = dataSource
-            )
-        response.update({"generatedCode": generatedCode})
-        response = orjson.loads(response.encode())
-        return response
-        # except Exception as e:
-        #     logger.error(CustomException(e))
-        #     raise CustomException(e)
+        try:
+            allFiles = [x.get("name") for x in self.supabaseClient.storage.from_("AnalyticsHub").list(path = projectId)]
+            if "blendConfig.json" in allFiles:
+                blendConfigUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "blendConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+                blendConfig = orjson.loads(urlopen(blendConfigUrl).read())
+                tablesUsed = blendConfig[dataSource].get("tables")
+                joinTypes = blendConfig[dataSource].get("joinTypes")
+                blendOn = blendConfig[dataSource].get("blendOn")
+                response = replManager.run(f"getDataForChart(projectId='{projectId}', chartType='{chartType}', xAxis='{xAxis}', yAxis='{yAxis}', aggregationMetric='{aggregationMetric}', tablesUsed={tablesUsed}, joinTypes={joinTypes}, blendOn={blendOn})")
+                generatedCodeTemplate = Template(self.codeTemplates.get("panelChartWithBlend"))
+                generatedCode = generatedCodeTemplate.substitute(
+                    projectId = projectId,
+                    chartType = chartType,
+                    xAxis = xAxis,
+                    yAxis = yAxis,
+                    aggregationMetric = aggregationMetric,
+                    tablesUsed = tablesUsed,
+                    joinTypes = joinTypes,
+                    blendOn = blendOn
+                )
+            else:
+                response = replManager.run(f"getDataForChart(projectId='{projectId}', chartType='{chartType}', xAxis='{xAxis}', yAxis='{yAxis}', aggregationMetric='{aggregationMetric}', tablesUsed='{dataSource}')")    
+                generatedCodeTemplate = Template(self.codeTemplates.get("panelChartWithoutBlend"))
+                generatedCode = generatedCodeTemplate.substitute(
+                    projectId = projectId,
+                    chartType = chartType,
+                    xAxis = xAxis,
+                    yAxis = yAxis,
+                    aggregationMetric = aggregationMetric,
+                    tablesUsed = dataSource
+                )
+            response = orjson.loads(response.encode("utf-8"))
+            response.update({"generatedCode": generatedCode})
+            response = orjson.loads(response.encode())
+            return response
+        except Exception as e:
+            logger.error(CustomException(e))
+            raise CustomException(e)
 
     def speechToText(self, b64String: str) -> str:
         try:
