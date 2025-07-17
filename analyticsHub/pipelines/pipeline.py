@@ -70,7 +70,7 @@ class CompletePipeline:
                     xAxis = xAxis,
                     yAxis = yAxis,
                     aggregationMetric = aggregationMetric,
-                    tablesUsed = tabledUsed,
+                    tablesUsed = tablesUsed,
                     joinTypes = joinTypes,
                     blendOn = blendOn
                 )
