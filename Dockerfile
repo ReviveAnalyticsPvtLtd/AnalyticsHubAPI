@@ -14,7 +14,10 @@ RUN apt-get update && apt-get install -y \
 
 RUN pip install uv
 
-RUN uv venv .venv && . .venv/bin/activate && uv sync
+RUN uv sync
+
+RUN echo "CELERY path: $(uv which celery)" && \
+    echo "GUNICORN path: $(uv which gunicorn)"
 
 RUN chmod +x /app/startup.sh
 
