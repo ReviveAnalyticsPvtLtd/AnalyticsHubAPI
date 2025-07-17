@@ -1,4 +1,4 @@
-from ..utils.functions import readYaml
+from ..utils.functions import readYaml, serializer, fetch_data, getDataForChart
 import contextlib
 import traceback
 import io
@@ -6,12 +6,15 @@ import io
 class REPLManager:
     def __init__(self):
         params = readYaml("params.yaml")
-        self.__persistentGlobals = {"__name__": "__main__"}
+        self.__persistentGlobals = {
+            "fetch_data": fetch_data,
+            "serializer": serializer,
+            "getDataForChart": getDataForChart,
+            "__name__": "__main__",
+            "__builtins__": __builtins__
+        }
         self.__stdout = io.StringIO()
         self.__stderr = io.StringIO()
-        exec(params.get("redisFunctionCode"), self.__persistentGlobals)
-        exec(params.get("panelChartDataCode"), self.__persistentGlobals)
-        exec(params.get("jsonSerializer"), self.__persistentGlobals)
         self.__globals = dict(self.__persistentGlobals)
 
     def run(self, codeString):

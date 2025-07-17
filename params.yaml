@@ -60,21 +60,6 @@ metadataGeneratorPrompt: |
     }}
     ```
 
-
-attributeInfoCode: |
-    import pandas as pd
-    import os
-    {dataframeName} = pd.read_parquet(os.environ["FILE_URL"].format(projectId = "{projectId}", fileName = "{dataframeName}"))
-    attributeInfo = 'DATAFRAME NAME: {dataframeName}\\n'
-
-    for column in {dataframeName}.columns:
-        attributeInfo += '- ' + str(column) + ' (' + {dataframeName}.get(column).dtype.name + ')\\n'
-        
-    attributeInfo += 'SHAPE: ' + str({dataframeName}.shape) + '\\n'
-    attributeInfo += 'SAMPLE ROW:\\n' + str({dataframeName}.loc[{dataframeName}.index[:1]].to_string()) + '\\n'
-    print(attributeInfo)
-
-
 jsonSerializer: |
     def serializer(obj):
         import numpy as np

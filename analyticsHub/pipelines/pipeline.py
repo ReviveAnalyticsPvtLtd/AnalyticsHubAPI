@@ -19,7 +19,7 @@ class CompletePipeline:
         logger.info("Initializing CompletePipeline components.")
         self.speechToTextModule = SpeechToText()
         self.metadataGenerator = MetadataGenerator()
-        self.yamlPath = os.path.join(os.getcwd(), "params.yaml")
+        self.yamlParams = readYaml(os.path.join(os.getcwd(), "params.yaml"))
         self.supabaseClient = create_client(
             supabase_url = os.environ["SUPABASE_URL"],
             supabase_key = os.environ["SUPABASE_KEY"]
@@ -32,8 +32,6 @@ class CompletePipeline:
             for fileName in dataFiles:
                 dataframeName = fileName.replace(".parquet", "")
                 results += attributeInfoFunc(projectId = projectId, dataframeName = dataframeName)
-                # codeString = readYaml(self.yamlPath)["attributeInfoCode"].format(dataframeName = dataframeName, projectId = projectId)
-                # results += replManager.run(codeString)
             metadataChain = self.metadataGenerator.getMetadataChain()
             metadata = metadataChain.invoke({"metadata": results})
             metadataParts = metadata.split("```")
