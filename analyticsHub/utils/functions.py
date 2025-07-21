@@ -1,4 +1,3 @@
-from ..components import replManager
 from supabase import create_client
 import pandas as pd
 import configparser
@@ -70,7 +69,7 @@ def attributeInfoFunc(projectId: str, dataframeName: str) -> str:
     attributeInfo += 'SAMPLE ROW:\n' + str(df.loc[df.index[:1]].to_string()) + '\n'
     return attributeInfo
 
-def applyFilterToAWidget(widget: dict, filters: list) -> dict:
+def applyFilterToAWidget(widget: dict, filters: list, codeExecutor: callable) -> dict:
     widget = widget.copy()
     code = widget.get("generatedCode")
     _ = widget.pop("generatedCode")
@@ -79,7 +78,7 @@ def applyFilterToAWidget(widget: dict, filters: list) -> dict:
     else:
         pass
     code = re.sub(r'fetch_data\(([^)]+)\)', r'fetch_data(\1, {filters})'.format(filters = filters), code)
-    result = replManager.run(code)
+    result = codeExecutor.run(code)
     try:
         resultDict = json.loads(result)
         widget.update(resultDict)

@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse, ORJSONResponse
 from concurrent.futures import ThreadPoolExecutor
 from fastapi.exceptions import HTTPException
 from fastapi import APIRouter, Depends
+from ..components import replManager
 from supabase import create_client
 from urllib.request import urlopen
 from typing import Annotated
@@ -102,7 +103,8 @@ async def getData(details: GetData, credentials: Annotated[HTTPAuthorizationCred
             else:
                 widgets = pageInfo.get("widgets")
                 with ThreadPoolExecutor(max_workers = 10) as executor:
-                    results = executor.map(applyFilterToAWidget, widgets, [details.filters] * len(widgets))
+                    numWidgets = len(widgets)
+                    results = executor.map(applyFilterToAWidget, widgets, [details.filters] * numWidgets, [replManager * numWidgets])
                 pageInfo["widgets"] = [x for x in results]
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "pageData": pageInfo})
         else:

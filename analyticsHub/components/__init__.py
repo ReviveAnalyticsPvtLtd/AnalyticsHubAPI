@@ -1,4 +1,4 @@
-from ..utils.functions import readYaml, serializer, fetch_data, getDataForChart
+from ..utils.functions import serializer, fetch_data, getDataForChart
 import contextlib
 import traceback
 import io
