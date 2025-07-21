@@ -1,11 +1,10 @@
 from ..models.requestModels import CreatePage, ExportToDashboard, EditWidgetPosition, GetData, DeleteDashboardElement
+from ..utils.functions import verifyToken, getDataTypes, applyFilterToAWidget
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.responses import JSONResponse, ORJSONResponse
-from ..utils.functions import verifyToken, getDataTypes
 from concurrent.futures import ThreadPoolExecutor
 from fastapi.exceptions import HTTPException
 from fastapi import APIRouter, Depends
-from ..components import replManager
 from supabase import create_client
 from urllib.request import urlopen
 from typing import Annotated
@@ -14,7 +13,6 @@ import json
 import time
 import os
 import io
-import re
 
 router = APIRouter()
 security = HTTPBearer()
@@ -103,27 +101,9 @@ async def getData(details: GetData, credentials: Annotated[HTTPAuthorizationCred
                 for widget in pageInfo["widgets"]: widget.pop("generatedCode")
             else:
                 widgets = pageInfo.get("widgets")
-                for widget in widgets:
-                    code = widget.get("generatedCode")
-                    _ = widget.pop("generatedCode")
-                    if "```" in code:
-                        code = "\n".join(code.split("```")[-2].split("\n")[1:])
-                    else:
-                        pass
-                    code = re.sub(r'fetch_data\(([^)]+)\)', r'fetch_data(\1, {filters})'.format(filters = details.filters), code)
-                    result = replManager.run(code)
-                    try:
-                        resultDict = json.loads(result)
-                        widget.update(resultDict)
-                    except Exception as e:
-                        widgetChartType = widget.get("chartType")
-                        if widgetChartType == "card":
-                            widget["data"] = None
-                        else:
-                            dataKey = widget.get("data")
-                            datasets = dataKey.get("datasets")
-                            for dataset in datasets:
-                                dataset["data"] = list()
+                with ThreadPoolExecutor(max_workers = 10) as executor:
+                    results = executor.map(applyFilterToAWidget, widgets, [details.filters] * len(widgets))
+                pageInfo["widgets"] = [x for x in results]
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "pageData": pageInfo})
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    

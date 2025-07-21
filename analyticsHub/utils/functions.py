@@ -1,3 +1,4 @@
+from ..components import replManager
 from supabase import create_client
 import pandas as pd
 import configparser
@@ -5,8 +6,8 @@ import numpy as np
 import datetime
 import json
 import yaml
-import math
 import os
+import re
 
 client = create_client(
     supabase_url = os.environ["SUPABASE_URL"],
@@ -68,6 +69,30 @@ def attributeInfoFunc(projectId: str, dataframeName: str) -> str:
     attributeInfo += 'SHAPE: ' + str(df.shape) + '\n'
     attributeInfo += 'SAMPLE ROW:\n' + str(df.loc[df.index[:1]].to_string()) + '\n'
     return attributeInfo
+
+def applyFilterToAWidget(widget: dict, filters: list) -> dict:
+    widget = widget.copy()
+    code = widget.get("generatedCode")
+    _ = widget.pop("generatedCode")
+    if "```" in code:
+        code = "\n".join(code.split("```")[-2].split("\n")[1:])
+    else:
+        pass
+    code = re.sub(r'fetch_data\(([^)]+)\)', r'fetch_data(\1, {filters})'.format(filters = filters), code)
+    result = replManager.run(code)
+    try:
+        resultDict = json.loads(result)
+        widget.update(resultDict)
+    except:
+        widgetChartType = widget.get("chartType")
+        if widgetChartType == "card":
+            widget["data"] = None
+        else:
+            dataKey = widget.get("data")
+            datasets = dataKey.get("datasets")
+            for dataset in datasets:
+                dataset["data"] = list()
+    return widget
 
 def serializer(obj):
     # Handle NumPy types
