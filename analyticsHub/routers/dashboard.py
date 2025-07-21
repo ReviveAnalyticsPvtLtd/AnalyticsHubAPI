@@ -104,7 +104,7 @@ async def getData(details: GetData, credentials: Annotated[HTTPAuthorizationCred
                 widgets = pageInfo.get("widgets")
                 with ThreadPoolExecutor(max_workers = 10) as executor:
                     numWidgets = len(widgets)
-                    results = executor.map(applyFilterToAWidget, widgets, [details.filters] * numWidgets, [replManager * numWidgets])
+                    results = executor.map(applyFilterToAWidget, widgets, [details.filters] * numWidgets, [replManager] * numWidgets)
                 pageInfo["widgets"] = [x for x in results]
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "pageData": pageInfo})
         else:
