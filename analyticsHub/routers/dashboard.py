@@ -103,50 +103,27 @@ async def getData(details: GetData, credentials: Annotated[HTTPAuthorizationCred
                 for widget in pageInfo["widgets"]: widget.pop("generatedCode")
             else:
                 widgets = pageInfo.get("widgets")
-                codes = {x.get("id"): x.get("generatedCode") for x in widgets}
-                keys = codes.keys()
-                for key in keys:
-                    if "```" in codes.get(key):
-                        newCode = "\n".join(codes.get(key).split("```")[-2].split("\n")[1:])
-                        newCode = re.sub(r'fetch_data\(([^)]+)\)', r'fetch_data(\1, {filters})'.format(filters = details.filters), newCode)
-                        for widget in widgets:
-                            if widget.get("id") == key:
-                                widget.pop("generatedCode")
-                                result = replManager.run(newCode)
-                                try:
-                                    resultDict = json.loads(result)
-                                    widget.update(resultDict)
-                                except:
-                                    widgetChartType = widget.get("chartType")
-                                    if widgetChartType == "card":
-                                        widget["data"] = None
-                                    else:
-                                        dataKey = widget.get("data")
-                                        datasets = dataKey.get("datasets")
-                                        for dataset in datasets:
-                                            dataset["data"] = list()
-                            else:
-                                continue
+                for widget in widgets:
+                    code = widget.get("generatedCode")
+                    _ = widget.pop("generatedCode")
+                    if "```" in code:
+                        code = "\n".join(code.split("```")[-2].split("\n")[1:])
                     else:
-                        newCode = re.sub(r'fetch_data\(([^)]+)\)', r'fetch_data(\1, {filters})'.format(filters = details.filters), codes[key])
-                        for widget in widgets:
-                            if widget.get("id") == key:
-                                widget.pop("generatedCode")
-                                result = replManager.run(newCode)
-                                try:
-                                    resultDict = json.loads(result)
-                                    widget.update(resultDict)
-                                except:
-                                    widgetChartType = widget.get("chartType")
-                                    if widgetChartType == "card":
-                                        widget["data"] = None
-                                    else:
-                                        dataKey = widget.get("data")
-                                        datasets = dataKey.get("datasets")
-                                        for dataset in datasets:
-                                            dataset["data"] = list()
-                            else:
-                                continue
+                        pass
+                    code = re.sub(r'fetch_data\(([^)]+)\)', r'fetch_data(\1, {filters})'.format(filters = details.filters), code)
+                    result = replManager.run(code)
+                    try:
+                        resultDict = json.loads(result)
+                        widget.update(resultDict)
+                    except Exception as e:
+                        widgetChartType = widget.get("chartType")
+                        if widgetChartType == "card":
+                            widget["data"] = None
+                        else:
+                            dataKey = widget.get("data")
+                            datasets = dataKey.get("datasets")
+                            for dataset in datasets:
+                                dataset["data"] = list()
             return JSONResponse(status_code = 200, content = {"status": "SUCCESS", "pageData": pageInfo})
         else:
             return JSONResponse(status_code = 498, content = {"status": "ERROR", "errorDetail": "Invalid Token"})    
