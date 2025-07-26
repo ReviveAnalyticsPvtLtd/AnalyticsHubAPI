@@ -10,7 +10,7 @@ __version__ = "1.0.0"
 __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["celeryApp"]
 
-from tasks.generateForecasts import GenerateForecasts
+from analyticsHub.triggers.tasks.generateForecasts import GenerateForecasts
 from celery import Celery
 import os
 

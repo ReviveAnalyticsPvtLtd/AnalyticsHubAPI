@@ -14,6 +14,7 @@ from supabase import create_client
 from datetime import datetime
 from fastapi import Depends
 import os
+import gc
 
 security = HTTPBearer()
 client = create_client(
@@ -38,6 +39,7 @@ def verifyToken(credentials: HTTPAuthorizationCredentials = Depends(security)):
     Raises:
         ValueError: If the token is invalid or expired.
     """
+    gc.collect()
     token = credentials.credentials
     response = client.table("Sessions").select("*").eq("accessToken", token).limit(1).execute()
     if response.data:
