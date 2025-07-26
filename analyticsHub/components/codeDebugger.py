@@ -63,7 +63,7 @@ class CodeDebugger:
         try:
             logger.info("Constructing code debugger chain.")
             self.config = getConfig(self.codeDebuggerConfig.configPath)
-            promptTemplate = readYaml(self.yamlPath).get("codeDebuggerAgentPrompt")
+            promptTemplate = readYaml(self.codeDebuggerConfig.yamlPath).get("codeDebuggerAgentPrompt")
             codeGeneratorPrompt = PromptTemplate.from_template(promptTemplate)
             llm = ChatCerebras(
                 model=self.config.get("CODEDEBUGGER", "model"),
