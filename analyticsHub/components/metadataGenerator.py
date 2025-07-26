@@ -1,46 +1,83 @@
+"""
+metadataGenerator.py
+
+This module provides components for generating metadata using a large language model.
+
+It includes the MetadataGenerator class, which encapsulates the logic for creating
+a LangChain runnable for metadata generation. The generator is configured via
+external YAML and INI files for prompts and model parameters, respectively.
+"""
+
+__version__ = "1.0.0"
+__author__ = "Rauhan Ahmed Siddiqui"
+__all__ = ["MetadataGenerator"]        
+
+
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
-from ..utils.functions import readYaml, getConfig
-from ..utils.exceptions import CustomException
+from ...utils.exceptionHandler import CustomException
 from langchain_core.messages import AIMessage
 from langchain_cerebras import ChatCerebras
-# from langchain_openai import ChatOpenAI
-from ..utils.logger import logger
+from ..utils import readYaml, getConfig
+from ...utils.logger import logger
+from dataclasses import dataclass
 import os
 
+@dataclass
+class MetadataGeneratorConfig:
+    """Configuration for the MetadataGenerator."""
+    yamlPath: str = os.path.join(os.getcwd(), "prompts.yaml")
+    configPath: str = os.path.join(os.getcwd(), "config.ini")
+
 class MetadataGenerator:
+    """A class for generating metadata using a large language model chain."""
     def __init__(self):
+        """Initializes the MetadataGenerator."""
         logger.info("Initializing MetadataGenerator.")
-        self.yamlPath = os.path.join(os.getcwd(), "prompts.yaml")
-        self.config = getConfig(os.path.join(os.getcwd(), "config.ini"))
+        self.metadataGeneratorConfig = MetadataGeneratorConfig()
 
     def _removeThinkTokens(self, inputStr: AIMessage) -> AIMessage:
-        inputStr = inputStr.text().replace("<think>", "").replace("</think>", "")
+        """Removes <think> and </think> tokens from the AI message content.
+
+        Args:
+            inputStr (AIMessage): The input AI message.
+
+        Returns:
+            AIMessage: An AIMessage with the thinking tokens removed from its content.
+        """
+        inputStr = inputStr.content().replace("<think>", "").replace("</think>", "")
         return AIMessage(inputStr)
 
     def getMetadataChain(self):
+        """Constructs and returns a LangChain runnable for metadata generation.
+
+        This method reads the configuration and prompt template, then builds a chain
+        consisting of a prompt, a ChatCerebras model, and an output parser.
+        The chain is designed to take a metadata dictionary as input.
+
+        Returns:
+            Runnable: A LangChain runnable sequence for generating metadata.
+
+        Raises:
+            CustomException: If any error occurs during chain construction.
+        """
         try:
             logger.info("Constructing metadata generation chain.")
-            promptTemplate = readYaml(self.yamlPath)["metadataGeneratorPrompt"]
+            self.config = getConfig(self.metadataGeneratorConfig.configPath)
+            promptTemplate = readYaml(self.metadataGeneratorConfig.yamlPath).get("metadataGeneratorPrompt")
             prompt = ChatPromptTemplate.from_template(promptTemplate)
             llm = ChatCerebras(
-                model=self.config.get("METADATAGENERATOR", "model"),
-                temperature=self.config.getfloat("METADATAGENERATOR", "temperature")
+                model = self.config.get("METADATAGENERATOR", "model"),
+                temperature = self.config.getfloat("METADATAGENERATOR", "temperature")
             )
-            # llm = ChatOpenAI(
-            #     openai_api_key = os.environ["OPENAI_API_KEY"],
-            #     openai_api_base = os.environ["OPENAI_API_BASE"],
-            #     model_name = self.config.get("METADATAGENERATOR", "model"),
-            #     temperature = self.config.getfloat("METADATAGENERATOR", "temperature"),
-            #     max_tokens = self.config.getint("METADATAGENERATOR", "maxTokens")
-            # )
             outputParser = StrOutputParser()
             chain = {
-                "metadata": RunnableLambda(lambda x: x["metadata"])
-            } | prompt | llm | self._removeThinkTokens | outputParser
+                "metadata": RunnableLambda(lambda x: x.get("metadata"))
+            } | prompt | llm | RunnableLambda(self._removeThinkTokens) | outputParser
             logger.info("Metadata generation chain constructed successfully.")
             return chain
         except Exception as e:
-            logger.error(f"Error constructing metadata generation chain: {e}")
-            raise CustomException(e)
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception

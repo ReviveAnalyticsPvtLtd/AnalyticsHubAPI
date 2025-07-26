@@ -1,0 +1,269 @@
+"""
+dataLoadService module provides services for loading and managing data from various sources (CSV, Excel, MySQL, PostgreSQL, MongoDB) and deleting tables for AnalyticsHub projects.
+
+Author: Rauhan Ahmed Siddiqui
+Version: 1.0.0
+"""
+__version__ = "1.0.0"
+__author__ = "Rauhan Ahmed Siddiqui"
+__all__ = ["dataLoadService"] 
+
+
+from ...utils.exceptionHandler import CustomException
+from pymongo.mongo_client import MongoClient
+from fastapi import Form, UploadFile, File
+from pymongo.server_api import ServerApi
+from sqlalchemy import create_engine
+from ...utils.logger import logger
+from urllib.request import urlopen
+from ..commons import client
+from typing import Annotated
+from ..models import (
+    LoadMySQLorPostgreSQL,
+    LoadMongoDB,
+    DeleteTable
+)
+import pandas as pd
+import tempfile
+import json
+import time
+import io
+import os
+
+class DataLoadSevice:
+    """
+    Service class for loading data from different sources and managing project tables.
+    """
+    def __init__(self) -> None:
+        """
+        Initializes the DataLoadSevice and sets up the client for database operations.
+        """
+        logger.info("Initializing Data Load Service.")
+        self.client = client
+
+    async def loadCsvData(self, projectId: Annotated[str, Form()], file: Annotated[UploadFile, File()]) -> None:
+        """
+        Loads CSV data into the project, converts it to Parquet format, and uploads it to storage.
+
+        Args:
+            projectId (str): The project identifier.
+            file (UploadFile): The uploaded CSV file.
+        Returns:
+            None
+        Raises:
+            CustomException: If loading or uploading fails.
+        """
+        try:
+            project = self.client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", projectId).execute().data[0]                
+            with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
+                pd.read_csv(io.BytesIO(await file.read()), parse_dates = True).to_parquet(temp.name, compression = "snappy")
+                _ = self.client.storage.from_("AnalyticsHub").upload(
+                    file = temp.name,
+                    path = f"{projectId}/{os.path.splitext(file.filename)[0] + '.parquet'}",
+                    file_options = {"upsert": "true"}
+                )
+                if project["dataTables"]:
+                    if os.path.splitext(file.filename)[0] not in project["dataTables"]:
+                        projectData = project["dataTables"] + f", {os.path.splitext(file.filename)[0]}"
+                        _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
+                    else:
+                        pass
+                else:
+                    projectData = os.path.splitext(file.filename)[0]
+                    _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
+                temp.close()
+            return 
+        except Exception as e:
+            exception  = CustomException(e)
+            logger.error(exception)
+            raise exception
+        
+    async def loadExcelData(self, projectId: Annotated[str, Form()], file: Annotated[UploadFile, File()], sheetName: Annotated[str | None, Form()] = None) -> None:
+        """
+        Loads Excel data (optionally from a specific sheet) into the project, converts it to Parquet format, and uploads it to storage.
+
+        Args:
+            projectId (str): The project identifier.
+            file (UploadFile): The uploaded Excel file.
+            sheetName (str, optional): The sheet name to load. Defaults to None.
+        Returns:
+            None
+        Raises:
+            CustomException: If loading or uploading fails.
+        """
+        try:
+            project = self.client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", projectId).execute().data[0]                
+            with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
+                pd.read_excel(io.BytesIO(await file.read()), sheet_name = sheetName, parse_dates = True).to_parquet(temp.name, compression = "snappy")
+                if sheetName == None:
+                    fileName = f"{os.path.splitext(file.filename)[0] + '.parquet'}"
+                else:
+                    fileName = f"{os.path.splitext(file.filename)[0] + '_' + sheetName + '.parquet'}"
+                _ = self.client.storage.from_("AnalyticsHub").upload(
+                    file = temp.name,
+                    path = f"{projectId}/{fileName}",
+                    file_options = {"upsert": "true"}
+                )
+                if project["dataTables"]:
+                    if '.'.join(fileName.split('.')[:-1]) not in project["dataTables"]:
+                        projectData = project["dataTables"] + f", {'.'.join(fileName.split('.')[:-1])}"
+                        _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
+                    else:
+                        pass
+                else:
+                    projectData = '.'.join(fileName.split('.')[:-1])
+                    _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
+                temp.close()
+            return
+        except Exception as e:
+            exception  = CustomException(e)
+            logger.error(exception)
+            raise exception
+        
+    def loadMySql(self, connection: LoadMySQLorPostgreSQL) -> None:
+        """
+        Loads data from a MySQL database table into the project, converts it to Parquet format, and uploads it to storage.
+
+        Args:
+            connection (LoadMySQLorPostgreSQL): Connection details for the MySQL database.
+        Returns:
+            None
+        Raises:
+            CustomException: If loading or uploading fails.
+        """
+        try:
+            project = self.client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", connection.projectId).execute().data[0]                
+            with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
+                connStr = f"mysql+pymysql://{connection.user}:{connection.password}@{connection.host}:{connection.port}/{connection.db}"
+                engine = create_engine(connStr)
+                pd.read_sql(f"SELECT * FROM {connection.table}", engine, parse_dates = True).to_parquet(temp.name, compression = "snappy")
+                _ = self.client.storage.from_("AnalyticsHub").upload(
+                    file = temp.name,
+                    path = f"{connection.projectId}/{connection.table + '.parquet'}",
+                    file_options = {"upsert": "true"}
+                )
+                if project["dataTables"]:
+                    if connection.table not in project["dataTables"]:
+                        projectData = project["dataTables"] + f", {connection.table}"
+                        _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", connection.projectId).execute()
+                    else:
+                        pass
+                else:
+                    projectData = connection.table
+                    _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", connection.projectId).execute()
+                temp.close()
+            return
+        except Exception as e:
+            exception  = CustomException(e)
+            logger.error(exception)
+            raise exception
+        
+    def loadPostgreSQL(self, connection: LoadMySQLorPostgreSQL) -> None:
+        """
+        Loads data from a PostgreSQL database table into the project, converts it to Parquet format, and uploads it to storage.
+
+        Args:
+            connection (LoadMySQLorPostgreSQL): Connection details for the PostgreSQL database.
+        Returns:
+            None
+        Raises:
+            CustomException: If loading or uploading fails.
+        """
+        try:
+            project = self.client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", connection.projectId).execute().data[0]                
+            with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
+                connStr = f"postgresql+psycopg2://{connection.user}:{connection.password}@{connection.host}:{connection.port}/{connection.db}"
+                engine = create_engine(connStr)
+                pd.read_sql(f"SELECT * FROM {connection.table}", engine, parse_dates = True).to_parquet(temp.name, compression = "snappy")
+                _ = self.client.storage.from_("AnalyticsHub").upload(
+                    file = temp.name,
+                    path = f"{connection.projectId}/{connection.table + '.parquet'}",
+                    file_options = {"upsert": "true"}
+                )
+                if project["dataTables"]:
+                    if connection.table not in project["dataTables"]:
+                        projectData = project["dataTables"] + f", {connection.table}"
+                        _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", connection.projectId).execute()
+                    else:
+                        pass
+                else:
+                    projectData = connection.table
+                    _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", connection.projectId).execute()
+                temp.close()
+            return
+        except Exception as e:
+            exception  = CustomException(e)
+            logger.error(exception)
+            raise exception
+        
+    def loadMongoDB(self, connection: LoadMongoDB) -> None:
+        """
+        Loads data from a MongoDB collection into the project, converts it to Parquet format, and uploads it to storage.
+
+        Args:
+            connection (LoadMongoDB): Connection details for the MongoDB database.
+        Returns:
+            None
+        Raises:
+            CustomException: If loading or uploading fails.
+        """
+        try:
+            project = self.client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", connection.projectId).execute().data[0]                
+            with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
+                mongoClient = MongoClient(connection.connectionString, server_api=ServerApi('1'))
+                records = list(mongoClient[connection.db][connection.collection].find())
+                for record in records: record.pop("_id")
+                pd.DataFrame(records).to_parquet(temp.name, compression = "snappy")
+                _ = self.client.storage.from_("AnalyticsHub").upload(
+                    file = temp.name,
+                    path = f"{connection.projectId}/{connection.collection + '.parquet'}",
+                    file_options = {"upsert": "true"}
+                )
+                if project["dataTables"]:
+                    if connection.collection not in project["dataTables"]:
+                        projectData = project["dataTables"] + f", {connection.collection}"
+                        _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", connection.projectId).execute()
+                    else:
+                        pass
+                else:
+                    projectData = connection.collection
+                    _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", connection.projectId).execute()
+                temp.close()
+            return
+        except Exception as e:
+            exception  = CustomException(e)
+            logger.error(exception)
+            raise exception
+        
+    def deleteTable(self, tableDetails: DeleteTable) -> None:
+        """
+        Deletes a table from the project storage and updates project metadata accordingly.
+
+        Args:
+            tableDetails (DeleteTable): Details of the table to delete.
+        Returns:
+            None
+        Raises:
+            CustomException: If deletion or metadata update fails.
+        """
+        try:
+            _ = self.client.storage.from_("AnalyticsHub").remove(f"{tableDetails.projectId}/{tableDetails.tableName}" + ".parquet")
+            projectTables = self.client.table("Projects").select("dataTables").eq("projectId", tableDetails.projectId).execute().data[0]["dataTables"]
+            projectTables = projectTables.split(", ")
+            projectTables.remove(tableDetails.tableName)
+            projectTables = ", ".join(projectTables)
+            _ = self.client.table("Projects").update({"dataTables": projectTables}).eq("projectId", tableDetails.projectId).execute()
+            fileUrl = os.environ["FILE_URL"].format(projectId = tableDetails.projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            jsonData = json.loads(urlopen(fileUrl).read())
+            jsonData.pop(tableDetails.tableName)
+            with io.BytesIO() as buffer:
+                buffer.write(json.dumps(jsonData, indent=4).encode("utf-8"))
+                buffer.seek(0)
+                self.client.storage.from_("AnalyticsHub").upload(path = f"{tableDetails.projectId}/metadata.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
+            return
+        except Exception as e:
+            exception  = CustomException(e)
+            logger.error(exception)
+            raise exception
+        
+dataLoadService = DataLoadSevice()

@@ -1,130 +1,65 @@
-from supabase import create_client
+"""
+initMethods.py
+
+This module provides utility functions for data serialization, fetching data from Redis/parquet, and preparing data for charting and analytics.
+"""
+
+__version__ = "1.0.0"
+__author__ = "Rauhan Ahmed Siddiqui"
+__all__ = ["getDataForChart", "fetch_data", "serializer"]
+
+
 import pandas as pd
-import configparser
 import numpy as np
 import datetime
+import redis
 import json
-import yaml
+import io
 import os
-import re
-
-client = create_client(
-    supabase_url = os.environ["SUPABASE_URL"],
-    supabase_key = os.environ["SUPABASE_KEY"]
-)
-
-def verifyToken(token: str):
-    allTokens = [x["accessToken"] for x in client.table("Sessions").select("accessToken").execute().data]
-    if token in allTokens: 
-        response = client.table("Sessions").update({"lastActivity": str(datetime.datetime.utcnow())}).eq("accessToken", token).execute()
-        return True
-    else: return False
-
-def readYaml(filePath: str) -> dict:
-    with open(filePath, "r") as f:
-        content = yaml.safe_load(f)
-    return content 
-
-def getConfig(path: str) -> dict:
-    config = configparser.ConfigParser()
-    config.read(path)
-    return config
-
-def getDataTypes(projectId: str, tableName: str) -> list[dict]:   
-    fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = tableName)
-    df = pd.read_parquet(fileUrl)
-    numericals = ["int64", "float64", "float32", "int32"]
-    categoricals = ["bool", "category", "object", "string"]
-    datetimeTypes = ["datetime64[ns]", "datetime64[ns, tz]"]
-    allColumns = list()
-    for column in df.columns:
-        dtype = df[column].dtype
-        if dtype in numericals:
-            columnInfo = dict()
-            columnInfo["columnName"] = column
-            columnInfo["type"] = dtype.name
-            columnInfo["min"] = df[column].min()
-            columnInfo["max"] = df[column].max()
-            allColumns.append(columnInfo)
-        elif df[column].dtype in datetimeTypes:
-            columnInfo = dict()
-            columnInfo["columnName"] = column
-            columnInfo["type"] = dtype.name
-            columnInfo["min"] = df[column].min()
-            columnInfo["max"] = df[column].max()
-            allColumns.append(columnInfo)
-        else:
-            columnInfo = dict()
-            columnInfo["columnName"] = column
-            columnInfo["type"] = dtype.name
-            columnInfo["uniqueValues"] = df[column].unique().tolist()
-            allColumns.append(columnInfo)
-    return allColumns
-
-def attributeInfoFunc(projectId: str, dataframeName: str) -> str:
-    df = pd.read_parquet(os.environ["FILE_URL"].format(projectId = projectId, fileName = dataframeName))
-    attributeInfo = f'DATAFRAME NAME: {dataframeName}\n'
-    for column in df.columns: attributeInfo += '- ' + str(column) + ' (' + df.get(column).dtype.name + ')\n'
-    attributeInfo += 'SHAPE: ' + str(df.shape) + '\n'
-    attributeInfo += 'SAMPLE ROW:\n' + str(df.loc[df.index[:1]].to_string()) + '\n'
-    return attributeInfo
-
-def applyFilterToAWidget(widget: dict, filters: list, codeExecutor: callable) -> dict:
-    widget = widget.copy()
-    code = widget.get("generatedCode")
-    _ = widget.pop("generatedCode")
-    if "```" in code:
-        code = "\n".join(code.split("```")[-2].split("\n")[1:])
-    else:
-        pass
-    code = re.sub(r'fetch_data\(([^)]+)\)', r'fetch_data(\1, {filters})'.format(filters = filters), code)
-    result = codeExecutor.run(code)
-    try:
-        resultDict = json.loads(result)
-        widget.update(resultDict)
-    except:
-        widgetChartType = widget.get("chartType")
-        if widgetChartType == "card":
-            widget["data"] = None
-        else:
-            dataKey = widget.get("data")
-            datasets = dataKey.get("datasets")
-            for dataset in datasets:
-                dataset["data"] = list()
-    return widget
 
 def serializer(obj):
-    # Handle NumPy types
+    """
+    Serializes various data types (NumPy, pandas, datetime, etc.) to JSON-compatible formats.
+
+    Args:
+        obj: The object to serialize.
+
+    Returns:
+        JSON-compatible representation of the object.
+    """
     if isinstance(obj, (np.integer)):
-        return obj.item()  # Convert to native Python int
+        return obj.item()  
     elif isinstance(obj, (np.floating)):
         if np.isnan(obj) or np.isinf(obj):
-            return None  # Replace NaN/Infinity with JSON-compliant null
-        return obj.item()  # Convert to native Python float
+            return None  
+        return obj.item()  
     elif isinstance(obj, np.ndarray):
-        return obj.tolist()  # Convert NumPy array to list
+        return obj.tolist()
     elif isinstance(obj, np.datetime64):
-        return str(obj)  # Convert to ISO 8601 string
-    # Handle Pandas DataFrames and Series
+        return str(obj)  
     elif isinstance(obj, pd.DataFrame):
-        return obj.to_dict(orient="records")  # Convert to list of dicts
+        return obj.to_dict(orient="records")  
     elif isinstance(obj, pd.Series):
-        return obj.tolist()  # Convert Series to list
-    # Handle datetime types
+        return obj.tolist()  
     elif isinstance(obj, (datetime.datetime, datetime.date)):
-        return obj.isoformat()  # Convert to ISO 8601 string
-    # Handle sets and tuples
+        return obj.isoformat()  
     elif isinstance(obj, (set, tuple)):
         return list(obj)
-    # Handle complex numbers
     elif isinstance(obj, complex):
         return {"real": obj.real, "imag": obj.imag}
 
 def fetch_data(projectId: str, tableName: str, baseFilters: list = list()):
-    import pandas as pd
-    import redis
-    import os
-    import io
+    """
+    Fetches a DataFrame from Redis cache or parquet file, with optional filtering.
+
+    Args:
+        projectId (str): The project ID.
+        tableName (str): The table name.
+        baseFilters (list, optional): List of filter conditions to apply.
+
+    Returns:
+        pd.DataFrame: The resulting DataFrame after applying filters.
+    """
     r = redis.Redis(host=os.environ["REDIS_HOST"], port=int(os.environ["REDIS_PORT"]), password=os.environ["REDIS_PASSWORD"])
     key = f"{projectId}::{tableName}"
     df = r.get(key)
@@ -173,6 +108,22 @@ def fetch_data(projectId: str, tableName: str, baseFilters: list = list()):
     return df
 
 def getDataForChart(projectId: str, chartType: str, xAxis: str, yAxis: str, aggregationMetric: str, tablesUsed: list[str] | str, joinTypes: list[str] | None = None, blendOn: list[str] | None = None):
+    """
+    Prepares and aggregates data for charting based on the specified parameters.
+
+    Args:
+        projectId (str): The project ID.
+        chartType (str): The type of chart to generate.
+        xAxis (str): The column to use for the X axis.
+        yAxis (str): The column to use for the Y axis.
+        aggregationMetric (str): The aggregation metric (sum, mean, etc.).
+        tablesUsed (list[str] | str): Tables to use for the chart.
+        joinTypes (list[str], optional): Join types for merging tables.
+        blendOn (list[str], optional): Columns to join on.
+
+    Returns:
+        dict: Chart-ready data structure.
+    """
     if isinstance(tablesUsed, list):
         allTables = [fetch_data(projectId, x) for x in tablesUsed]
         result = allTables[0]
@@ -246,7 +197,6 @@ def getDataForChart(projectId: str, chartType: str, xAxis: str, yAxis: str, aggr
             }
         }
     elif chartType == "card":
-        # For card type, ensure we return a single value
         if len(finalResult) > 0:
             single_value = finalResult[yAxis].iloc[0]
             response = {

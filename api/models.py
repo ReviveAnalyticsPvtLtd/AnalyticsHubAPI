@@ -10,10 +10,10 @@ class Login(BaseModel):
 
 class LoginWithProvider(BaseModel):
     email: str
+    provider: str
     sub: str | None = None
     id: str | None = None
     nodeId: str | None = None
-    provider: str
 
 class OnboardingDetails(BaseModel):
     usage: str
@@ -28,6 +28,7 @@ class OnboardingDetails(BaseModel):
     source: str
 
 class NewCredentials(BaseModel):
+    email: str
     newPassword: str
 
 class UpdateProjectState(BaseModel):

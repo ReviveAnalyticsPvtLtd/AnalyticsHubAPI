@@ -1,0 +1,353 @@
+"""
+dashboardService.py
+
+This module provides the DashboardService class, which encapsulates business logic for managing dashboards, pages, widgets, and data retrieval for AnalyticsHub projects. It interacts with the Supabase client and manages dashboard configurations and widget data in storage.
+"""
+
+__version__ = "1.0.0"
+__author__ = "Rauhan Ahmed Siddiqui"
+__all__ = ["dashboardService"] 
+
+
+from ...utils.exceptionHandler import CustomException
+from concurrent.futures import ThreadPoolExecutor
+from ...utils.codeExecutor import replManager
+from ...utils.logger import logger
+from urllib.request import urlopen
+from ..commons import client
+from ..models import (
+    DeleteDashboardElement,
+    ExportToDashboard,
+    EditWidgetPosition,
+    CreatePage,
+    GetData
+)
+import pandas as pd
+import uuid
+import json
+import time
+import os
+import io
+import re
+
+class DashboardService:
+    """
+    Service class for managing dashboards, pages, widgets, and data retrieval.
+
+    Handles creation and management of dashboard pages and widgets, exporting widgets, retrieving data, editing widget positions, deleting dashboard elements, and extracting all columns from project tables.
+    Interacts with the Supabase client and manages dashboard configurations and widget data in storage.
+    """
+    def __init__(self) -> None:
+        """
+        Initializes the DashboardService and sets up the Supabase client.
+        """
+        logger.info("Initializing Dashboard Service.")
+        self.client = client
+
+    @staticmethod
+    def _applyFilterToAWidget(widget: dict, filters: list, codeExecutor: callable) -> dict:
+        """
+        Apply filters to a widget's generated code and update its data accordingly.
+
+        Args:
+            widget (dict): The widget dictionary containing generated code and metadata.
+            filters (list): List of filters to apply.
+            codeExecutor (callable): Function to execute the code and retrieve results.
+
+        Returns:
+            dict: The updated widget dictionary with filtered data.
+        """
+        widget = widget.copy()
+        code = widget.get("generatedCode")
+        _ = widget.pop("generatedCode")
+        if "```" in code:
+            code = "\n".join(code.split("```")[-2].split("\n")[1:])
+        else:
+            pass
+        code = re.sub(r'fetch_data\(([^)]+)\)', r'fetch_data(\1, {filters})'.format(filters = filters), code)
+        result = codeExecutor.run(code)
+        try:
+            resultDict = json.loads(result)
+            widget.update(resultDict)
+        except:
+            widgetChartType = widget.get("chartType")
+            if widgetChartType == "card":
+                widget["data"] = None
+            else:
+                dataKey = widget.get("data")
+                datasets = dataKey.get("datasets")
+                for dataset in datasets:
+                    dataset["data"] = list()
+        return widget
+    
+    @staticmethod
+    def _getDataTypes(projectId: str, tableName: str) -> list[dict]:   
+        """
+        Retrieve data types and metadata for all columns in a given table.
+
+        Args:
+            projectId (str): The project identifier.
+            tableName (str): The table name.
+
+        Returns:
+            list[dict]: List of dictionaries containing column metadata.
+        """
+        fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = tableName)
+        df = pd.read_parquet(fileUrl)
+        numericals = ["int64", "float64", "float32", "int32"]
+        categoricals = ["bool", "category", "object", "string"]
+        datetimeTypes = ["datetime64[ns]", "datetime64[ns, tz]"]
+        allColumns = list()
+        for column in df.columns:
+            dtype = df[column].dtype
+            if dtype in numericals:
+                columnInfo = dict()
+                columnInfo["columnName"] = column
+                columnInfo["type"] = dtype.name
+                columnInfo["min"] = df[column].min()
+                columnInfo["max"] = df[column].max()
+                allColumns.append(columnInfo)
+            elif df[column].dtype in datetimeTypes:
+                columnInfo = dict()
+                columnInfo["columnName"] = column
+                columnInfo["type"] = dtype.name
+                columnInfo["min"] = df[column].min()
+                columnInfo["max"] = df[column].max()
+                allColumns.append(columnInfo)
+            else:
+                columnInfo = dict()
+                columnInfo["columnName"] = column
+                columnInfo["type"] = dtype.name
+                columnInfo["uniqueValues"] = df[column].unique().tolist()
+                allColumns.append(columnInfo)
+        return allColumns
+
+    def createPage(self, details: CreatePage) -> str:
+        """
+        Create a new dashboard page for a project.
+
+        Args:
+            details (CreatePage): Details of the page to create.
+
+        Returns:
+            str: The unique page ID of the newly created page.
+
+        Raises:
+            CustomException: For any errors during page creation.
+        """
+        try:
+            pageId = str(uuid.uuid4())
+            if "dashboardConfig.json" in [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = details.projectId)]:
+                fileUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "dashboardConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+                dashboardConfig = json.loads(urlopen(fileUrl).read())
+                dashboardConfig[pageId] = {"name": details.pageName, "widgets": []}
+            else:
+                dashboardConfig = {pageId: {"name": details.pageName, "widgets": []}}
+            with io.BytesIO() as buffer:
+                buffer.write(json.dumps(dashboardConfig, indent=4).encode("utf-8"))
+                buffer.seek(0)
+                _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/dashboardConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"})   
+            return pageId
+        except Exception as e:
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception  
+
+    def getAllPages(self, projectId: str) -> list:
+        """
+        Retrieve all dashboard pages for a given project.
+
+        Args:
+            projectId (str): The project identifier.
+
+        Returns:
+            list: List of dictionaries containing page names and IDs.
+
+        Raises:
+            CustomException: For any errors during retrieval.
+        """
+        try:
+            if "dashboardConfig.json" in [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = projectId)]:
+                fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "dashboardConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+                dashboardConfig = json.loads(urlopen(fileUrl).read())
+                pages = [{"pageName": dashboardConfig[x]["name"], "pageId": x} for x in dashboardConfig.keys()]
+            else:
+                pages = list()
+            return pages
+        except Exception as e:
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception   
+        
+    def exportToDashboard(self, details: ExportToDashboard) -> str:
+        """
+        Export a widget to a dashboard page.
+
+        Args:
+            details (ExportToDashboard): Details of the widget and page to export to.
+
+        Returns:
+            str: The unique widget ID of the newly exported widget.
+
+        Raises:
+            CustomException: For any errors during export.
+        """
+        try:
+            fileUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "dashboardConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            dashboardConfig = json.loads(urlopen(fileUrl).read())
+            pageDict = dashboardConfig.get(details.page)
+            widgetId = str(uuid.uuid4())
+            newWidget = {
+                "id": widgetId,
+                "chartType": details.chartType,
+                "title": details.title,
+                "label": details.label,
+                "xLabels": details.xLabels,
+                "yLabels": details.yLabels,
+                "data": details.data,
+                "layout": details.layout,
+                "generatedCode": details.generatedCode
+            }
+            pageDict["widgets"].append(newWidget)
+            dashboardConfig[details.page] = pageDict
+            with io.BytesIO() as buffer:
+                buffer.write(json.dumps(dashboardConfig, indent=4).encode("utf-8"))
+                buffer.seek(0)
+                _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/dashboardConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"}) 
+            return widgetId     
+        except Exception as e:
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception  
+        
+    def getData(self, details: GetData) -> dict:
+        """
+        Retrieve data for a dashboard page, applying filters if provided.
+
+        Args:
+            details (GetData): Details specifying the project, page, and filters.
+
+        Returns:
+            dict: Dictionary containing page and widget data.
+
+        Raises:
+            CustomException: For any errors during data retrieval.
+        """
+        try:
+            fileUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "dashboardConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            dashboardConfig = json.loads(urlopen(fileUrl).read())
+            pageInfo = dashboardConfig.get(details.page)
+            pageInfo["id"] = details.page
+            if not details.filters:
+                for widget in pageInfo["widgets"]: widget.pop("generatedCode")
+            else:
+                widgets = pageInfo.get("widgets")
+                with ThreadPoolExecutor(max_workers = 10) as executor:
+                    numWidgets = len(widgets)
+                    results = executor.map(self._applyFilterToAWidget, widgets, [details.filters] * numWidgets, [replManager] * numWidgets)
+                pageInfo["widgets"] = [x for x in results]
+            return pageInfo
+        except Exception as e:
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception
+        
+    def editWidgetPosition(self, details: EditWidgetPosition) -> dict:
+        """
+        Edit the position/layout of widgets on a dashboard page.
+
+        Args:
+            details (EditWidgetPosition): Details specifying the project, page, and new widget layouts.
+
+        Returns:
+            dict: Updated page information with new widget layouts.
+
+        Raises:
+            CustomException: For any errors during update.
+        """
+        try:
+            fileUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "dashboardConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            dashboardConfig = json.loads(urlopen(fileUrl).read())
+            pageInfo = dashboardConfig.get(details.pageId)
+            pageInfo["name"] = details.pageName
+            widgets = pageInfo.get("widgets")
+            if details.widgets:
+                for newWidget in details.widgets:
+                    newWidgetId = newWidget.get("id")
+                    for widget in widgets:
+                        widgetId = widget.get("id")
+                        if widgetId == newWidgetId:
+                            widget["layout"] = newWidget["layout"]
+                        else:
+                            continue
+            with io.BytesIO() as buffer:
+                buffer.write(json.dumps(dashboardConfig, indent = 4).encode("utf-8"))
+                buffer.seek(0)
+                self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/dashboardConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
+            return pageInfo
+        except Exception as e:
+            exception  = CustomException(e)
+            logger.error(exception)
+            raise exception
+
+    def deleteDashboardElement(self, details: DeleteDashboardElement) -> None:
+        """
+        Delete a dashboard element (page or widget) from a project.
+
+        Args:
+            details (DeleteDashboardElement): Details specifying the element to delete.
+
+        Raises:
+            CustomException: For any errors during deletion.
+        """
+        try:
+            fileUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "dashboardConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            dashboardConfig = json.loads(urlopen(fileUrl).read())
+            if details.deletionObject == "page":
+                dashboardConfig.pop(details.id)
+            elif details.deletionObject == "widget":
+                for pageId in dashboardConfig.keys():
+                    page = dashboardConfig.get(pageId)
+                    pageWidgets = page.get("widgets")
+                    for widget in pageWidgets:
+                        if widget.get("id") == details.id:
+                            pageWidgets.remove(widget)
+                            break
+                        else: continue
+                    break
+            with io.BytesIO() as buffer:
+                buffer.write(json.dumps(dashboardConfig, indent=4).encode("utf-8"))
+                buffer.seek(0)
+                _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/dashboardConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"}) 
+            return 
+        except Exception as e:
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception
+        
+    def getAllColumns(self, projectId: str) -> dict:
+        """
+        Retrieve all columns and their metadata for all tables in a project.
+
+        Args:
+            projectId (str): The project identifier.
+
+        Returns:
+            dict: Dictionary mapping table names to lists of column metadata.
+
+        Raises:
+            CustomException: For any errors during retrieval.
+        """
+        try:
+            dataTables = ["".join(os.path.splitext(x.get("name"))[:-1]) for x in client.storage.from_("AnalyticsHub").list(path = projectId) if x.get("name").endswith(".parquet")]
+            with ThreadPoolExecutor(max_workers = 5) as executor:
+                results = executor.map(self._getDataTypes, [projectId] * len(dataTables), dataTables)
+            results = list(results)
+            results = {x: y for x, y in zip(dataTables, results)}
+            return results
+        except Exception as e:
+            exception  = CustomException(e)
+            logger.error(exception)
+            raise exception
+
+dashboardService = DashboardService()

@@ -1,18 +1,21 @@
-from analyticsHub.routers import authentication, projectManager, dataLoader, reportingTool, utilities, blends, dashboard
+"""
+Main entry point for the AnalyticsHub FastAPI application.
+
+This module initializes the FastAPI app, configures middleware, and includes all API routers for authentication, project management, data loading, blends, reporting, dashboard, and utilities.
+"""
+
+__version__ = "1.0.0"
+__author__ = "Rauhan Ahmed Siddiqui"
+
+
+from api.routers import authentication, manager, dataLoader, reporting, utils, blends, dashboard
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from analyticsHub.utils.functions import getConfig
 from api_analytics.fastapi import Analytics
-from supabase import create_client
+from utils.logger import logger
 from fastapi import FastAPI
 import psutil
 import os
-
-config = getConfig(os.path.join(os.getcwd(), "config.ini"))
-client = create_client(
-    supabase_url = os.environ["SUPABASE_URL"],
-    supabase_key = os.environ["SUPABASE_KEY"]
-)
 
 app = FastAPI(
     title = "AnalyticsHub",
@@ -42,17 +45,22 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def stats():
+    """
+    FastAPI startup event handler.
+
+    Logs system memory and CPU usage statistics at application startup.
+    """
     memory = psutil.virtual_memory()
     cpu_usage = psutil.cpu_percent(interval=1, percpu=True)
     totalUsage = psutil.cpu_percent(interval=1)
-    print(f"RAM Usage Percentage: {memory.percent}%")
-    print(f"Total CPU Utilization: {totalUsage}%")
-    print(f"Total CPU Usage Per Core: {cpu_usage}")
+    logger.debug(f"RAM Usage Percentage: {memory.percent}%")
+    logger.debug(f"Total CPU Utilization: {totalUsage}%")
+    logger.debug(f"Total CPU Usage Per Core: {cpu_usage}")
 
 app.include_router(authentication.router, prefix = "/auth", tags = ["Authentication"])
-app.include_router(projectManager.router, prefix = "/projects", tags = ["Project Management"])
+app.include_router(manager.router, prefix = "/projects", tags = ["Project Management"])
 app.include_router(dataLoader.router, prefix = "/loaders", tags = ["Data Loader"])
 app.include_router(blends.router, prefix = "/blends", tags = ["Blends"])
-app.include_router(reportingTool.router, prefix = "/reportingTool", tags = ["Reporting Tool"])
+app.include_router(reporting.router, prefix = "/reportingTool", tags = ["Reporting Tool"])
 app.include_router(dashboard.router, prefix = "/dashboard", tags = ["Dashboard"])
-app.include_router(utilities.router, prefix = "/utils", tags = ["Utilities"])
+app.include_router(utils.router, prefix = "/utils", tags = ["Utilities"])

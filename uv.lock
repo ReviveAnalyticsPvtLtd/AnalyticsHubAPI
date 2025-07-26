@@ -24,7 +24,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohappyeyeballs" },
     { name = "aiosignal" },
-    { name = "async-timeout", version = "4.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "async-timeout", marker = "python_full_version < '3.11'" },
     { name = "attrs" },
     { name = "frozenlist" },
     { name = "multidict" },
@@ -129,18 +129,66 @@ wheels = [
 ]
 
 [[package]]
-name = "analyticshubapi"
+name = "analyticshub"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "aiohappyeyeballs" },
+    { name = "aiohttp" },
+    { name = "aiosignal" },
+    { name = "amqp" },
+    { name = "annotated-types" },
+    { name = "anyio" },
+    { name = "async-timeout" },
+    { name = "attrs" },
     { name = "beautifulsoup4" },
+    { name = "billiard" },
     { name = "celery" },
+    { name = "certifi" },
+    { name = "charset-normalizer" },
+    { name = "click" },
+    { name = "click-didyoumean" },
+    { name = "click-plugins" },
+    { name = "click-repl" },
+    { name = "colorama" },
+    { name = "contourpy" },
+    { name = "cycler" },
+    { name = "dacite" },
     { name = "dataclasses" },
+    { name = "dataclasses-json" },
+    { name = "deprecation" },
+    { name = "distro" },
+    { name = "dnspython" },
     { name = "duckdb" },
+    { name = "ecdsa" },
+    { name = "et-xmlfile" },
+    { name = "exceptiongroup" },
     { name = "fastapi" },
     { name = "fastapi-analytics" },
+    { name = "fonttools" },
+    { name = "frozenlist" },
     { name = "fsspec" },
+    { name = "gotrue" },
+    { name = "greenlet" },
+    { name = "groq" },
     { name = "gunicorn" },
+    { name = "h11" },
+    { name = "h2" },
+    { name = "hpack" },
+    { name = "htmlmin" },
+    { name = "httpcore" },
+    { name = "httpx" },
+    { name = "httpx-sse" },
+    { name = "hyperframe" },
+    { name = "idna" },
+    { name = "imagehash" },
+    { name = "jinja2" },
+    { name = "jiter" },
+    { name = "joblib" },
+    { name = "jsonpatch" },
+    { name = "jsonpointer" },
+    { name = "kiwisolver" },
+    { name = "kombu" },
     { name = "langchain" },
     { name = "langchain-cerebras" },
     { name = "langchain-community" },
@@ -148,71 +196,253 @@ dependencies = [
     { name = "langchain-experimental" },
     { name = "langchain-groq" },
     { name = "langchain-openai" },
+    { name = "langchain-text-splitters" },
     { name = "langgraph" },
+    { name = "langgraph-checkpoint" },
+    { name = "langgraph-prebuilt" },
+    { name = "langgraph-sdk" },
+    { name = "langsmith" },
     { name = "lightgbm" },
+    { name = "llvmlite" },
+    { name = "logtail-python" },
+    { name = "loguru" },
+    { name = "markupsafe" },
+    { name = "marshmallow" },
+    { name = "matplotlib" },
+    { name = "multidict" },
+    { name = "multimethod" },
+    { name = "mypy-extensions" },
+    { name = "networkx" },
+    { name = "numba" },
+    { name = "numpy" },
+    { name = "openai" },
     { name = "openpyxl" },
     { name = "orjson" },
+    { name = "ormsgpack" },
+    { name = "packaging" },
     { name = "pandas" },
+    { name = "patsy" },
+    { name = "phik" },
+    { name = "pillow" },
+    { name = "postgrest" },
+    { name = "prompt-toolkit" },
+    { name = "propcache" },
     { name = "psutil" },
     { name = "psycopg2-binary" },
+    { name = "puremagic" },
     { name = "pyarrow" },
+    { name = "pyasn1" },
     { name = "pydantic" },
+    { name = "pydantic-core" },
+    { name = "pydantic-settings" },
+    { name = "pyjwt" },
     { name = "pymongo" },
     { name = "pymysql" },
+    { name = "pyparsing" },
+    { name = "python-dateutil" },
     { name = "python-dotenv" },
     { name = "python-jose" },
     { name = "python-multipart" },
+    { name = "pytz" },
+    { name = "pywavelets" },
     { name = "pyyaml" },
+    { name = "realtime" },
     { name = "redis" },
+    { name = "regex" },
+    { name = "requests" },
+    { name = "requests-toolbelt" },
+    { name = "rsa" },
     { name = "scikit-learn" },
+    { name = "scipy" },
     { name = "seaborn" },
     { name = "setuptools" },
+    { name = "six" },
+    { name = "sniffio" },
+    { name = "soupsieve" },
     { name = "sqlalchemy" },
+    { name = "starlette" },
+    { name = "statsmodels" },
+    { name = "storage3" },
+    { name = "strenum" },
     { name = "supabase" },
+    { name = "supafunc" },
+    { name = "tenacity" },
+    { name = "threadpoolctl" },
+    { name = "tiktoken" },
+    { name = "tqdm" },
+    { name = "typeguard" },
+    { name = "typing-extensions" },
+    { name = "typing-inspect" },
+    { name = "typing-inspection" },
+    { name = "tzdata" },
+    { name = "urllib3" },
     { name = "uvicorn" },
+    { name = "vine" },
+    { name = "visions" },
+    { name = "wcwidth" },
+    { name = "websockets" },
+    { name = "wordcloud" },
+    { name = "xxhash" },
+    { name = "yarl" },
     { name = "ydata-profiling" },
+    { name = "zstandard" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "beautifulsoup4", specifier = ">=4.13.4" },
-    { name = "celery", specifier = ">=5.5.3" },
-    { name = "dataclasses", specifier = ">=0.8" },
-    { name = "duckdb", specifier = ">=1.3.2" },
-    { name = "fastapi", specifier = ">=0.116.1" },
-    { name = "fastapi-analytics", specifier = ">=1.2.5" },
-    { name = "fsspec", specifier = ">=2025.7.0" },
-    { name = "gunicorn", specifier = ">=23.0.0" },
-    { name = "langchain", specifier = ">=0.3.26" },
-    { name = "langchain-cerebras", specifier = ">=0.5.0" },
-    { name = "langchain-community", specifier = ">=0.3.27" },
-    { name = "langchain-core", specifier = ">=0.3.69" },
-    { name = "langchain-experimental", specifier = ">=0.3.4" },
-    { name = "langchain-groq", specifier = ">=0.3.6" },
-    { name = "langchain-openai", specifier = ">=0.3.28" },
-    { name = "langgraph", specifier = ">=0.5.3" },
-    { name = "lightgbm", specifier = ">=4.6.0" },
-    { name = "openpyxl", specifier = ">=3.1.5" },
-    { name = "orjson", specifier = ">=3.11.0" },
-    { name = "pandas", specifier = ">=2.3.1" },
-    { name = "psutil", specifier = ">=7.0.0" },
-    { name = "psycopg2-binary", specifier = ">=2.9.10" },
-    { name = "pyarrow", specifier = ">=20.0.0" },
-    { name = "pydantic", specifier = ">=2.11.7" },
-    { name = "pymongo", specifier = ">=4.13.2" },
-    { name = "pymysql", specifier = ">=1.1.1" },
-    { name = "python-dotenv", specifier = ">=1.1.1" },
-    { name = "python-jose", specifier = ">=3.5.0" },
-    { name = "python-multipart", specifier = ">=0.0.20" },
-    { name = "pyyaml", specifier = ">=6.0.2" },
-    { name = "redis", specifier = ">=6.2.0" },
-    { name = "scikit-learn", specifier = ">=1.7.0" },
-    { name = "seaborn", specifier = ">=0.13.2" },
-    { name = "setuptools", specifier = ">=80.9.0" },
-    { name = "sqlalchemy", specifier = ">=2.0.41" },
-    { name = "supabase", specifier = ">=2.16.0" },
-    { name = "uvicorn", specifier = ">=0.35.0" },
-    { name = "ydata-profiling", specifier = ">=4.16.1" },
+    { name = "aiohappyeyeballs", specifier = "==2.6.1" },
+    { name = "aiohttp", specifier = "==3.12.14" },
+    { name = "aiosignal", specifier = "==1.4.0" },
+    { name = "amqp", specifier = "==5.3.1" },
+    { name = "annotated-types", specifier = "==0.7.0" },
+    { name = "anyio", specifier = "==4.9.0" },
+    { name = "async-timeout", specifier = "==4.0.3" },
+    { name = "attrs", specifier = "==25.3.0" },
+    { name = "beautifulsoup4", specifier = "==4.13.4" },
+    { name = "billiard", specifier = "==4.2.1" },
+    { name = "celery", specifier = "==5.5.3" },
+    { name = "certifi", specifier = "==2025.7.14" },
+    { name = "charset-normalizer", specifier = "==3.4.2" },
+    { name = "click", specifier = "==8.2.1" },
+    { name = "click-didyoumean", specifier = "==0.3.1" },
+    { name = "click-plugins", specifier = "==1.1.1.2" },
+    { name = "click-repl", specifier = "==0.3.0" },
+    { name = "colorama", specifier = "==0.4.6" },
+    { name = "contourpy", specifier = "==1.3.2" },
+    { name = "cycler", specifier = "==0.12.1" },
+    { name = "dacite", specifier = "==1.9.2" },
+    { name = "dataclasses", specifier = "==0.8" },
+    { name = "dataclasses-json", specifier = "==0.6.7" },
+    { name = "deprecation", specifier = "==2.1.0" },
+    { name = "distro", specifier = "==1.9.0" },
+    { name = "dnspython", specifier = "==2.7.0" },
+    { name = "duckdb", specifier = "==1.3.2" },
+    { name = "ecdsa", specifier = "==0.19.1" },
+    { name = "et-xmlfile", specifier = "==2.0.0" },
+    { name = "exceptiongroup", specifier = "==1.3.0" },
+    { name = "fastapi", specifier = "==0.116.1" },
+    { name = "fastapi-analytics", specifier = "==1.2.5" },
+    { name = "fonttools", specifier = "==4.59.0" },
+    { name = "frozenlist", specifier = "==1.7.0" },
+    { name = "fsspec", specifier = "==2025.7.0" },
+    { name = "gotrue", specifier = "==2.12.3" },
+    { name = "greenlet", specifier = "==3.2.3" },
+    { name = "groq", specifier = "==0.30.0" },
+    { name = "gunicorn", specifier = "==23.0.0" },
+    { name = "h11", specifier = "==0.16.0" },
+    { name = "h2", specifier = "==4.2.0" },
+    { name = "hpack", specifier = "==4.1.0" },
+    { name = "htmlmin", specifier = "==0.1.12" },
+    { name = "httpcore", specifier = "==1.0.9" },
+    { name = "httpx", specifier = "==0.28.1" },
+    { name = "httpx-sse", specifier = "==0.4.1" },
+    { name = "hyperframe", specifier = "==6.1.0" },
+    { name = "idna", specifier = "==3.10" },
+    { name = "imagehash", specifier = "==4.3.1" },
+    { name = "jinja2", specifier = "==3.1.6" },
+    { name = "jiter", specifier = "==0.10.0" },
+    { name = "joblib", specifier = "==1.5.1" },
+    { name = "jsonpatch", specifier = "==1.33" },
+    { name = "jsonpointer", specifier = "==3.0.0" },
+    { name = "kiwisolver", specifier = "==1.4.8" },
+    { name = "kombu", specifier = "==5.5.4" },
+    { name = "langchain", specifier = "==0.3.26" },
+    { name = "langchain-cerebras", specifier = "==0.5.0" },
+    { name = "langchain-community", specifier = "==0.3.27" },
+    { name = "langchain-core", specifier = "==0.3.69" },
+    { name = "langchain-experimental", specifier = "==0.3.4" },
+    { name = "langchain-groq", specifier = "==0.3.6" },
+    { name = "langchain-openai", specifier = "==0.3.28" },
+    { name = "langchain-text-splitters", specifier = "==0.3.8" },
+    { name = "langgraph", specifier = "==0.5.3" },
+    { name = "langgraph-checkpoint", specifier = "==2.1.1" },
+    { name = "langgraph-prebuilt", specifier = "==0.5.2" },
+    { name = "langgraph-sdk", specifier = "==0.1.73" },
+    { name = "langsmith", specifier = "==0.4.6" },
+    { name = "lightgbm", specifier = "==4.6.0" },
+    { name = "llvmlite", specifier = "==0.44.0" },
+    { name = "logtail-python", specifier = ">=0.3.3" },
+    { name = "loguru", specifier = ">=0.7.3" },
+    { name = "markupsafe", specifier = "==3.0.2" },
+    { name = "marshmallow", specifier = "==3.26.1" },
+    { name = "matplotlib", specifier = "==3.10.0" },
+    { name = "multidict", specifier = "==6.6.3" },
+    { name = "multimethod", specifier = "==1.12" },
+    { name = "mypy-extensions", specifier = "==1.1.0" },
+    { name = "networkx", specifier = "==3.4.2" },
+    { name = "numba", specifier = "==0.61.0" },
+    { name = "numpy", specifier = "==2.1.3" },
+    { name = "openai", specifier = "==1.97.0" },
+    { name = "openpyxl", specifier = "==3.1.5" },
+    { name = "orjson", specifier = "==3.11.0" },
+    { name = "ormsgpack", specifier = "==1.10.0" },
+    { name = "packaging", specifier = "==25.0" },
+    { name = "pandas", specifier = "==2.3.1" },
+    { name = "patsy", specifier = "==1.0.1" },
+    { name = "phik", specifier = "==0.12.5" },
+    { name = "pillow", specifier = "==11.3.0" },
+    { name = "postgrest", specifier = "==1.1.1" },
+    { name = "prompt-toolkit", specifier = "==3.0.51" },
+    { name = "propcache", specifier = "==0.3.2" },
+    { name = "psutil", specifier = "==7.0.0" },
+    { name = "psycopg2-binary", specifier = "==2.9.10" },
+    { name = "puremagic", specifier = "==1.30" },
+    { name = "pyarrow", specifier = "==20.0.0" },
+    { name = "pyasn1", specifier = "==0.6.1" },
+    { name = "pydantic", specifier = "==2.11.7" },
+    { name = "pydantic-core", specifier = "==2.33.2" },
+    { name = "pydantic-settings", specifier = "==2.10.1" },
+    { name = "pyjwt", specifier = "==2.10.1" },
+    { name = "pymongo", specifier = "==4.13.2" },
+    { name = "pymysql", specifier = "==1.1.1" },
+    { name = "pyparsing", specifier = "==3.2.3" },
+    { name = "python-dateutil", specifier = "==2.9.0.post0" },
+    { name = "python-dotenv", specifier = "==1.1.1" },
+    { name = "python-jose", specifier = "==3.5.0" },
+    { name = "python-multipart", specifier = "==0.0.20" },
+    { name = "pytz", specifier = "==2025.2" },
+    { name = "pywavelets", specifier = "==1.8.0" },
+    { name = "pyyaml", specifier = "==6.0.2" },
+    { name = "realtime", specifier = "==2.5.3" },
+    { name = "redis", specifier = "==6.2.0" },
+    { name = "regex", specifier = "==2024.11.6" },
+    { name = "requests", specifier = "==2.32.4" },
+    { name = "requests-toolbelt", specifier = "==1.0.0" },
+    { name = "rsa", specifier = "==4.9.1" },
+    { name = "scikit-learn", specifier = "==1.7.0" },
+    { name = "scipy", specifier = "==1.15.3" },
+    { name = "seaborn", specifier = "==0.13.2" },
+    { name = "setuptools", specifier = "==80.9.0" },
+    { name = "six", specifier = "==1.17.0" },
+    { name = "sniffio", specifier = "==1.3.1" },
+    { name = "soupsieve", specifier = "==2.7" },
+    { name = "sqlalchemy", specifier = "==2.0.41" },
+    { name = "starlette", specifier = "==0.47.1" },
+    { name = "statsmodels", specifier = "==0.14.5" },
+    { name = "storage3", specifier = "==0.12.0" },
+    { name = "strenum", specifier = "==0.4.15" },
+    { name = "supabase", specifier = "==2.16.0" },
+    { name = "supafunc", specifier = "==0.10.1" },
+    { name = "tenacity", specifier = "==9.1.2" },
+    { name = "threadpoolctl", specifier = "==3.6.0" },
+    { name = "tiktoken", specifier = "==0.9.0" },
+    { name = "tqdm", specifier = "==4.67.1" },
+    { name = "typeguard", specifier = "==4.4.4" },
+    { name = "typing-extensions", specifier = "==4.14.1" },
+    { name = "typing-inspect", specifier = "==0.9.0" },
+    { name = "typing-inspection", specifier = "==0.4.1" },
+    { name = "tzdata", specifier = "==2025.2" },
+    { name = "urllib3", specifier = "==2.5.0" },
+    { name = "uvicorn", specifier = "==0.35.0" },
+    { name = "vine", specifier = "==5.1.0" },
+    { name = "visions", specifier = "==0.8.1" },
+    { name = "wcwidth", specifier = "==0.2.13" },
+    { name = "websockets", specifier = "==15.0.1" },
+    { name = "wordcloud", specifier = "==1.9.4" },
+    { name = "xxhash", specifier = "==3.5.0" },
+    { name = "yarl", specifier = "==1.20.1" },
+    { name = "ydata-profiling", specifier = "==4.16.1" },
+    { name = "zstandard", specifier = "==0.23.0" },
 ]
 
 [[package]]
@@ -243,24 +473,9 @@ wheels = [
 name = "async-timeout"
 version = "4.0.3"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version < '3.11'",
-]
 sdist = { url = "https://files.pythonhosted.org/packages/87/d6/21b30a550dafea84b1b8eee21b5e23fa16d010ae006011221f33dcd8d7f8/async-timeout-4.0.3.tar.gz", hash = "sha256:4640d96be84d82d02ed59ea2b7105a0f7b33abe8703703cd0ab0bf87c427522f", size = 8345 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a7/fa/e01228c2938de91d47b307831c62ab9e4001e747789d0b05baf779a6488c/async_timeout-4.0.3-py3-none-any.whl", hash = "sha256:7405140ff1230c310e51dc27b3145b9092d659ce68ff733fb0cefe3ee42be028", size = 5721 },
-]
-
-[[package]]
-name = "async-timeout"
-version = "5.0.1"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version == '3.11.*'",
-]
-sdist = { url = "https://files.pythonhosted.org/packages/a5/ae/136395dfbfe00dfc94da3f3e136d0b13f394cba8f4841120e34226265780/async_timeout-5.0.1.tar.gz", hash = "sha256:d9321a7a3d5a6a5e187e824d2fa0793ce379a202935782d555d6e9d2735677d3", size = 9274 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/fe/ba/e2081de779ca30d473f21f5b30e0e737c438205440784c7dfc81efc2b029/async_timeout-5.0.1-py3-none-any.whl", hash = "sha256:39e3809566ff85354557ec2398b55e096c8364bacac9405a7a1fa429e77fe76c", size = 6233 },
 ]
 
 [[package]]
@@ -697,7 +912,7 @@ name = "exceptiongroup"
 version = "1.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/0b/9f/a65090624ecf468cdca03533906e7c69ed7588582240cfe7cc9e770b50eb/exceptiongroup-1.3.0.tar.gz", hash = "sha256:b241f5885f560bc56a59ee63ca4c6a8bfa46ae4ad651af316d4e81817bb9fd88", size = 29749 }
 wheels = [
@@ -1302,7 +1517,7 @@ name = "langchain"
 version = "0.3.26"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "async-timeout", version = "4.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "async-timeout", marker = "python_full_version < '3.11'" },
     { name = "langchain-core" },
     { name = "langchain-text-splitters" },
     { name = "langsmith" },
@@ -1542,6 +1757,32 @@ wheels = [
 ]
 
 [[package]]
+name = "logtail-python"
+version = "0.3.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "msgpack" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a8/23/ed1c9b24789699545a1e7aa74bae4030a8a5ab0e9232e16bd8298764a9f2/logtail_python-0.3.3.tar.gz", hash = "sha256:489c32e3335cc191afa537204ceaebbc3688c7a079442edbb9049f8686800063", size = 29253 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/eb/db/d67fd25fb14d5106cd2bba0ab70bb4cd128cff825a7db590421f399da769/logtail_python-0.3.3-py2.py3-none-any.whl", hash = "sha256:9acfc37c4fa707749ef96ca0b4f25282ed022c8a45fdb71bc38a53cd32757fd2", size = 8754 },
+]
+
+[[package]]
+name = "loguru"
+version = "0.7.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "win32-setctime", marker = "sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3a/05/a1dae3dffd1116099471c643b8924f5aa6524411dc6c63fdae648c4f1aca/loguru-0.7.3.tar.gz", hash = "sha256:19480589e77d47b8d85b2c827ad95d49bf31b0dcde16593892eb51dd18706eb6", size = 63559 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0c/29/0348de65b8cc732daa3e33e67806420b2ae89bdce2b04af740289c5c6c8c/loguru-0.7.3-py3-none-any.whl", hash = "sha256:31a33c10c8e1e10422bfd431aeb5d351c7cf7fa671e3c4df004162264b28220c", size = 61595 },
+]
+
+[[package]]
 name = "markupsafe"
 version = "3.0.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1661,6 +1902,54 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/32/5f/29def7ce4e815ab939b56280976ee35afffb3bbdb43f332caee74cb8c951/matplotlib-3.10.0-pp310-pypy310_pp73-macosx_10_15_x86_64.whl", hash = "sha256:81713dd0d103b379de4516b861d964b1d789a144103277769238c732229d7f03", size = 8155500 },
     { url = "https://files.pythonhosted.org/packages/de/6d/d570383c9f7ca799d0a54161446f9ce7b17d6c50f2994b653514bcaa108f/matplotlib-3.10.0-pp310-pypy310_pp73-macosx_11_0_arm64.whl", hash = "sha256:359f87baedb1f836ce307f0e850d12bb5f1936f70d035561f90d41d305fdacea", size = 8032398 },
     { url = "https://files.pythonhosted.org/packages/c9/b4/680aa700d99b48e8c4393fa08e9ab8c49c0555ee6f4c9c0a5e8ea8dfde5d/matplotlib-3.10.0-pp310-pypy310_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:ae80dc3a4add4665cf2faa90138384a7ffe2a4e37c58d83e115b54287c4f06ef", size = 8587361 },
+]
+
+[[package]]
+name = "msgpack"
+version = "1.1.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/45/b1/ea4f68038a18c77c9467400d166d74c4ffa536f34761f7983a104357e614/msgpack-1.1.1.tar.gz", hash = "sha256:77b79ce34a2bdab2594f490c8e80dd62a02d650b91a75159a63ec413b8d104cd", size = 173555 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/33/52/f30da112c1dc92cf64f57d08a273ac771e7b29dea10b4b30369b2d7e8546/msgpack-1.1.1-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:353b6fc0c36fde68b661a12949d7d49f8f51ff5fa019c1e47c87c4ff34b080ed", size = 81799 },
+    { url = "https://files.pythonhosted.org/packages/e4/35/7bfc0def2f04ab4145f7f108e3563f9b4abae4ab0ed78a61f350518cc4d2/msgpack-1.1.1-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:79c408fcf76a958491b4e3b103d1c417044544b68e96d06432a189b43d1215c8", size = 78278 },
+    { url = "https://files.pythonhosted.org/packages/e8/c5/df5d6c1c39856bc55f800bf82778fd4c11370667f9b9e9d51b2f5da88f20/msgpack-1.1.1-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:78426096939c2c7482bf31ef15ca219a9e24460289c00dd0b94411040bb73ad2", size = 402805 },
+    { url = "https://files.pythonhosted.org/packages/20/8e/0bb8c977efecfe6ea7116e2ed73a78a8d32a947f94d272586cf02a9757db/msgpack-1.1.1-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:8b17ba27727a36cb73aabacaa44b13090feb88a01d012c0f4be70c00f75048b4", size = 408642 },
+    { url = "https://files.pythonhosted.org/packages/59/a1/731d52c1aeec52006be6d1f8027c49fdc2cfc3ab7cbe7c28335b2910d7b6/msgpack-1.1.1-cp310-cp310-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:7a17ac1ea6ec3c7687d70201cfda3b1e8061466f28f686c24f627cae4ea8efd0", size = 395143 },
+    { url = "https://files.pythonhosted.org/packages/2b/92/b42911c52cda2ba67a6418ffa7d08969edf2e760b09015593c8a8a27a97d/msgpack-1.1.1-cp310-cp310-musllinux_1_2_aarch64.whl", hash = "sha256:88d1e966c9235c1d4e2afac21ca83933ba59537e2e2727a999bf3f515ca2af26", size = 395986 },
+    { url = "https://files.pythonhosted.org/packages/61/dc/8ae165337e70118d4dab651b8b562dd5066dd1e6dd57b038f32ebc3e2f07/msgpack-1.1.1-cp310-cp310-musllinux_1_2_i686.whl", hash = "sha256:f6d58656842e1b2ddbe07f43f56b10a60f2ba5826164910968f5933e5178af75", size = 402682 },
+    { url = "https://files.pythonhosted.org/packages/58/27/555851cb98dcbd6ce041df1eacb25ac30646575e9cd125681aa2f4b1b6f1/msgpack-1.1.1-cp310-cp310-musllinux_1_2_x86_64.whl", hash = "sha256:96decdfc4adcbc087f5ea7ebdcfd3dee9a13358cae6e81d54be962efc38f6338", size = 406368 },
+    { url = "https://files.pythonhosted.org/packages/d4/64/39a26add4ce16f24e99eabb9005e44c663db00e3fce17d4ae1ae9d61df99/msgpack-1.1.1-cp310-cp310-win32.whl", hash = "sha256:6640fd979ca9a212e4bcdf6eb74051ade2c690b862b679bfcb60ae46e6dc4bfd", size = 65004 },
+    { url = "https://files.pythonhosted.org/packages/7d/18/73dfa3e9d5d7450d39debde5b0d848139f7de23bd637a4506e36c9800fd6/msgpack-1.1.1-cp310-cp310-win_amd64.whl", hash = "sha256:8b65b53204fe1bd037c40c4148d00ef918eb2108d24c9aaa20bc31f9810ce0a8", size = 71548 },
+    { url = "https://files.pythonhosted.org/packages/7f/83/97f24bf9848af23fe2ba04380388216defc49a8af6da0c28cc636d722502/msgpack-1.1.1-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:71ef05c1726884e44f8b1d1773604ab5d4d17729d8491403a705e649116c9558", size = 82728 },
+    { url = "https://files.pythonhosted.org/packages/aa/7f/2eaa388267a78401f6e182662b08a588ef4f3de6f0eab1ec09736a7aaa2b/msgpack-1.1.1-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:36043272c6aede309d29d56851f8841ba907a1a3d04435e43e8a19928e243c1d", size = 79279 },
+    { url = "https://files.pythonhosted.org/packages/f8/46/31eb60f4452c96161e4dfd26dbca562b4ec68c72e4ad07d9566d7ea35e8a/msgpack-1.1.1-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:a32747b1b39c3ac27d0670122b57e6e57f28eefb725e0b625618d1b59bf9d1e0", size = 423859 },
+    { url = "https://files.pythonhosted.org/packages/45/16/a20fa8c32825cc7ae8457fab45670c7a8996d7746ce80ce41cc51e3b2bd7/msgpack-1.1.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:8a8b10fdb84a43e50d38057b06901ec9da52baac6983d3f709d8507f3889d43f", size = 429975 },
+    { url = "https://files.pythonhosted.org/packages/86/ea/6c958e07692367feeb1a1594d35e22b62f7f476f3c568b002a5ea09d443d/msgpack-1.1.1-cp311-cp311-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:ba0c325c3f485dc54ec298d8b024e134acf07c10d494ffa24373bea729acf704", size = 413528 },
+    { url = "https://files.pythonhosted.org/packages/75/05/ac84063c5dae79722bda9f68b878dc31fc3059adb8633c79f1e82c2cd946/msgpack-1.1.1-cp311-cp311-musllinux_1_2_aarch64.whl", hash = "sha256:88daaf7d146e48ec71212ce21109b66e06a98e5e44dca47d853cbfe171d6c8d2", size = 413338 },
+    { url = "https://files.pythonhosted.org/packages/69/e8/fe86b082c781d3e1c09ca0f4dacd457ede60a13119b6ce939efe2ea77b76/msgpack-1.1.1-cp311-cp311-musllinux_1_2_i686.whl", hash = "sha256:d8b55ea20dc59b181d3f47103f113e6f28a5e1c89fd5b67b9140edb442ab67f2", size = 422658 },
+    { url = "https://files.pythonhosted.org/packages/3b/2b/bafc9924df52d8f3bb7c00d24e57be477f4d0f967c0a31ef5e2225e035c7/msgpack-1.1.1-cp311-cp311-musllinux_1_2_x86_64.whl", hash = "sha256:4a28e8072ae9779f20427af07f53bbb8b4aa81151054e882aee333b158da8752", size = 427124 },
+    { url = "https://files.pythonhosted.org/packages/a2/3b/1f717e17e53e0ed0b68fa59e9188f3f610c79d7151f0e52ff3cd8eb6b2dc/msgpack-1.1.1-cp311-cp311-win32.whl", hash = "sha256:7da8831f9a0fdb526621ba09a281fadc58ea12701bc709e7b8cbc362feabc295", size = 65016 },
+    { url = "https://files.pythonhosted.org/packages/48/45/9d1780768d3b249accecc5a38c725eb1e203d44a191f7b7ff1941f7df60c/msgpack-1.1.1-cp311-cp311-win_amd64.whl", hash = "sha256:5fd1b58e1431008a57247d6e7cc4faa41c3607e8e7d4aaf81f7c29ea013cb458", size = 72267 },
+    { url = "https://files.pythonhosted.org/packages/e3/26/389b9c593eda2b8551b2e7126ad3a06af6f9b44274eb3a4f054d48ff7e47/msgpack-1.1.1-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:ae497b11f4c21558d95de9f64fff7053544f4d1a17731c866143ed6bb4591238", size = 82359 },
+    { url = "https://files.pythonhosted.org/packages/ab/65/7d1de38c8a22cf8b1551469159d4b6cf49be2126adc2482de50976084d78/msgpack-1.1.1-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:33be9ab121df9b6b461ff91baac6f2731f83d9b27ed948c5b9d1978ae28bf157", size = 79172 },
+    { url = "https://files.pythonhosted.org/packages/0f/bd/cacf208b64d9577a62c74b677e1ada005caa9b69a05a599889d6fc2ab20a/msgpack-1.1.1-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:6f64ae8fe7ffba251fecb8408540c34ee9df1c26674c50c4544d72dbf792e5ce", size = 425013 },
+    { url = "https://files.pythonhosted.org/packages/4d/ec/fd869e2567cc9c01278a736cfd1697941ba0d4b81a43e0aa2e8d71dab208/msgpack-1.1.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a494554874691720ba5891c9b0b39474ba43ffb1aaf32a5dac874effb1619e1a", size = 426905 },
+    { url = "https://files.pythonhosted.org/packages/55/2a/35860f33229075bce803a5593d046d8b489d7ba2fc85701e714fc1aaf898/msgpack-1.1.1-cp312-cp312-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:cb643284ab0ed26f6957d969fe0dd8bb17beb567beb8998140b5e38a90974f6c", size = 407336 },
+    { url = "https://files.pythonhosted.org/packages/8c/16/69ed8f3ada150bf92745fb4921bd621fd2cdf5a42e25eb50bcc57a5328f0/msgpack-1.1.1-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:d275a9e3c81b1093c060c3837e580c37f47c51eca031f7b5fb76f7b8470f5f9b", size = 409485 },
+    { url = "https://files.pythonhosted.org/packages/c6/b6/0c398039e4c6d0b2e37c61d7e0e9d13439f91f780686deb8ee64ecf1ae71/msgpack-1.1.1-cp312-cp312-musllinux_1_2_i686.whl", hash = "sha256:4fd6b577e4541676e0cc9ddc1709d25014d3ad9a66caa19962c4f5de30fc09ef", size = 412182 },
+    { url = "https://files.pythonhosted.org/packages/b8/d0/0cf4a6ecb9bc960d624c93effaeaae75cbf00b3bc4a54f35c8507273cda1/msgpack-1.1.1-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:bb29aaa613c0a1c40d1af111abf025f1732cab333f96f285d6a93b934738a68a", size = 419883 },
+    { url = "https://files.pythonhosted.org/packages/62/83/9697c211720fa71a2dfb632cad6196a8af3abea56eece220fde4674dc44b/msgpack-1.1.1-cp312-cp312-win32.whl", hash = "sha256:870b9a626280c86cff9c576ec0d9cbcc54a1e5ebda9cd26dab12baf41fee218c", size = 65406 },
+    { url = "https://files.pythonhosted.org/packages/c0/23/0abb886e80eab08f5e8c485d6f13924028602829f63b8f5fa25a06636628/msgpack-1.1.1-cp312-cp312-win_amd64.whl", hash = "sha256:5692095123007180dca3e788bb4c399cc26626da51629a31d40207cb262e67f4", size = 72558 },
+    { url = "https://files.pythonhosted.org/packages/a1/38/561f01cf3577430b59b340b51329803d3a5bf6a45864a55f4ef308ac11e3/msgpack-1.1.1-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:3765afa6bd4832fc11c3749be4ba4b69a0e8d7b728f78e68120a157a4c5d41f0", size = 81677 },
+    { url = "https://files.pythonhosted.org/packages/09/48/54a89579ea36b6ae0ee001cba8c61f776451fad3c9306cd80f5b5c55be87/msgpack-1.1.1-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:8ddb2bcfd1a8b9e431c8d6f4f7db0773084e107730ecf3472f1dfe9ad583f3d9", size = 78603 },
+    { url = "https://files.pythonhosted.org/packages/a0/60/daba2699b308e95ae792cdc2ef092a38eb5ee422f9d2fbd4101526d8a210/msgpack-1.1.1-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:196a736f0526a03653d829d7d4c5500a97eea3648aebfd4b6743875f28aa2af8", size = 420504 },
+    { url = "https://files.pythonhosted.org/packages/20/22/2ebae7ae43cd8f2debc35c631172ddf14e2a87ffcc04cf43ff9df9fff0d3/msgpack-1.1.1-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:9d592d06e3cc2f537ceeeb23d38799c6ad83255289bb84c2e5792e5a8dea268a", size = 423749 },
+    { url = "https://files.pythonhosted.org/packages/40/1b/54c08dd5452427e1179a40b4b607e37e2664bca1c790c60c442c8e972e47/msgpack-1.1.1-cp313-cp313-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:4df2311b0ce24f06ba253fda361f938dfecd7b961576f9be3f3fbd60e87130ac", size = 404458 },
+    { url = "https://files.pythonhosted.org/packages/2e/60/6bb17e9ffb080616a51f09928fdd5cac1353c9becc6c4a8abd4e57269a16/msgpack-1.1.1-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:e4141c5a32b5e37905b5940aacbc59739f036930367d7acce7a64e4dec1f5e0b", size = 405976 },
+    { url = "https://files.pythonhosted.org/packages/ee/97/88983e266572e8707c1f4b99c8fd04f9eb97b43f2db40e3172d87d8642db/msgpack-1.1.1-cp313-cp313-musllinux_1_2_i686.whl", hash = "sha256:b1ce7f41670c5a69e1389420436f41385b1aa2504c3b0c30620764b15dded2e7", size = 408607 },
+    { url = "https://files.pythonhosted.org/packages/bc/66/36c78af2efaffcc15a5a61ae0df53a1d025f2680122e2a9eb8442fed3ae4/msgpack-1.1.1-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:4147151acabb9caed4e474c3344181e91ff7a388b888f1e19ea04f7e73dc7ad5", size = 424172 },
+    { url = "https://files.pythonhosted.org/packages/8c/87/a75eb622b555708fe0427fab96056d39d4c9892b0c784b3a721088c7ee37/msgpack-1.1.1-cp313-cp313-win32.whl", hash = "sha256:500e85823a27d6d9bba1d057c871b4210c1dd6fb01fbb764e37e4e8847376323", size = 65347 },
+    { url = "https://files.pythonhosted.org/packages/ca/91/7dc28d5e2a11a5ad804cf2b7f7a5fcb1eb5a4966d66a5d2b41aee6376543/msgpack-1.1.1-cp313-cp313-win_amd64.whl", hash = "sha256:6d489fba546295983abd142812bda76b57e33d0b9f5d5b71c09a583285506f69", size = 72341 },
 ]
 
 [[package]]
@@ -1787,26 +2076,9 @@ wheels = [
 name = "networkx"
 version = "3.4.2"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version < '3.11'",
-]
 sdist = { url = "https://files.pythonhosted.org/packages/fd/1d/06475e1cd5264c0b870ea2cc6fdb3e37177c1e565c43f56ff17a10e3937f/networkx-3.4.2.tar.gz", hash = "sha256:307c3669428c5362aab27c8a1260aa8f47c4e91d3891f48be0141738d8d053e1", size = 2151368 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b9/54/dd730b32ea14ea797530a4479b2ed46a6fb250f682a9cfb997e968bf0261/networkx-3.4.2-py3-none-any.whl", hash = "sha256:df5d4365b724cf81b8c6a7312509d0c22386097011ad1abe274afd5e9d3bbc5f", size = 1723263 },
-]
-
-[[package]]
-name = "networkx"
-version = "3.5"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.13'",
-    "python_full_version == '3.12.*'",
-    "python_full_version == '3.11.*'",
-]
-sdist = { url = "https://files.pythonhosted.org/packages/6c/4f/ccdb8ad3a38e583f214547fd2f7ff1fc160c43a75af88e6aec213404b96a/networkx-3.5.tar.gz", hash = "sha256:d4c6f9cf81f52d69230866796b82afbccdec3db7ae4fbd1b65ea750feed50037", size = 2471065 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/eb/8d/776adee7bbf76365fdd7f2552710282c79a4ead5d2a46408c9043a2b70ba/networkx-3.5-py3-none-any.whl", hash = "sha256:0030d386a9a06dee3565298b4a734b68589749a544acbb6c412dc9e2489ec6ec", size = 2034406 },
 ]
 
 [[package]]
@@ -2866,8 +3138,7 @@ name = "redis"
 version = "6.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "async-timeout", version = "4.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "async-timeout", version = "5.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and python_full_version < '3.11.3'" },
+    { name = "async-timeout", marker = "python_full_version < '3.11.3'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ea/9a/0551e01ba52b944f97480721656578c8a7c46b51b99d66814f85fe3a4f3e/redis-6.2.0.tar.gz", hash = "sha256:e821f129b75dde6cb99dd35e5c76e8c49512a5a0d8dfdc560b2fbd44b85ca977", size = 4639129 }
 wheels = [
@@ -3436,8 +3707,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "attrs" },
     { name = "multimethod" },
-    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "networkx", version = "3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "networkx" },
     { name = "numpy" },
     { name = "pandas" },
     { name = "puremagic" },
@@ -3520,6 +3790,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/2b/fb/c492d6daa5ec067c2988ac80c61359ace5c4c674c532985ac5a123436cec/websockets-15.0.1-pp310-pypy310_pp73-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:b359ed09954d7c18bbc1680f380c7301f92c60bf924171629c5db97febb12f04", size = 174155 },
     { url = "https://files.pythonhosted.org/packages/68/a1/dcb68430b1d00b698ae7a7e0194433bce4f07ded185f0ee5fb21e2a2e91e/websockets-15.0.1-pp310-pypy310_pp73-win_amd64.whl", hash = "sha256:cad21560da69f4ce7658ca2cb83138fb4cf695a2ba3e475e0559e05991aa8122", size = 176884 },
     { url = "https://files.pythonhosted.org/packages/fa/a8/5b41e0da817d64113292ab1f8247140aac61cbf6cfd085d6a0fa77f4984f/websockets-15.0.1-py3-none-any.whl", hash = "sha256:f7a866fbc1e97b5c617ee4116daaa09b722101d4a3c170c787450ba409f9736f", size = 169743 },
+]
+
+[[package]]
+name = "win32-setctime"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b3/8f/705086c9d734d3b663af0e9bb3d4de6578d08f46b1b101c2442fd9aecaa2/win32_setctime-1.2.0.tar.gz", hash = "sha256:ae1fdf948f5640aae05c511ade119313fb6a30d7eabe25fef9764dca5873c4c0", size = 4867 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e1/07/c6fe3ad3e685340704d314d765b7912993bcb8dc198f0e7a89382d37974b/win32_setctime-1.2.0-py3-none-any.whl", hash = "sha256:95d644c4e708aba81dc3704a116d8cbc974d70b3bdb8be1d150e36be6e9d1390", size = 4083 },
 ]
 
 [[package]]
