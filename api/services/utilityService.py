@@ -10,13 +10,13 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["utilityService"]
 
 
-from ...analyticsHub.components.speechToText import SpeechToText
-from ...utils.exceptionHandler import CustomException
-from ...analyticsHub.triggers.celery import celeryApp
-from ..models import SpeechToTextModel
+from analyticsHub.components.speechToText import SpeechToText
+from utils.exceptionHandler import CustomException
+from analyticsHub.triggers.celery import celeryApp
+from api.models import SpeechToTextModel
 from celery.result import AsyncResult
-from ...utils.logger import logger
-from ..commons import client
+from utils.logger import logger
+from api.commons import client
 import seaborn as sns
 import pandas as pd
 

@@ -9,9 +9,9 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["replManager"] 
 
 
-from .initMethods import serializer, fetch_data, getDataForChart
+from utils.initMethods import serializer, fetch_data, getDataForChart
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
-from .logger import logger
+from utils.logger import logger
 import contextlib
 import traceback
 import io

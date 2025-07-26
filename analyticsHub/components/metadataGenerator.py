@@ -16,12 +16,12 @@ __all__ = ["MetadataGenerator"]
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
-from ...utils.exceptionHandler import CustomException
+from utils.exceptionHandler import CustomException
+from analyticsHub.utils import readYaml, getConfig
 from langchain_core.messages import AIMessage
 from langchain_cerebras import ChatCerebras
-from ..utils import readYaml, getConfig
-from ...utils.logger import logger
 from dataclasses import dataclass
+from utils.logger import logger
 import os
 
 @dataclass

@@ -9,12 +9,12 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["router"]
 
 
-from ..models import GenerateChartInput, PanelChartDetails
-from ..services.reportingService import reportingService
+from api.models import GenerateChartInput, PanelChartDetails
+from api.services.reportingService import reportingService
 from fastapi.exceptions import HTTPException
 from fastapi.responses import ORJSONResponse
 from fastapi import APIRouter, Depends
-from ..commons import verifyToken
+from api.commons import verifyToken
 
 router = APIRouter()
 """

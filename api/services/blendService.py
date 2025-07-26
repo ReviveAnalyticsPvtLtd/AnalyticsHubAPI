@@ -9,11 +9,11 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["blendService"] 
 
 
-from ...utils.exceptionHandler import CustomException
+from utils.exceptionHandler import CustomException
 from urllib.request import urlopen
-from ...utils.logger import logger
-from ..commons import client
-from ..models import (
+from utils.logger import logger
+from api.commons import client
+from api.models import (
     CreateDataBlend,
     GetFieldsFromSources
 )

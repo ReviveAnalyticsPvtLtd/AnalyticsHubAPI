@@ -8,14 +8,14 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["managementService"] 
 
 
-from ...analyticsHub.components.metadataGenerator import MetadataGenerator
-from ...analyticsHub.components.reportGenerator import ReportGenerator
-from ...utils.exceptionHandler import CustomException
+from analyticsHub.components.metadataGenerator import MetadataGenerator
+from analyticsHub.components.reportGenerator import ReportGenerator
+from utils.exceptionHandler import CustomException
 from concurrent.futures import ProcessPoolExecutor
-from ...utils.logger import logger
+from utils.logger import logger
 from urllib.request import urlopen
-from ..commons import client
-from ..models import (
+from api.commons import client
+from api.models import (
     UpdateProjectState,
     CreateProject,
     EditMetadata

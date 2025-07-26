@@ -10,9 +10,9 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["SpeechToText"]        
 
 
-from ...utils.exceptionHandler import CustomException
-from ...utils.logger import logger
-from ..utils import getConfig
+from utils.exceptionHandler import CustomException
+from analyticsHub.utils import getConfig
+from utils.logger import logger
 from groq import Groq
 import os
 

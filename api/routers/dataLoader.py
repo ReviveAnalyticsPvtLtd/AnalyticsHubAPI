@@ -8,16 +8,16 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["router"]
 
 
-from ..models import (
+from api.models import (
     LoadMySQLorPostgreSQL,
     LoadMongoDB,
     DeleteTable
 )
 from fastapi import APIRouter, Depends, UploadFile, File, Form
-from ..services.dataLoadService import dataLoadService
+from api.services.dataLoadService import dataLoadService
 from fastapi.exceptions import HTTPException
 from fastapi.responses import ORJSONResponse
-from ..commons import verifyToken
+from api.commons import verifyToken
 from typing import Annotated
 
 router = APIRouter()

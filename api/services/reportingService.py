@@ -10,14 +10,14 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["reportingService"] 
 
 
-from ...analyticsHub.workflows.reportingToolWorkflow import reportingToolWorkflow
-from ..models import GenerateChartInput, PanelChartDetails
-from ...utils.exceptionHandler import CustomException
-from ...utils.codeExecutor import replManager
-from ...analyticsHub.utils import readYaml
-from ...utils.logger import logger
+from analyticsHub.workflows.reportingToolWorkflow import reportingToolWorkflow
+from api.models import GenerateChartInput, PanelChartDetails
+from utils.exceptionHandler import CustomException
+from utils.codeExecutor import replManager
+from analyticsHub.utils import readYaml
 from urllib.request import urlopen
-from ..commons import client
+from utils.logger import logger
+from api.commons import client
 from string import Template
 import orjson
 import json

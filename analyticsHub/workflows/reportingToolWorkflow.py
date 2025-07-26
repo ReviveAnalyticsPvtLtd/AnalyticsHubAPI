@@ -9,13 +9,13 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["reportingToolWorkflow"]
 
 
-from ..components.queryRephraser import QueryRephaser
-from ..components.codeGenerator import CodeGenerator
+from analyticsHub.components.queryRephraser import QueryRephaser
+from analyticsHub.components.codeGenerator import CodeGenerator
+from analyticsHub.components.codeDebugger import CodeDebugger
 from langgraph.graph import StateGraph, START, END
-from ..components.codeDebugger import CodeDebugger
-from ...utils.codeExecutor import replManager
+from utils.codeExecutor import replManager
 from typing_extensions import TypedDict
-from ...utils.logger import logger
+from utils.logger import logger
 import json
 
 codeDebuggerChain = CodeDebugger().getCodeDebuggerChain()

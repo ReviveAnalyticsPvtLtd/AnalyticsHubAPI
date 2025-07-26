@@ -9,10 +9,10 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["authenticationService"]      
 
 
-from ...utils.exceptionHandler import CustomException
-from ...utils.logger import logger
-from ..commons import client
-from ..models import (
+from utils.exceptionHandler import CustomException
+from utils.logger import logger
+from api.commons import client
+from api.models import (
     OnboardingDetails,
     LoginWithProvider,
     NewCredentials,

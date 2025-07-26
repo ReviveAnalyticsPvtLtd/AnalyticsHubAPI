@@ -9,13 +9,13 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["dashboardService"] 
 
 
-from ...utils.exceptionHandler import CustomException
+from utils.exceptionHandler import CustomException
 from concurrent.futures import ThreadPoolExecutor
-from ...utils.codeExecutor import replManager
-from ...utils.logger import logger
+from utils.codeExecutor import replManager
+from utils.logger import logger
 from urllib.request import urlopen
-from ..commons import client
-from ..models import (
+from api.commons import client
+from api.models import (
     DeleteDashboardElement,
     ExportToDashboard,
     EditWidgetPosition,

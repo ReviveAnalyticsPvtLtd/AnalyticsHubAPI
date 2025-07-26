@@ -9,12 +9,12 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["router"]
 
 
-from ..services.dashboardService import dashboardService
+from api.services.dashboardService import dashboardService
 from fastapi.exceptions import HTTPException
 from fastapi.responses import ORJSONResponse
 from fastapi import APIRouter, Depends
-from ..commons import verifyToken
-from ..models import (
+from api.commons import verifyToken
+from api.models import (
     DeleteDashboardElement,
     ExportToDashboard,
     EditWidgetPosition,

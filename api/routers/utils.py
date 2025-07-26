@@ -11,12 +11,12 @@ __all__ = ["router"]
 
 from fastapi import status, APIRouter, Depends, WebSocket, WebSocketDisconnect
 from fastapi.security import HTTPAuthorizationCredentials
-from ...analyticsHub.triggers.celery import celeryApp
-from ..services.utilityService import utilityService
+from api.services.utilityService import utilityService
+from analyticsHub.triggers.celery import celeryApp
 from fastapi.responses import ORJSONResponse
 from fastapi.exceptions import HTTPException
-from ..models import SpeechToTextModel
-from ..commons import verifyToken
+from api.models import SpeechToTextModel
+from api.commons import verifyToken
 import asyncio
 
 router = APIRouter()

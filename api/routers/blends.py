@@ -8,12 +8,12 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["router"]
 
 
-from ..services.blendService import blendService
+from api.services.blendService import blendService
 from fastapi.exceptions import HTTPException
 from fastapi.responses import ORJSONResponse
 from fastapi import APIRouter, Depends
-from ..commons import verifyToken
-from ..models import (
+from api.commons import verifyToken
+from api.models import (
     GetFieldsFromSources,
     CreateDataBlend
 )

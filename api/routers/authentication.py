@@ -9,11 +9,11 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["router"]
 
 
-from ..services.authenticationService import authenticationService
+from api.services.authenticationService import authenticationService
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import ORJSONResponse
-from ..commons import verifyToken
-from ..models import (
+from api.commons import verifyToken
+from api.models import (
     OnboardingDetails,
     LoginWithProvider,
     NewCredentials,

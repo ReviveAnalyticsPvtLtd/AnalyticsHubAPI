@@ -9,16 +9,16 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["dataLoadService"] 
 
 
-from ...utils.exceptionHandler import CustomException
+from utils.exceptionHandler import CustomException
 from pymongo.mongo_client import MongoClient
 from fastapi import Form, UploadFile, File
 from pymongo.server_api import ServerApi
 from sqlalchemy import create_engine
-from ...utils.logger import logger
+from utils.logger import logger
 from urllib.request import urlopen
-from ..commons import client
+from api.commons import client
 from typing import Annotated
-from ..models import (
+from api.models import (
     LoadMySQLorPostgreSQL,
     LoadMongoDB,
     DeleteTable
