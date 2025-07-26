@@ -29,7 +29,10 @@ os.makedirs("logs", exist_ok=True)
 
 logger.remove()
 
-logtailHandler = LogtailHandler(source_token = os.environ.get("LOGTAIL_TOKEN"))
+logtailHandler = LogtailHandler(
+    source_token = os.environ.get("LOGTAIL_TOKEN"),
+    host = os.environ.get("LOGTAIL_HOST")
+)
 logger.add(
     logtailHandler,
     level="INFO"
