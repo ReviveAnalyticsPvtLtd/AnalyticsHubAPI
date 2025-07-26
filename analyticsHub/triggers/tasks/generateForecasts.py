@@ -5,10 +5,10 @@ __all__ = ["GenerateForecasts"]
 
 from contextlib import contextmanager
 from sqlalchemy import create_engine
-from ....utils.logger import logger
 from lightgbm import LGBMRegressor
 from dataclasses import dataclass
 from functools import lru_cache
+from utils.logger import logger
 from io import StringIO
 from tqdm import tqdm
 import pandas as pd
