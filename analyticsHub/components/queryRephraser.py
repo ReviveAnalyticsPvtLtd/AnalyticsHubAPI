@@ -53,7 +53,7 @@ class QueryRephaser:
         Returns:
             AIMessage: A new AIMessage with the think tokens removed.
         """
-        inputStr = inputStr.content().replace("<think>", "").replace("</think>", "")
+        inputStr = inputStr.content.replace("<think>", "").replace("</think>", "")
         return AIMessage(inputStr)
 
     def getQueryRephraserChain(self):

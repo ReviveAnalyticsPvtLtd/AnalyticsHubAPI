@@ -44,7 +44,7 @@ class CodeDebugger:
         Returns:
             AIMessage: The AIMessage with <think> tokens removed from its content.
         """
-        inputStr = inputStr.content().replace("<think>", "").replace("</think>", "")
+        inputStr = inputStr.content.replace("<think>", "").replace("</think>", "")
         return AIMessage(inputStr)
 
     def getCodeDebuggerChain(self):
