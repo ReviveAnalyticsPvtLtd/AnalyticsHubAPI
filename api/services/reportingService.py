@@ -73,7 +73,8 @@ class ReportingService:
             CustomException: If panel chart generation fails.
         """
         try:
-            if isinstance(panelChartDetails.dataSource, str):
+            allFiles = [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = panelChartDetails.projectId)]
+            if panelChartDetails.dataSource in allFiles:
                 response = replManager.run(f"getDataForChart(projectId='{panelChartDetails.projectId}', chartType='{panelChartDetails.chartType}', xAxis='{panelChartDetails.xAxis}', yAxis='{panelChartDetails.yAxis}', aggregationMetric='{panelChartDetails.aggregationMetric}', tablesUsed='{panelChartDetails.dataSource}')")    
                 generatedCodeTemplate = Template(self.codeTemplates.get("panelChartWithoutBlend"))
                 generatedCode = generatedCodeTemplate.substitute(
@@ -84,7 +85,7 @@ class ReportingService:
                     aggregationMetric = panelChartDetails.aggregationMetric,
                     tablesUsed = panelChartDetails.dataSource
                 )
-            elif isinstance(panelChartDetails.dataSource, list):
+            elif "blendConfig.json" in allFiles:
                 blendConfigUrl = os.environ["FILE_URL"].format(projectId = panelChartDetails.projectId, fileName = "blendConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
                 blendConfig = orjson.loads(urlopen(blendConfigUrl).read())
                 tablesUsed = blendConfig[panelChartDetails.dataSource].get("tables")
