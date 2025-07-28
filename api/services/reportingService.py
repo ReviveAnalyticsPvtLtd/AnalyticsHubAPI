@@ -73,8 +73,18 @@ class ReportingService:
             CustomException: If panel chart generation fails.
         """
         try:
-            allFiles = [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = panelChartDetails.projectId)]
-            if "blendConfig.json" in allFiles:
+            if isinstance(panelChartDetails.dataSource, str):
+                response = replManager.run(f"getDataForChart(projectId='{panelChartDetails.projectId}', chartType='{panelChartDetails.chartType}', xAxis='{panelChartDetails.xAxis}', yAxis='{panelChartDetails.yAxis}', aggregationMetric='{panelChartDetails.aggregationMetric}', tablesUsed='{panelChartDetails.dataSource}')")    
+                generatedCodeTemplate = Template(self.codeTemplates.get("panelChartWithoutBlend"))
+                generatedCode = generatedCodeTemplate.substitute(
+                    projectId = panelChartDetails.projectId,
+                    chartType = panelChartDetails.chartType,
+                    xAxis = panelChartDetails.xAxis,
+                    yAxis = panelChartDetails.yAxis,
+                    aggregationMetric = panelChartDetails.aggregationMetric,
+                    tablesUsed = panelChartDetails.dataSource
+                )
+            elif isinstance(panelChartDetails.dataSource, list):
                 blendConfigUrl = os.environ["FILE_URL"].format(projectId = panelChartDetails.projectId, fileName = "blendConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
                 blendConfig = orjson.loads(urlopen(blendConfigUrl).read())
                 tablesUsed = blendConfig[panelChartDetails.dataSource].get("tables")
@@ -93,16 +103,7 @@ class ReportingService:
                     blendOn = blendOn
                 )
             else:
-                response = replManager.run(f"getDataForChart(projectId='{panelChartDetails.projectId}', chartType='{panelChartDetails.chartType}', xAxis='{panelChartDetails.xAxis}', yAxis='{panelChartDetails.yAxis}', aggregationMetric='{panelChartDetails.aggregationMetric}', tablesUsed='{panelChartDetails.dataSource}')")    
-                generatedCodeTemplate = Template(self.codeTemplates.get("panelChartWithoutBlend"))
-                generatedCode = generatedCodeTemplate.substitute(
-                    projectId = panelChartDetails.projectId,
-                    chartType = panelChartDetails.chartType,
-                    xAxis = panelChartDetails.xAxis,
-                    yAxis = panelChartDetails.yAxis,
-                    aggregationMetric = panelChartDetails.aggregationMetric,
-                    tablesUsed = panelChartDetails.dataSource
-                )
+                pass
             response = orjson.loads(response.encode("utf-8"))
             response.update({"generatedCode": generatedCode})
             return response
