@@ -9,6 +9,7 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["client", "verifyToken"] 
 
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import status, HTTPException
 from supabase.lib.client_options import ClientOptions
 from supabase import create_client
 from datetime import datetime
@@ -37,7 +38,7 @@ def verifyToken(credentials: HTTPAuthorizationCredentials = Depends(security)):
         str: The valid access token if found and updated.
 
     Raises:
-        ValueError: If the token is invalid or expired.
+        HTTPException: If the token is invalid or expired.
     """
     gc.collect()
     token = credentials.credentials
@@ -45,5 +46,6 @@ def verifyToken(credentials: HTTPAuthorizationCredentials = Depends(security)):
     if response.data:
         client.table("Sessions").update({"lastActivity": str(datetime.now())}).eq("accessToken", token).execute()
     else:
-        raise ValueError("Invalid or expired token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
     return token
+        
