@@ -74,7 +74,7 @@ class ReportingService:
         """
         try:
             allFiles = [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = panelChartDetails.projectId)]
-            if panelChartDetails.dataSource in allFiles:
+            if "".join(panelChartDetails.dataSource, ".json") in allFiles:
                 response = replManager.run(f"getDataForChart(projectId='{panelChartDetails.projectId}', chartType='{panelChartDetails.chartType}', xAxis='{panelChartDetails.xAxis}', yAxis='{panelChartDetails.yAxis}', aggregationMetric='{panelChartDetails.aggregationMetric}', tablesUsed='{panelChartDetails.dataSource}')")    
                 generatedCodeTemplate = Template(self.codeTemplates.get("panelChartWithoutBlend"))
                 generatedCode = generatedCodeTemplate.substitute(
