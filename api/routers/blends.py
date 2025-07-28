@@ -39,7 +39,7 @@ async def createDataBlend(blendDetails: CreateDataBlend, token = Depends(verifyT
         blendService.createDataBlend(blendDetails = blendDetails)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Blend created successfully."})
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
 
 @router.get("/getDataSources")
 async def getDataSources(projectId: str, token = Depends(verifyToken)):
@@ -57,7 +57,7 @@ async def getDataSources(projectId: str, token = Depends(verifyToken)):
         dataSources = blendService.getDataSources(projectId = projectId)
         return ORJSONResponse(status_code = 200, content = dataSources)
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
 
 @router.post("/getFieldsFromSources")
 async def getFieldsFromSources(details: GetFieldsFromSources, token = Depends(verifyToken)):
@@ -75,4 +75,4 @@ async def getFieldsFromSources(details: GetFieldsFromSources, token = Depends(ve
         response = blendService.getFieldsFromSources(details = details)
         return ORJSONResponse(status_code = 200, content = response)
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))

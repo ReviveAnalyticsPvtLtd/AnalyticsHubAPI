@@ -43,7 +43,7 @@ async def createPage(details: CreatePage, token = Depends(verifyToken)):
         pageId = dashboardService.createPage(details = details)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "pageId": pageId})
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
     
 @router.get("/getAllPages")
 async def getAllPages(projectId: str, token = Depends(verifyToken)):
@@ -61,7 +61,7 @@ async def getAllPages(projectId: str, token = Depends(verifyToken)):
         pages = dashboardService.getAllPages(projectId = projectId)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "pages": pages})
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
     
 @router.post("/exportToDashboard")
 async def exportToDashboard(details: ExportToDashboard, token = Depends(verifyToken)):
@@ -79,7 +79,7 @@ async def exportToDashboard(details: ExportToDashboard, token = Depends(verifyTo
         widgetId = dashboardService.exportToDashboard(details = details)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "widgetId": widgetId})
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
     
 @router.post("/getData")
 async def getData(details: GetData, token = Depends(verifyToken)):
@@ -97,7 +97,7 @@ async def getData(details: GetData, token = Depends(verifyToken)):
         pageInfo = dashboardService.getData(details = details)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "pageData": pageInfo})
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
     
 @router.put("/editWidgetPosition")
 async def editWidgetPosition(details: EditWidgetPosition, token = Depends(verifyToken)):
@@ -115,7 +115,7 @@ async def editWidgetPosition(details: EditWidgetPosition, token = Depends(verify
         pageInfo = dashboardService.editWidgetPosition(details = details)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "pageData": pageInfo})
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
 
 @router.delete("/deleteDashboardElement")
 async def deleteDashboardElement(details: DeleteDashboardElement, token = Depends(verifyToken)):

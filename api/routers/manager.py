@@ -41,7 +41,7 @@ async def createProject(projectDetails: CreateProject, token = Depends(verifyTok
         projectId = managementService.createProject(projectDetails = projectDetails, token = token)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "projectId": projectId, "message": "Project created successfully"})
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
     
 @router.get("/listProjects")
 async def listProjects(token = Depends(verifyToken)):
@@ -58,7 +58,7 @@ async def listProjects(token = Depends(verifyToken)):
         data = managementService.listProjects(token = token)
         return ORJSONResponse(status_code = 200, content = {"projects": data.to_dict(orient = "records")})
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
     
 @router.patch("/updateBookmark")
 async def updateBookmark(updateBookmarkDetails: UpdateProjectState, token = Depends(verifyToken)):
@@ -76,7 +76,7 @@ async def updateBookmark(updateBookmarkDetails: UpdateProjectState, token = Depe
         managementService.updateBookmark(updateBookmarkDetails = updateBookmarkDetails)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Project bookmark status updated successfully"})
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
     
 @router.patch("/updateArchive")
 async def updateArchive(updateArchiveDetails: UpdateProjectState, token = Depends(verifyToken)):
@@ -94,7 +94,7 @@ async def updateArchive(updateArchiveDetails: UpdateProjectState, token = Depend
         managementService.updateArchive(updateArchiveDetails = updateArchiveDetails)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Project archive status updated successfully"})
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
     
 @router.patch("/updateTrash")
 async def updateTrash(updateTrashDetails: UpdateProjectState, token = Depends(verifyToken)):
@@ -112,7 +112,7 @@ async def updateTrash(updateTrashDetails: UpdateProjectState, token = Depends(ve
             managementService.updateTrash(updateTrashDetails = updateTrashDetails)
             return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Project trash status updated successfully"})
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
     
 @router.post("/generateMetadata/{projectId}")
 async def generateMetadata(projectId: str, token = Depends(verifyToken)):
@@ -130,7 +130,7 @@ async def generateMetadata(projectId: str, token = Depends(verifyToken)):
         jsonData = managementService.generateMetadata(projectId = projectId)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "metadata": jsonData})
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
 
 @router.get("/getMetadata/{projectId}")
 async def getMetadata(projectId: str, token = Depends(verifyToken)):
@@ -148,7 +148,7 @@ async def getMetadata(projectId: str, token = Depends(verifyToken)):
         newJson = managementService.getMetadata(projectId = projectId)
         return ORJSONResponse(status_code = 200, content = newJson) 
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
 
 @router.put("/editMetadata")
 async def editMetadata(modifiedMetadata: EditMetadata, token = Depends(verifyToken)):
@@ -166,7 +166,7 @@ async def editMetadata(modifiedMetadata: EditMetadata, token = Depends(verifyTok
         jsonData = managementService.editMetadata(modifiedMetadata = modifiedMetadata)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "metadata": jsonData})   
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
 
 @router.delete("/deleteProject")
 async def deleteProject(projectId: str, token = Depends(verifyToken)):
@@ -184,7 +184,7 @@ async def deleteProject(projectId: str, token = Depends(verifyToken)):
         managementService.deleteProject(projectId = projectId)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Project deleted successfully"})
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
     
 @router.get("/listTriggers/{projectId}")
 async def listTriggers(projectId: str, token = Depends(verifyToken)):
@@ -202,7 +202,7 @@ async def listTriggers(projectId: str, token = Depends(verifyToken)):
         triggers = managementService.listTriggers(projectId = projectId)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "triggers": triggers})  
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
     
 @router.get("/listTriggersUnderUserId")
 async def listTriggers(token = Depends(verifyToken)):
@@ -219,7 +219,7 @@ async def listTriggers(token = Depends(verifyToken)):
         allTriggers = managementService.listTriggersUnderUserId(token = token)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "triggersAssignedToUser": allTriggers})   
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
     
 @router.post("/generateReport/{projectId}")
 async def generateReport(projectId: str, token = Depends(verifyToken)):
@@ -237,7 +237,7 @@ async def generateReport(projectId: str, token = Depends(verifyToken)):
         reports = managementService.generateReport(projectId = projectId)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "reportHtmlContent": reports})
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
     
 @router.get("/getReport/{projectId}/{tableName}")
 async def getReport(projectId: str, tableName: str, token = Depends(verifyToken)):

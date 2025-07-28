@@ -42,7 +42,7 @@ async def loadCsvData(projectId: Annotated[str, Form()], file: Annotated[UploadF
         dataLoadService.loadCsvData(projectId = projectId, file = file)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Data loaded successfully"})
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
     
 @router.post("/loadExcelData")
 async def loadExcelData(projectId: Annotated[str, Form()], file: Annotated[UploadFile, File()], sheetName: Annotated[str | None, Form()] = None, token = Depends(verifyToken)):
@@ -62,7 +62,7 @@ async def loadExcelData(projectId: Annotated[str, Form()], file: Annotated[Uploa
         dataLoadService.loadExcelData(projectId = projectId, file = file, sheetName = sheetName)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Data loaded successfully"})
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
 
 @router.post("/loadMySql")
 async def loadMySql(connection: LoadMySQLorPostgreSQL, token = Depends(verifyToken)):
@@ -80,7 +80,7 @@ async def loadMySql(connection: LoadMySQLorPostgreSQL, token = Depends(verifyTok
         dataLoadService.loadMySql(connection = connection)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Data loaded successfully"})
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
     
 @router.post("/loadPostgreSQL")
 async def loadPostgreSQL(connection: LoadMySQLorPostgreSQL, token = Depends(verifyToken)):
@@ -98,7 +98,7 @@ async def loadPostgreSQL(connection: LoadMySQLorPostgreSQL, token = Depends(veri
         dataLoadService.loadPostgreSQL(connection = connection)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Data loaded successfully"})
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
     
 @router.post("/loadMongoDB")
 async def loadMongoDB(connection: LoadMongoDB, token = Depends(verifyToken)):
@@ -116,7 +116,7 @@ async def loadMongoDB(connection: LoadMongoDB, token = Depends(verifyToken)):
         dataLoadService.loadMongoDB(connection = connection)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Data loaded successfully"})
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
 
 @router.delete("/deleteTable")
 async def deleteTable(tableDetails: DeleteTable, token = Depends(verifyToken)):
@@ -134,4 +134,4 @@ async def deleteTable(tableDetails: DeleteTable, token = Depends(verifyToken)):
         dataLoadService.deleteTable(tableDetails = tableDetails)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Table deleted successfully"})
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))

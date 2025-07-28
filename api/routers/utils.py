@@ -40,7 +40,7 @@ async def getSpeechTranscript(speechToText: SpeechToTextModel, token = Depends(v
         transcriptText = utilityService.getSpeechTranscript(speechToText = speechToText)
         return ORJSONResponse(status_code = 200, content = {"transcriptionText": transcriptText})
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
     
 @router.get("/sendForecasts")
 async def sendForecasts(token = Depends(verifyToken)):
@@ -57,7 +57,7 @@ async def sendForecasts(token = Depends(verifyToken)):
         r = utilityService.sendForecasts()
         return ORJSONResponse(status_code = 200, content = {"taskId": r.task_id, "triggerName": "forecast", "taskStatus": r.status}) 
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
 
 @router.get("/temp/{num}")
 async def tempFunc(num: int, token = Depends(verifyToken)):
@@ -75,7 +75,7 @@ async def tempFunc(num: int, token = Depends(verifyToken)):
         result = utilityService.tempFunc(num = num)
         return ORJSONResponse(status_code = 200, content = result)
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
     
 @router.websocket("/ws/getTaskStatus")
 async def getTaskStatus(websocket: WebSocket):

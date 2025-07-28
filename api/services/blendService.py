@@ -131,7 +131,9 @@ class BlendService:
             allFiles = [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = details.projectId)]
             metadataUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             metadata = json.loads(urlopen(metadataUrl).read())
-            if "blendConfig.json" in allFiles:
+            if details.tableName in metadata.keys():
+                allFields = metadata[details.tableName]["columns"]
+            elif "blendConfig.json" in allFiles:
                 blendConfigUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "blendConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
                 blendConfig = json.loads(urlopen(blendConfigUrl).read())
                 allFields = list()
@@ -139,7 +141,7 @@ class BlendService:
                 for table in tablesUsed:
                     allFields.extend(metadata[table]["columns"])
             else:
-                allFields = metadata[details.tableName]["columns"]
+                pass
             numericals = ["int64", "float64", "float32", "int32"]
             categoricals = ["bool", "category", "object", "string"]
             datetimeTypes = ["datetime64[ns]", "datetime64[ns, tz]"]

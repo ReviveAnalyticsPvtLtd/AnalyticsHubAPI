@@ -37,7 +37,7 @@ async def generateChart(chartDetails: GenerateChartInput, token = Depends(verify
         response = reportingService.generateChart(chartDetails = chartDetails)
         return ORJSONResponse(status_code = 200, content = response)
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
     
 @router.post("/generatePanelChart")
 async def generatePanelChart(panelChartDetails: PanelChartDetails, token = Depends(verifyToken)):
@@ -55,4 +55,4 @@ async def generatePanelChart(panelChartDetails: PanelChartDetails, token = Depen
         response = reportingService.generatePanelChart(panelChartDetails = panelChartDetails)
         return ORJSONResponse(status_code = 200, content = response)
     except Exception as e:
-        raise HTTPException(status_code = 500, detail = e)
+        raise HTTPException(status_code = 500, detail = str(e))
