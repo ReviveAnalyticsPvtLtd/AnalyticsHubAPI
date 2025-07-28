@@ -314,7 +314,6 @@ class DashboardService:
                             pageWidgets.remove(widget)
                             break
                         else: continue
-                    break
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(dashboardConfig, indent=4).encode("utf-8"))
                 buffer.seek(0)
