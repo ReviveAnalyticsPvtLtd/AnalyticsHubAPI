@@ -149,7 +149,7 @@ class ReportingService:
             tableData = fetch_data(projectId=projectId, tableName=dataSourceName)
             response = {
                 "chartType": "table",
-                "title": f"f{dataSourceName} Data",
+                "title": f"{dataSourceName} Data",
                 "data": tableData.to_dict(orient="records")
             }
         return response
