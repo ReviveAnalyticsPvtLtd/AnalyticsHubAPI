@@ -1,8 +1,7 @@
 """
 reportingService module provides services for generating charts and panel charts using reporting workflows and code templates.
 
-Author: Rauhan Ahmed Siddiqui
-Version: 1.0.0
+This module defines the ReportingService class, which offers methods to generate single and panel charts for reporting purposes. It leverages workflows, code templates, and data blending to produce various chart types based on user input.
 """
 
 __version__ = "1.0.0"
@@ -29,10 +28,14 @@ import os
 class ReportingService:
     """
     Service class for generating charts and panel charts for reporting purposes.
+
+    This class provides methods to generate single charts and panel (multi-chart) visualizations. It supports data blending, aggregation, and uses code templates to generate code snippets for reproducibility.
     """
     def __init__(self) -> None:
         """
-        Initializes the ReportingService, loads code templates, and sets up the reporting workflow.
+        Initializes the ReportingService.
+
+        Loads code templates from YAML, sets up the reporting workflow, and initializes the storage client.
         """
         logger.info("Initializing Reporting Service.")
         self.codeTemplates = readYaml(os.path.join(os.getcwd(), "codeTemplates.yaml"))
@@ -40,22 +43,24 @@ class ReportingService:
         self.client = client
 
     @staticmethod
-    def _generatePanelChart(projectId: str, chartType: str, xAxis: str, yAxis: str, aggregationMetric: str | None, dataSourceName: str, tablesUsed: list[str] | str, joinTypes: list[str] | None = None, blendOn: list[str] | None = None, **kwargs):
+    def _generatePanelChart(projectId: str, chartType: str, xAxis: str, yAxis: str, aggregationMetric: str | None, dataSourceName: str, tablesUsed: list[str] | str, joinTypes: list[str] | None = None, blendOn: list[str] | None = None, **kwargs) -> dict:
         """
         Prepares and aggregates data for charting based on the specified parameters.
 
         Args:
             projectId (str): The project ID.
-            chartType (str): The type of chart to generate.
+            chartType (str): The type of chart to generate (e.g., bar, line, pie, table, pivot, etc.).
             xAxis (str): The column to use for the X axis.
             yAxis (str): The column to use for the Y axis.
-            aggregationMetric (str): The aggregation metric (sum, mean, etc.).
-            tablesUsed (list[str] | str): Tables to use for the chart.
-            joinTypes (list[str], optional): Join types for merging tables.
-            blendOn (list[str], optional): Columns to join on.
+            aggregationMetric (str, optional): The aggregation metric (sum, mean, etc.).
+            dataSourceName (str): The name of the data source.
+            tablesUsed (list[str] | str): Tables to use for the chart. Can be a single table or a list for blending.
+            joinTypes (list[str], optional): Join types for merging tables (if blending).
+            blendOn (list[str], optional): Columns to join on (if blending).
+            **kwargs: Additional keyword arguments for pivot charts (index, columns, values).
 
         Returns:
-            dict: Chart-ready data structure.
+            dict: Chart-ready data structure suitable for frontend rendering.
         """
         if isinstance(tablesUsed, list):
             allTables = [fetch_data(projectId, x) for x in tablesUsed]
@@ -155,10 +160,11 @@ class ReportingService:
                 "data": finalResult.to_dict(orient="records")
             }
         elif chartType == "pivot":
+            pivotData = pd.pivot_table(finalResult, index=kwargs.get("index"), columns=kwargs.get("columns"), aggfunc=aggregationMetric, values=kwargs.get("values")).to_dict()
             response = {
                 "chartType": "pivot",
                 "title": f"Pivot for {dataSourceName}",
-                "data": pd.pivot_table(finalResult, index=kwargs.get("index"), columns=kwargs.get("columns"), aggfunc=aggregationMetric, values=kwargs.get("values")).to_dict()
+                "data": {str(key): value for key, value in pivotData.items()}
             }
         return response
     
@@ -167,11 +173,13 @@ class ReportingService:
         Generates a chart based on the provided chart details using the reporting workflow.
 
         Args:
-            chartDetails (GenerateChartInput): Input details for generating the chart.
+            chartDetails (GenerateChartInput): Input details for generating the chart, including query, project ID, and chart configuration.
+
         Returns:
-            dict: The generated chart data.
+            dict: The generated chart data as a dictionary.
+
         Raises:
-            CustomException: If chart generation fails.
+            CustomException: If chart generation fails for any reason.
         """
         try:
             fileUrl = os.environ["FILE_URL"].format(projectId = chartDetails.projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
@@ -190,12 +198,16 @@ class ReportingService:
         """
         Generates a panel chart, optionally using blend configuration if available.
 
+        This method checks for the presence of a data source or blend configuration, prepares the data, and generates the panel chart. It also generates the code used for chart creation using code templates.
+
         Args:
-            panelChartDetails (PanelChartDetails): Input details for generating the panel chart.
+            panelChartDetails (PanelChartDetails): Input details for generating the panel chart, including project ID, chart type, axes, aggregation, and blend info.
+
         Returns:
-            dict: The generated panel chart data, including generated code.
+            dict: The generated panel chart data, including the generated code snippet.
+
         Raises:
-            CustomException: If panel chart generation fails.
+            CustomException: If panel chart generation fails for any reason.
         """
         try:
             allFiles = [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = panelChartDetails.projectId)]

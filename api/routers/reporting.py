@@ -1,7 +1,11 @@
 """
 API router for reporting operations.
 
-This module provides endpoints for generating charts and panel charts for reports.
+This module defines endpoints for generating charts and panel charts as part of the reporting functionality. It provides routes for creating visual representations of data based on user-supplied parameters.
+
+Endpoints:
+    - POST /generateChart: Generate a single chart from provided chart details.
+    - POST /generatePanelChart: Generate a panel (multi-chart) visualization from provided panel chart details.
 """
 
 __version__ = "1.0.0"
@@ -27,11 +31,14 @@ async def generateChart(chartDetails: GenerateChartInput, token = Depends(verify
     Generate a chart based on the provided chart details.
 
     Args:
-        chartDetails (GenerateChartInput): The details required to generate the chart.
-        token: Authorization token dependency.
+        chartDetails (GenerateChartInput): The details required to generate the chart, including data, chart type, and configuration.
+        token: Authorization token dependency, automatically injected by FastAPI for authentication.
 
     Returns:
-        ORJSONResponse: Chart data or error message.
+        ORJSONResponse: A response containing the generated chart data in JSON format, or an error message if generation fails.
+
+    Raises:
+        HTTPException: If an error occurs during chart generation, returns a 500 status code with the error details.
     """
     try:
         response = reportingService.generateChart(chartDetails = chartDetails)
@@ -42,14 +49,17 @@ async def generateChart(chartDetails: GenerateChartInput, token = Depends(verify
 @router.post("/generatePanelChart")
 async def generatePanelChart(panelChartDetails: PanelChartDetails, token = Depends(verifyToken)):
     """
-    Generate a panel chart based on the provided panel chart details.
+    Generate a panel chart (multiple charts in a single view) based on the provided panel chart details.
 
     Args:
-        panelChartDetails (PanelChartDetails): The details required to generate the panel chart.
-        token: Authorization token dependency.
+        panelChartDetails (PanelChartDetails): The details required to generate the panel chart, including data sources, layout, and configuration for each sub-chart.
+        token: Authorization token dependency, automatically injected by FastAPI for authentication.
 
     Returns:
-        ORJSONResponse: Panel chart data or error message.
+        ORJSONResponse: A response containing the generated panel chart data in JSON format, or an error message if generation fails.
+
+    Raises:
+        HTTPException: If an error occurs during panel chart generation, returns a 500 status code with the error details.
     """
     try:
         response = reportingService.generatePanelChart(panelChartDetails = panelChartDetails)
