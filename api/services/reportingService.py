@@ -220,7 +220,10 @@ class ReportingService:
                     yAxis = panelChartDetails.yAxis,
                     aggregationMetric = panelChartDetails.aggregationMetric,
                     dataSourceName = panelChartDetails.dataSource,
-                    tablesUsed = panelChartDetails.dataSource
+                    tablesUsed = panelChartDetails.dataSource,
+                    index=panelChartDetails.index,
+                    columns=panelChartDetails.columns,
+                    values=panelChartDetails.values
                 )
             elif "blendConfig.json" in allFiles:
                 blendConfigUrl = os.environ["FILE_URL"].format(projectId = panelChartDetails.projectId, fileName = "blendConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
@@ -252,14 +255,17 @@ class ReportingService:
                     dataSourceName = panelChartDetails.dataSource,
                     tablesUsed = tablesUsed,
                     joinTypes = joinTypes,
-                    blendOn = blendOn
+                    blendOn = blendOn,
+                    index=panelChartDetails.index,
+                    columns=panelChartDetails.columns,
+                    values=panelChartDetails.values
                 )
             else:
                 pass
             response.update({"generatedCode": generatedCode})
             return response
         except Exception as e:
-            exception  = CustomException(e)
+            exception = CustomException(e)
             logger.error(exception)
             raise exception
     
