@@ -212,7 +212,7 @@ class ReportingService:
                     columns=panelChartDetails.columns,
                     values=panelChartDetails.values
                 )
-                generatedCodeTemplate = Template(self.codeTemplates.get("panelChartCode"))
+                generatedCodeTemplate = Template(self.codeTemplates.get("panelChartWithoutBlend"))
                 generatedCode = generatedCodeTemplate.substitute(
                     projectId = panelChartDetails.projectId,
                     chartType = panelChartDetails.chartType,
