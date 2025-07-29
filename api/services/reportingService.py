@@ -146,11 +146,10 @@ class ReportingService:
                     "data": 0
                 }
         elif chartType == "table":
-            tableData = fetch_data(projectId=projectId, tableName=dataSourceName)
             response = {
                 "chartType": "table",
                 "title": f"{dataSourceName} Data",
-                "data": tableData.to_dict(orient="records")
+                "data": finalResult.to_dict(orient="records")
             }
         return response
     
