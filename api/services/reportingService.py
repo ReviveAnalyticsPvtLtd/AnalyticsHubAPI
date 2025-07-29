@@ -40,7 +40,7 @@ class ReportingService:
         self.client = client
 
     @staticmethod
-    def _generatePanelChart(projectId: str, chartType: str, xAxis: str, yAxis: str, aggregationMetric: str | None, dataSourceName: str, tablesUsed: list[str] | str, joinTypes: list[str] | None = None, blendOn: list[str] | None = None):
+    def _generatePanelChart(projectId: str, chartType: str, xAxis: str, yAxis: str, aggregationMetric: str | None, dataSourceName: str, tablesUsed: list[str] | str, joinTypes: list[str] | None = None, blendOn: list[str] | None = None, **kwargs):
         """
         Prepares and aggregates data for charting based on the specified parameters.
 
@@ -64,22 +64,25 @@ class ReportingService:
                 result = pd.merge(left = result, right = allTables[i+1], on = blendOn[i], how = joinTypes[i], suffixes = ['_left', '_right'])
         else:
             result = fetch_data(projectId, tablesUsed)
-        if aggregationMetric == "sum":
-            finalResult = result.groupby(xAxis)[yAxis].sum().reset_index()
-        elif aggregationMetric == "mean":
-            finalResult = result.groupby(xAxis)[yAxis].mean().reset_index()
-        elif aggregationMetric == "median":
-            finalResult = result.groupby(xAxis)[yAxis].median().reset_index()
-        elif aggregationMetric == "max":
-            finalResult = result.groupby(xAxis)[yAxis].max().reset_index()
-        elif aggregationMetric == "min":
-            finalResult = result.groupby(xAxis)[yAxis].min().reset_index()
-        elif aggregationMetric == "count":
-            finalResult = result.groupby(xAxis)[yAxis].count().reset_index()
-        elif aggregationMetric == "std":
-            finalResult = result.groupby(xAxis)[yAxis].std().reset_index()
-        elif aggregationMetric == "var":
-            finalResult = result.groupby(xAxis)[yAxis].var().reset_index()
+        if chartType != "pivot":
+            if aggregationMetric == "sum":
+                finalResult = result.groupby(xAxis)[yAxis].sum().reset_index()
+            elif aggregationMetric == "mean":
+                finalResult = result.groupby(xAxis)[yAxis].mean().reset_index()
+            elif aggregationMetric == "median":
+                finalResult = result.groupby(xAxis)[yAxis].median().reset_index()
+            elif aggregationMetric == "max":
+                finalResult = result.groupby(xAxis)[yAxis].max().reset_index()
+            elif aggregationMetric == "min":
+                finalResult = result.groupby(xAxis)[yAxis].min().reset_index()
+            elif aggregationMetric == "count":
+                finalResult = result.groupby(xAxis)[yAxis].count().reset_index()
+            elif aggregationMetric == "std":
+                finalResult = result.groupby(xAxis)[yAxis].std().reset_index()
+            elif aggregationMetric == "var":
+                finalResult = result.groupby(xAxis)[yAxis].var().reset_index()
+            else:
+                finalResult = result
         else:
             finalResult = result
         if chartType in ["bar", "line", "radar", "polarArea"]:
@@ -151,6 +154,12 @@ class ReportingService:
                 "title": f"{dataSourceName} Data",
                 "data": finalResult.to_dict(orient="records")
             }
+        elif chartType == "pivot":
+            response = {
+                "chartType": "pivot",
+                "title": f"Pivot for {dataSourceName}",
+                "data": pd.pivot_table(finalResult, index=kwargs.get("index"), columns=kwargs.get("columns"), aggfunc=aggregationMetric, values=kwargs.get("values")).to_dict()
+            }
         return response
     
     def generateChart(self, chartDetails: GenerateChartInput) -> dict:
@@ -191,8 +200,19 @@ class ReportingService:
         try:
             allFiles = [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = panelChartDetails.projectId)]
             if "".join([panelChartDetails.dataSource, ".parquet"]) in allFiles:
-                response = self._generatePanelChart(projectId=panelChartDetails.projectId, chartType=panelChartDetails.chartType, xAxis=panelChartDetails.xAxis, yAxis=panelChartDetails.yAxis, aggregationMetric=panelChartDetails.aggregationMetric, dataSourceName=panelChartDetails.dataSource, tablesUsed=panelChartDetails.dataSource)
-                generatedCodeTemplate = Template(self.codeTemplates.get("panelChartWithoutBlend"))
+                response = self._generatePanelChart(
+                    projectId=panelChartDetails.projectId,
+                    chartType=panelChartDetails.chartType,
+                    xAxis=panelChartDetails.xAxis,
+                    yAxis=panelChartDetails.yAxis,
+                    aggregationMetric=panelChartDetails.aggregationMetric,
+                    dataSourceName=panelChartDetails.dataSource,
+                    tablesUsed=panelChartDetails.dataSource,
+                    index=panelChartDetails.index,
+                    columns=panelChartDetails.columns,
+                    values=panelChartDetails.values
+                )
+                generatedCodeTemplate = Template(self.codeTemplates.get("panelChartCode"))
                 generatedCode = generatedCodeTemplate.substitute(
                     projectId = panelChartDetails.projectId,
                     chartType = panelChartDetails.chartType,
@@ -208,7 +228,20 @@ class ReportingService:
                 tablesUsed = blendConfig[panelChartDetails.dataSource].get("tables")
                 joinTypes = blendConfig[panelChartDetails.dataSource].get("joinTypes")
                 blendOn = blendConfig[panelChartDetails.dataSource].get("blendOn")
-                response = self._generatePanelChart(projectId=panelChartDetails.projectId, chartType=panelChartDetails.chartType, xAxis=panelChartDetails.xAxis, yAxis=panelChartDetails.yAxis, aggregationMetric=panelChartDetails.aggregationMetric, dataSourceName=panelChartDetails.dataSource,tablesUsed=tablesUsed, joinTypes=joinTypes, blendOn=blendOn)
+                response = self._generatePanelChart(
+                    projectId=panelChartDetails.projectId, 
+                    chartType=panelChartDetails.chartType, 
+                    xAxis=panelChartDetails.xAxis, 
+                    yAxis=panelChartDetails.yAxis, 
+                    aggregationMetric=panelChartDetails.aggregationMetric, 
+                    dataSourceName=panelChartDetails.dataSource,
+                    tablesUsed=tablesUsed, 
+                    joinTypes=joinTypes, 
+                    blendOn=blendOn,
+                    index=panelChartDetails.index,
+                    columns=panelChartDetails.columns,
+                    values=panelChartDetails.values
+                )
                 generatedCodeTemplate = Template(self.codeTemplates.get("panelChartWithBlend"))
                 generatedCode = generatedCodeTemplate.substitute(
                     projectId = panelChartDetails.projectId,

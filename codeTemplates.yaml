@@ -1,6 +1,17 @@
 panelChartWithBlend: |
     ```python
-    def panelChart(projectId: str, chartType: str, xAxis: str, yAxis: str, aggregationMetric: str | None, dataSourceName: str, tablesUsed: list[str] | str, joinTypes: list[str] | None = None, blendOn: list[str] | None = None):
+    def panelChart(
+        projectId: str, 
+        chartType: str, 
+        xAxis: str, 
+        yAxis: str, 
+        aggregationMetric: str | None, 
+        dataSourceName: str, 
+        tablesUsed: list[str] | str, 
+        joinTypes: list[str] | None = None, 
+        blendOn: list[str] | None = None,
+        **kwargs
+        ):
         import pandas as pd
         import json
         if isinstance(tablesUsed, list):
@@ -10,22 +21,25 @@ panelChartWithBlend: |
                 result = pd.merge(left = result, right = allTables[i+1], on = blendOn[i], how = joinTypes[i], suffixes = ['_left', '_right'])
         else:
             result = fetch_data(projectId, tablesUsed)
-        if aggregationMetric == "sum":
-            finalResult = result.groupby(xAxis)[yAxis].sum().reset_index()
-        elif aggregationMetric == "mean":
-            finalResult = result.groupby(xAxis)[yAxis].mean().reset_index()
-        elif aggregationMetric == "median":
-            finalResult = result.groupby(xAxis)[yAxis].median().reset_index()
-        elif aggregationMetric == "max":
-            finalResult = result.groupby(xAxis)[yAxis].max().reset_index()
-        elif aggregationMetric == "min":
-            finalResult = result.groupby(xAxis)[yAxis].min().reset_index()
-        elif aggregationMetric == "count":
-            finalResult = result.groupby(xAxis)[yAxis].count().reset_index()
-        elif aggregationMetric == "std":
-            finalResult = result.groupby(xAxis)[yAxis].std().reset_index()
-        elif aggregationMetric == "var":
-            finalResult = result.groupby(xAxis)[yAxis].var().reset_index()
+        if chartType != "pivot":
+            if aggregationMetric == "sum":
+                finalResult = result.groupby(xAxis)[yAxis].sum().reset_index()
+            elif aggregationMetric == "mean":
+                finalResult = result.groupby(xAxis)[yAxis].mean().reset_index()
+            elif aggregationMetric == "median":
+                finalResult = result.groupby(xAxis)[yAxis].median().reset_index()
+            elif aggregationMetric == "max":
+                finalResult = result.groupby(xAxis)[yAxis].max().reset_index()
+            elif aggregationMetric == "min":
+                finalResult = result.groupby(xAxis)[yAxis].min().reset_index()
+            elif aggregationMetric == "count":
+                finalResult = result.groupby(xAxis)[yAxis].count().reset_index()
+            elif aggregationMetric == "std":
+                finalResult = result.groupby(xAxis)[yAxis].std().reset_index()
+            elif aggregationMetric == "var":
+                finalResult = result.groupby(xAxis)[yAxis].var().reset_index()
+            else:
+                finalResult = result
         else:
             finalResult = result
         if chartType in ["bar", "line", "radar", "polarArea"]:
@@ -93,19 +107,46 @@ panelChartWithBlend: |
                     "data": 0
                 }
         elif chartType == "table":
-            tableData = fetch_data(projectId=projectId, tableName=dataSourceName)
             response = {
                 "chartType": "table",
                 "title": f"{dataSourceName} Data",
-                "data": tableData.to_dict(orient="records")
+                "data": finalResult.to_dict(orient="records")
+            }
+        elif chartType == "pivot":
+            response = {
+                "chartType": "pivot",
+                "title": f"Pivot for {dataSourceName}",
+                "data": pd.pivot_table(finalResult, index=kwargs.get("index"), columns=kwargs.get("columns"), aggfunc=aggregationMetric, values=kwargs.get("values")).to_dict()
             }
         print(json.dumps(response, indent=4, default=serializer))
-    panelChart(projectId = "$projectId", chartType = "$chartType", xAxis = "$xAxis", yAxis = "$yAxis", aggregationMetric = "$aggregationMetric", dataSourceName = "$dataSourceName", tablesUsed = $tablesUsed, joinTypes = $joinTypes, blendOn = $blendOn)
+    panelChart(
+        projectId = "$projectId", 
+        chartType = "$chartType", 
+        xAxis = "$xAxis", 
+        yAxis = "$yAxis", 
+        aggregationMetric = "$aggregationMetric", 
+        dataSourceName = "$dataSourceName", 
+        tablesUsed = $tablesUsed, 
+        joinTypes = $joinTypes, 
+        blendOn = $blendOn,
+        index = $index,
+        columns = $columns,
+        values = $values
+    )
     ```
 
 panelChartWithoutBlend: |
     ```python
-    def panelChart(projectId: str, chartType: str, xAxis: str, yAxis: str, aggregationMetric: str | None, dataSourceName: str, tablesUsed: list[str] | str, joinTypes: list[str] | None = None, blendOn: list[str] | None = None):
+    def panelChart(
+        projectId: str, 
+        chartType: str, 
+        xAxis: str, 
+        yAxis: str, 
+        dataSourceName: str, 
+        aggregationMetric: str | None, 
+        tablesUsed: str, 
+        **kwargs
+        ):
         import pandas as pd
         import json
         if isinstance(tablesUsed, list):
@@ -115,22 +156,25 @@ panelChartWithoutBlend: |
                 result = pd.merge(left = result, right = allTables[i+1], on = blendOn[i], how = joinTypes[i], suffixes = ['_left', '_right'])
         else:
             result = fetch_data(projectId, tablesUsed)
-        if aggregationMetric == "sum":
-            finalResult = result.groupby(xAxis)[yAxis].sum().reset_index()
-        elif aggregationMetric == "mean":
-            finalResult = result.groupby(xAxis)[yAxis].mean().reset_index()
-        elif aggregationMetric == "median":
-            finalResult = result.groupby(xAxis)[yAxis].median().reset_index()
-        elif aggregationMetric == "max":
-            finalResult = result.groupby(xAxis)[yAxis].max().reset_index()
-        elif aggregationMetric == "min":
-            finalResult = result.groupby(xAxis)[yAxis].min().reset_index()
-        elif aggregationMetric == "count":
-            finalResult = result.groupby(xAxis)[yAxis].count().reset_index()
-        elif aggregationMetric == "std":
-            finalResult = result.groupby(xAxis)[yAxis].std().reset_index()
-        elif aggregationMetric == "var":
-            finalResult = result.groupby(xAxis)[yAxis].var().reset_index()
+        if chartType != "pivot":
+            if aggregationMetric == "sum":
+                finalResult = result.groupby(xAxis)[yAxis].sum().reset_index()
+            elif aggregationMetric == "mean":
+                finalResult = result.groupby(xAxis)[yAxis].mean().reset_index()
+            elif aggregationMetric == "median":
+                finalResult = result.groupby(xAxis)[yAxis].median().reset_index()
+            elif aggregationMetric == "max":
+                finalResult = result.groupby(xAxis)[yAxis].max().reset_index()
+            elif aggregationMetric == "min":
+                finalResult = result.groupby(xAxis)[yAxis].min().reset_index()
+            elif aggregationMetric == "count":
+                finalResult = result.groupby(xAxis)[yAxis].count().reset_index()
+            elif aggregationMetric == "std":
+                finalResult = result.groupby(xAxis)[yAxis].std().reset_index()
+            elif aggregationMetric == "var":
+                finalResult = result.groupby(xAxis)[yAxis].var().reset_index()
+            else:
+                finalResult = result
         else:
             finalResult = result
         if chartType in ["bar", "line", "radar", "polarArea"]:
@@ -198,12 +242,28 @@ panelChartWithoutBlend: |
                     "data": 0
                 }
         elif chartType == "table":
-            tableData = fetch_data(projectId=projectId, tableName=dataSourceName)
             response = {
                 "chartType": "table",
                 "title": f"{dataSourceName} Data",
-                "data": tableData.to_dict(orient="records")
+                "data": finalResult.to_dict(orient="records")
+            }
+        elif chartType == "pivot":
+            response = {
+                "chartType": "pivot",
+                "title": f"Pivot for {dataSourceName}",
+                "data": pd.pivot_table(finalResult, index=kwargs.get("index"), columns=kwargs.get("columns"), aggfunc=aggregationMetric, values=kwargs.get("values")).to_dict()
             }
         print(json.dumps(response, indent=4, default=serializer))
-    panelChart(projectId = "$projectId", chartType = "$chartType", xAxis = "$xAxis", yAxis = "$yAxis", aggregationMetric = "$aggregationMetric", dataSourceName = "$dataSourceName", tablesUsed = "$tablesUsed")    
+    panelChart(
+        projectId = "$projectId", 
+        chartType = "$chartType", 
+        xAxis = "$xAxis", 
+        yAxis = "$yAxis", 
+        aggregationMetric = "$aggregationMetric", 
+        dataSourceName = "$dataSourceName", 
+        tablesUsed = "$tablesUsed",
+        index = $index,
+        columns = $columns,
+        values = $values
+    )
     ```

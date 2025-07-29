@@ -64,6 +64,9 @@ class PanelChartDetails(BaseModel):
     yAxis: str | None = None
     dataSource: str
     aggregationMetric: str | None = None
+    index: list[str] | None = None
+    columns: list[str] | None = None
+    values: list[str] | None = None
 
 class CreateDataBlend(BaseModel):
     projectId: str
