@@ -14,11 +14,13 @@ from analyticsHub.workflows.reportingToolWorkflow import reportingToolWorkflow
 from api.models import GenerateChartInput, PanelChartDetails
 from utils.exceptionHandler import CustomException
 from utils.codeExecutor import replManager
+from utils.initMethods import fetch_data
 from analyticsHub.utils import readYaml
 from urllib.request import urlopen
 from utils.logger import logger
 from api.commons import client
 from string import Template
+import pandas as pd
 import orjson
 import json
 import time
@@ -37,6 +39,114 @@ class ReportingService:
         self.reportingToolWorkflow = reportingToolWorkflow
         self.client = client
 
+    @staticmethod
+    def _generatePanelChart(projectId: str, chartType: str, xAxis: str, yAxis: str, aggregationMetric: str, tablesUsed: list[str] | str, joinTypes: list[str] | None = None, blendOn: list[str] | None = None):
+        """
+        Prepares and aggregates data for charting based on the specified parameters.
+
+        Args:
+            projectId (str): The project ID.
+            chartType (str): The type of chart to generate.
+            xAxis (str): The column to use for the X axis.
+            yAxis (str): The column to use for the Y axis.
+            aggregationMetric (str): The aggregation metric (sum, mean, etc.).
+            tablesUsed (list[str] | str): Tables to use for the chart.
+            joinTypes (list[str], optional): Join types for merging tables.
+            blendOn (list[str], optional): Columns to join on.
+
+        Returns:
+            dict: Chart-ready data structure.
+        """
+        if isinstance(tablesUsed, list):
+            allTables = [fetch_data(projectId, x) for x in tablesUsed]
+            result = allTables[0]
+            for i in range(len(joinTypes)):
+                result = pd.merge(left = result, right = allTables[i+1], on = blendOn[i], how = joinTypes[i], suffixes = ['_left', '_right'])
+        else:
+            result = fetch_data(projectId, tablesUsed)
+        if aggregationMetric == "sum":
+            finalResult = result.groupby(xAxis)[yAxis].sum().reset_index()
+        elif aggregationMetric == "mean":
+            finalResult = result.groupby(xAxis)[yAxis].mean().reset_index()
+        elif aggregationMetric == "median":
+            finalResult = result.groupby(xAxis)[yAxis].median().reset_index()
+        elif aggregationMetric == "max":
+            finalResult = result.groupby(xAxis)[yAxis].max().reset_index()
+        elif aggregationMetric == "min":
+            finalResult = result.groupby(xAxis)[yAxis].min().reset_index()
+        elif aggregationMetric == "count":
+            finalResult = result.groupby(xAxis)[yAxis].count().reset_index()
+        elif aggregationMetric == "std":
+            finalResult = result.groupby(xAxis)[yAxis].std().reset_index()
+        elif aggregationMetric == "var":
+            finalResult = result.groupby(xAxis)[yAxis].var().reset_index()
+        else:
+            finalResult = result
+        if chartType in ["bar", "line", "radar", "polarArea"]:
+            response = {
+                "chartType": chartType,
+                "title": f"{chartType.capitalize()} Chart of {xAxis} vs {yAxis}",
+                "xLabels": xAxis,
+                "yLabels": yAxis,
+                "data": {
+                    "labels": finalResult[xAxis].tolist(),
+                    "datasets": [
+                        {
+                            "label": f"{aggregationMetric} of {yAxis}",
+                            "data": finalResult[yAxis].tolist()
+                        }
+                    ]
+                }
+            }
+        elif chartType in ["pie", "doughnut"]:
+            response = {
+                "chartType": chartType,
+                "title": f"{chartType.capitalize()} Chart of {xAxis} vs {yAxis}",
+                "data": {
+                    "labels": finalResult[xAxis].tolist(),
+                    "datasets": [
+                        {
+                            "label": f"{aggregationMetric} of {yAxis}",
+                            "data": finalResult[yAxis].tolist()
+                        }
+                    ]
+                }
+            }
+        elif chartType == "scatter":
+            response = {
+                "chartType": chartType,
+                "title": f"{chartType.capitalize()} Chart of {xAxis} vs {yAxis}",
+                "xLabels": xAxis,
+                "yLabels": yAxis,
+                "data": {
+                    "datasets": [
+                        {
+                            "label": f"{aggregationMetric} of {yAxis}",
+                            "data": [
+                                {"x": row[xAxis], "y": row[yAxis]} for _, row in finalResult.iterrows()
+                            ]
+                        }
+                    ]
+                }
+            }
+        elif chartType == "card":
+            if len(finalResult) > 0:
+                single_value = finalResult[yAxis].iloc[0]
+                response = {
+                    "chartType": "card",
+                    "title": f"{chartType.capitalize()} Chart of {xAxis} vs {yAxis}",
+                    "label": f"{aggregationMetric} of {yAxis}",
+                    "data": single_value
+                }
+            else:
+                response = {
+                    "chartType": "card",
+                    "title": f"{chartType.capitalize()} Chart of {xAxis} vs {yAxis}",
+                    "label": f"{aggregationMetric} of {yAxis}",
+                    "data": 0
+                }
+        return response
+    
     def generateChart(self, chartDetails: GenerateChartInput) -> dict:
         """
         Generates a chart based on the provided chart details using the reporting workflow.
@@ -75,7 +185,7 @@ class ReportingService:
         try:
             allFiles = [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = panelChartDetails.projectId)]
             if "".join([panelChartDetails.dataSource, ".parquet"]) in allFiles:
-                response = replManager.run(f"getDataForChart(projectId='{panelChartDetails.projectId}', chartType='{panelChartDetails.chartType}', xAxis='{panelChartDetails.xAxis}', yAxis='{panelChartDetails.yAxis}', aggregationMetric='{panelChartDetails.aggregationMetric}', tablesUsed='{panelChartDetails.dataSource}')")    
+                response = self._generatePanelChart(projectId=panelChartDetails.projectId, chartType=panelChartDetails.chartType, xAxis=panelChartDetails.xAxis, yAxis=panelChartDetails.yAxis, aggregationMetric=panelChartDetails.aggregationMetric, tablesUsed=panelChartDetails.dataSource)
                 generatedCodeTemplate = Template(self.codeTemplates.get("panelChartWithoutBlend"))
                 generatedCode = generatedCodeTemplate.substitute(
                     projectId = panelChartDetails.projectId,
@@ -91,7 +201,7 @@ class ReportingService:
                 tablesUsed = blendConfig[panelChartDetails.dataSource].get("tables")
                 joinTypes = blendConfig[panelChartDetails.dataSource].get("joinTypes")
                 blendOn = blendConfig[panelChartDetails.dataSource].get("blendOn")
-                response = replManager.run(f"getDataForChart(projectId='{panelChartDetails.projectId}', chartType='{panelChartDetails.chartType}', xAxis='{panelChartDetails.xAxis}', yAxis='{panelChartDetails.yAxis}', aggregationMetric='{panelChartDetails.aggregationMetric}', tablesUsed={tablesUsed}, joinTypes={joinTypes}, blendOn={blendOn})")
+                response = self._generatePanelChart(projectId=panelChartDetails.projectId, chartType=panelChartDetails.chartType, xAxis=panelChartDetails.xAxis, yAxis=panelChartDetails.yAxis, aggregationMetric=panelChartDetails.aggregationMetric, tablesUsed=tablesUsed, joinTypes=joinTypes, blendOn=blendOn)
                 generatedCodeTemplate = Template(self.codeTemplates.get("panelChartWithBlend"))
                 generatedCode = generatedCodeTemplate.substitute(
                     projectId = panelChartDetails.projectId,
@@ -105,7 +215,6 @@ class ReportingService:
                 )
             else:
                 pass
-            response = orjson.loads(response.encode("utf-8"))
             response.update({"generatedCode": generatedCode})
             return response
         except Exception as e:

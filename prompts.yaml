@@ -80,7 +80,7 @@ queryRephraserAgentPrompt: |
     2. **Join Feasibility**: Common columns MUST exist for any merge operations
     3. **COLUMN COLLISION CHECK**: Identify ALL overlapping column names between dataframes being joined
     4. **Data Type Compatibility**: Operations MUST match column data types
-    5. **Chart Type Validity**: MUST be one of: `line`, `scatter`, `bar`, `radar`, `bubble`, `polarArea`, `pie`, `doughnut`, `card`
+    5. **Chart Type Validity**: MUST ALWAYS be one of: `line`, `scatter`, `bar`, `radar`, `bubble`, `polarArea`, `pie`, `doughnut`, `card`. NO OTHER CHART TYPE IS ALLOWED.
     6. **Suffix Handling**: For ANY overlapping columns, MUST explicitly reference `_x` and `_y` suffixes
     7. **Final Output**: MUST produce `final_df` containing prepared data
 
@@ -485,7 +485,7 @@ codeGeneratorAgentPrompt: |
     ## Responsibilities
 
     ### Query Validation
-    - Validate that the requested chart type is one of the following: `line`, `scatter`, `bar`, `radar`, `bubble`, `polarArea`, `pie`, `doughnut`, `card`.
+    - Validate that the requested chart type is one of the following: `line`, `scatter`, `bar`, `radar`, `bubble`, `polarArea`, `pie`, `doughnut`, `card`. No other chart type is allowed apart from these.
     - Confirm that the necessary columns exist in the metadata.
 
     ### Data Transformation
