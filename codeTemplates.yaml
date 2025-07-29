@@ -1,6 +1,6 @@
 panelChartWithBlend: |
     ```python
-    def panelChart(projectId: str, chartType: str, xAxis: str, yAxis: str, aggregationMetric: str, tablesUsed: list[str] | str, joinTypes: list[str] | None = None, blendOn: list[str] | None = None):
+    def panelChart(projectId: str, chartType: str, xAxis: str, yAxis: str, aggregationMetric: str | None, dataSourceName: str, tablesUsed: list[str] | str, joinTypes: list[str] | None = None, blendOn: list[str] | None = None):
         import pandas as pd
         import json
         if isinstance(tablesUsed, list):
@@ -92,13 +92,20 @@ panelChartWithBlend: |
                     "label": f"{aggregationMetric} of {yAxis}",
                     "data": 0
                 }
+        elif chartType == "table":
+            tableData = fetch_data(projectId=projectId, tableName=dataSourceName)
+            response = {
+                "chartType": "table",
+                "title": f"f{dataSourceName} Data",
+                "data": tableData.to_dict(orient="records")
+            }
         print(json.dumps(response, indent=4, default=serializer))
-    panelChart(projectId = "$projectId", chartType = "$chartType", xAxis = "$xAxis", yAxis = "$yAxis", aggregationMetric = "$aggregationMetric", tablesUsed = $tablesUsed, joinTypes = $joinTypes, blendOn = $blendOn)
+    panelChart(projectId = "$projectId", chartType = "$chartType", xAxis = "$xAxis", yAxis = "$yAxis", aggregationMetric = "$aggregationMetric", dataSourceName = "$dataSourceName", tablesUsed = $tablesUsed, joinTypes = $joinTypes, blendOn = $blendOn)
     ```
 
 panelChartWithoutBlend: |
     ```python
-    def panelChart(projectId: str, chartType: str, xAxis: str, yAxis: str, aggregationMetric: str, tablesUsed: list[str] | str, joinTypes: list[str] | None = None, blendOn: list[str] | None = None):
+    def panelChart(projectId: str, chartType: str, xAxis: str, yAxis: str, aggregationMetric: str | None, dataSourceName: str, tablesUsed: list[str] | str, joinTypes: list[str] | None = None, blendOn: list[str] | None = None):
         import pandas as pd
         import json
         if isinstance(tablesUsed, list):
@@ -190,6 +197,13 @@ panelChartWithoutBlend: |
                     "label": f"{aggregationMetric} of {yAxis}",
                     "data": 0
                 }
+        elif chartType == "table":
+            tableData = fetch_data(projectId=projectId, tableName=dataSourceName)
+            response = {
+                "chartType": "table",
+                "title": f"f{dataSourceName} Data",
+                "data": tableData.to_dict(orient="records")
+            }
         print(json.dumps(response, indent=4, default=serializer))
-    panelChart(projectId = "$projectId", chartType = "$chartType", xAxis = "$xAxis", yAxis = "$yAxis", aggregationMetric = "$aggregationMetric", tablesUsed = "$tablesUsed")    
+    panelChart(projectId = "$projectId", chartType = "$chartType", xAxis = "$xAxis", yAxis = "$yAxis", aggregationMetric = "$aggregationMetric", dataSourceName = "$dataSourceName", tablesUsed = "$tablesUsed")    
     ```

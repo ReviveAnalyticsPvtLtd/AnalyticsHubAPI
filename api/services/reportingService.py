@@ -40,7 +40,7 @@ class ReportingService:
         self.client = client
 
     @staticmethod
-    def _generatePanelChart(projectId: str, chartType: str, xAxis: str, yAxis: str, aggregationMetric: str, tablesUsed: list[str] | str, joinTypes: list[str] | None = None, blendOn: list[str] | None = None):
+    def _generatePanelChart(projectId: str, chartType: str, xAxis: str, yAxis: str, aggregationMetric: str | None, dataSourceName: str, tablesUsed: list[str] | str, joinTypes: list[str] | None = None, blendOn: list[str] | None = None):
         """
         Prepares and aggregates data for charting based on the specified parameters.
 
@@ -145,6 +145,13 @@ class ReportingService:
                     "label": f"{aggregationMetric} of {yAxis}",
                     "data": 0
                 }
+        elif chartType == "table":
+            tableData = fetch_data(projectId=projectId, tableName=dataSourceName)
+            response = {
+                "chartType": "table",
+                "title": f"f{dataSourceName} Data",
+                "data": tableData.to_dict(orient="records")
+            }
         return response
     
     def generateChart(self, chartDetails: GenerateChartInput) -> dict:
@@ -185,7 +192,7 @@ class ReportingService:
         try:
             allFiles = [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = panelChartDetails.projectId)]
             if "".join([panelChartDetails.dataSource, ".parquet"]) in allFiles:
-                response = self._generatePanelChart(projectId=panelChartDetails.projectId, chartType=panelChartDetails.chartType, xAxis=panelChartDetails.xAxis, yAxis=panelChartDetails.yAxis, aggregationMetric=panelChartDetails.aggregationMetric, tablesUsed=panelChartDetails.dataSource)
+                response = self._generatePanelChart(projectId=panelChartDetails.projectId, chartType=panelChartDetails.chartType, xAxis=panelChartDetails.xAxis, yAxis=panelChartDetails.yAxis, aggregationMetric=panelChartDetails.aggregationMetric, dataSourceName=panelChartDetails.dataSource, tablesUsed=panelChartDetails.dataSource)
                 generatedCodeTemplate = Template(self.codeTemplates.get("panelChartWithoutBlend"))
                 generatedCode = generatedCodeTemplate.substitute(
                     projectId = panelChartDetails.projectId,
@@ -193,6 +200,7 @@ class ReportingService:
                     xAxis = panelChartDetails.xAxis,
                     yAxis = panelChartDetails.yAxis,
                     aggregationMetric = panelChartDetails.aggregationMetric,
+                    dataSourceName = panelChartDetails.dataSource,
                     tablesUsed = panelChartDetails.dataSource
                 )
             elif "blendConfig.json" in allFiles:
@@ -201,7 +209,7 @@ class ReportingService:
                 tablesUsed = blendConfig[panelChartDetails.dataSource].get("tables")
                 joinTypes = blendConfig[panelChartDetails.dataSource].get("joinTypes")
                 blendOn = blendConfig[panelChartDetails.dataSource].get("blendOn")
-                response = self._generatePanelChart(projectId=panelChartDetails.projectId, chartType=panelChartDetails.chartType, xAxis=panelChartDetails.xAxis, yAxis=panelChartDetails.yAxis, aggregationMetric=panelChartDetails.aggregationMetric, tablesUsed=tablesUsed, joinTypes=joinTypes, blendOn=blendOn)
+                response = self._generatePanelChart(projectId=panelChartDetails.projectId, chartType=panelChartDetails.chartType, xAxis=panelChartDetails.xAxis, yAxis=panelChartDetails.yAxis, aggregationMetric=panelChartDetails.aggregationMetric, dataSourceName=panelChartDetails.dataSource,tablesUsed=tablesUsed, joinTypes=joinTypes, blendOn=blendOn)
                 generatedCodeTemplate = Template(self.codeTemplates.get("panelChartWithBlend"))
                 generatedCode = generatedCodeTemplate.substitute(
                     projectId = panelChartDetails.projectId,
@@ -209,6 +217,7 @@ class ReportingService:
                     xAxis = panelChartDetails.xAxis,
                     yAxis = panelChartDetails.yAxis,
                     aggregationMetric = panelChartDetails.aggregationMetric,
+                    dataSourceName = panelChartDetails.dataSource,
                     tablesUsed = tablesUsed,
                     joinTypes = joinTypes,
                     blendOn = blendOn

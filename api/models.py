@@ -60,10 +60,10 @@ class EditMetadata(BaseModel):
 class PanelChartDetails(BaseModel):
     projectId: str
     chartType: str
-    xAxis: str
-    yAxis: str
+    xAxis: str | None = None
+    yAxis: str | None = None
     dataSource: str
-    aggregationMetric: str
+    aggregationMetric: str | None = None
 
 class CreateDataBlend(BaseModel):
     projectId: str

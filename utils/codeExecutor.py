@@ -9,8 +9,8 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["replManager"] 
 
 
-from utils.initMethods import serializer, fetch_data, getDataForChart
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from utils.initMethods import serializer, fetch_data
 from utils.logger import logger
 import contextlib
 import traceback
@@ -60,7 +60,6 @@ class REPLManager:
         globalContext = {
             "fetch_data": fetch_data,
             "serializer": serializer,
-            "getDataForChart": getDataForChart,
             "__name__": "__main__",
             "__builtins__": __builtins__,
         }
