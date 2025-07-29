@@ -6,7 +6,7 @@ This module provides utility functions for data serialization, fetching data fro
 
 __version__ = "1.0.0"
 __author__ = "Rauhan Ahmed Siddiqui"
-__all__ = ["getDataForChart", "fetch_data", "serializer"]
+__all__ = ["fetch_data", "serializer"]
 
 
 import pandas as pd
