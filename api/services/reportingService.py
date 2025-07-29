@@ -160,11 +160,11 @@ class ReportingService:
                 "data": finalResult.to_dict(orient="records")
             }
         elif chartType == "pivot":
-            pivotData = pd.pivot_table(finalResult, index=kwargs.get("index"), columns=kwargs.get("columns"), aggfunc=aggregationMetric, values=kwargs.get("values")).to_dict()
+            pivotData = pd.pivot_table(finalResult, index=kwargs.get("index"), columns=kwargs.get("columns"), aggfunc=aggregationMetric, values=kwargs.get("values")).to_json()
             response = {
                 "chartType": "pivot",
                 "title": f"Pivot for {dataSourceName}",
-                "data": {str(key): value for key, value in pivotData.items()}
+                "data": orjson.loads(pivotData)
             }
         return response
     

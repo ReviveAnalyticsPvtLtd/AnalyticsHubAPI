@@ -13,6 +13,7 @@ panelChartWithBlend: |
         **kwargs
         ):
         import pandas as pd
+        import orjson
         import json
         if isinstance(tablesUsed, list):
             allTables = [fetch_data(projectId, x) for x in tablesUsed]
@@ -113,12 +114,13 @@ panelChartWithBlend: |
                 "data": finalResult.to_dict(orient="records")
             }
         elif chartType == "pivot":
+            pivotData = pd.pivot_table(finalResult, index=kwargs.get("index"), columns=kwargs.get("columns"), aggfunc=aggregationMetric, values=kwargs.get("values")).to_json()
             response = {
                 "chartType": "pivot",
                 "title": f"Pivot for {dataSourceName}",
-                "data": pd.pivot_table(finalResult, index=kwargs.get("index"), columns=kwargs.get("columns"), aggfunc=aggregationMetric, values=kwargs.get("values")).to_dict()
+                "data": orjson.loads(pivotData)
             }
-        print(json.dumps(response, indent=4, default=serializer))
+        print(json.dumps(response, indent = 4, default=serializer))
     panelChart(
         projectId = "$projectId", 
         chartType = "$chartType", 
@@ -148,6 +150,7 @@ panelChartWithoutBlend: |
         **kwargs
         ):
         import pandas as pd
+        import orjson
         import json
         if isinstance(tablesUsed, list):
             allTables = [fetch_data(projectId, x) for x in tablesUsed]
@@ -248,12 +251,13 @@ panelChartWithoutBlend: |
                 "data": finalResult.to_dict(orient="records")
             }
         elif chartType == "pivot":
+            pivotData = pd.pivot_table(finalResult, index=kwargs.get("index"), columns=kwargs.get("columns"), aggfunc=aggregationMetric, values=kwargs.get("values")).to_json()
             response = {
                 "chartType": "pivot",
                 "title": f"Pivot for {dataSourceName}",
-                "data": pd.pivot_table(finalResult, index=kwargs.get("index"), columns=kwargs.get("columns"), aggfunc=aggregationMetric, values=kwargs.get("values")).to_dict()
+                "data": orjson.loads(pivotData)
             }
-        print(json.dumps(response, indent=4, default=serializer))
+        print(json.dumps(response, indent = 4, default=serializer))
     panelChart(
         projectId = "$projectId", 
         chartType = "$chartType", 
