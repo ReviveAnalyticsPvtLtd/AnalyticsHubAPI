@@ -57,7 +57,7 @@ class ReportingService:
             tablesUsed (list[str] | str): Tables to use for the chart. Can be a single table or a list for blending.
             joinTypes (list[str], optional): Join types for merging tables (if blending).
             blendOn (list[str], optional): Columns to join on (if blending).
-            **kwargs: Additional keyword arguments for pivot charts (index, columns, values).
+            **kwargs: Additional keyword arguments for pivot charts (index, columns, values, selectedColumns).
 
         Returns:
             dict: Chart-ready data structure suitable for frontend rendering.
@@ -154,10 +154,14 @@ class ReportingService:
                     "data": 0
                 }
         elif chartType == "table":
+            if kwargs.get("selectedColumns") is None:
+                selectedColumns = finalResult.columns.tolist()
+            else:
+                selectedColumns = kwargs.get("selectedColumns")
             response = {
                 "chartType": "table",
                 "title": f"{dataSourceName} Data",
-                "data": finalResult.to_dict(orient="records")
+                "data": finalResult[selectedColumns].to_dict(orient="records")
             }
         elif chartType == "pivot":
             pivotData = pd.pivot_table(finalResult, index=kwargs.get("index"), columns=kwargs.get("columns"), aggfunc=aggregationMetric, values=kwargs.get("values")).to_json()
@@ -222,7 +226,8 @@ class ReportingService:
                     tablesUsed=panelChartDetails.dataSource,
                     index=panelChartDetails.index,
                     columns=panelChartDetails.columns,
-                    values=panelChartDetails.values
+                    values=panelChartDetails.values,
+                    selectedColumns=panelChartDetails.selectedColumns
                 )
                 generatedCodeTemplate = Template(self.codeTemplates.get("panelChartWithoutBlend"))
                 generatedCode = generatedCodeTemplate.substitute(
@@ -235,7 +240,8 @@ class ReportingService:
                     tablesUsed = panelChartDetails.dataSource,
                     index=panelChartDetails.index,
                     columns=panelChartDetails.columns,
-                    values=panelChartDetails.values
+                    values=panelChartDetails.values,
+                    selectedColumns=panelChartDetails.selectedColumns
                 )
             elif "blendConfig.json" in allFiles:
                 blendConfigUrl = os.environ["FILE_URL"].format(projectId = panelChartDetails.projectId, fileName = "blendConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
@@ -255,7 +261,8 @@ class ReportingService:
                     blendOn=blendOn,
                     index=panelChartDetails.index,
                     columns=panelChartDetails.columns,
-                    values=panelChartDetails.values
+                    values=panelChartDetails.values,
+                    selectedColumns=panelChartDetails.selectedColumns
                 )
                 generatedCodeTemplate = Template(self.codeTemplates.get("panelChartWithBlend"))
                 generatedCode = generatedCodeTemplate.substitute(
@@ -270,7 +277,8 @@ class ReportingService:
                     blendOn = blendOn,
                     index=panelChartDetails.index,
                     columns=panelChartDetails.columns,
-                    values=panelChartDetails.values
+                    values=panelChartDetails.values,
+                    selectedColumns=panelChartDetails.selectedColumns
                 )
             else:
                 pass

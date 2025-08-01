@@ -108,10 +108,14 @@ panelChartWithBlend: |
                     "data": 0
                 }
         elif chartType == "table":
+            if kwargs.get("selectedColumns") is None:
+                selectedColumns = finalResult.columns.tolist()
+            else:
+                selectedColumns = kwargs.get("selectedColumns")
             response = {
                 "chartType": "table",
                 "title": f"{dataSourceName} Data",
-                "data": finalResult.to_dict(orient="records")
+                "data": finalResult[selectedColumns].to_dict(orient="records")
             }
         elif chartType == "pivot":
             pivotData = pd.pivot_table(finalResult, index=kwargs.get("index"), columns=kwargs.get("columns"), aggfunc=aggregationMetric, values=kwargs.get("values")).to_json()
@@ -133,7 +137,8 @@ panelChartWithBlend: |
         blendOn = $blendOn,
         index = $index,
         columns = $columns,
-        values = $values
+        values = $values,
+        selectedColumns = $selectedColumns
     )
     ```
 
@@ -245,10 +250,14 @@ panelChartWithoutBlend: |
                     "data": 0
                 }
         elif chartType == "table":
+            if kwargs.get("selectedColumns") is None:
+                selectedColumns = finalResult.columns.tolist()
+            else:
+                selectedColumns = kwargs.get("selectedColumns")
             response = {
                 "chartType": "table",
                 "title": f"{dataSourceName} Data",
-                "data": finalResult.to_dict(orient="records")
+                "data": finalResult[selectedColumns].to_dict(orient="records")
             }
         elif chartType == "pivot":
             pivotData = pd.pivot_table(finalResult, index=kwargs.get("index"), columns=kwargs.get("columns"), aggfunc=aggregationMetric, values=kwargs.get("values")).to_json()
@@ -268,6 +277,7 @@ panelChartWithoutBlend: |
         tablesUsed = "$tablesUsed",
         index = $index,
         columns = $columns,
-        values = $values
+        values = $values,
+        selectedColumns = $selectedColumns
     )
     ```

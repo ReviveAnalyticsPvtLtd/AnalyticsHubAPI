@@ -67,6 +67,7 @@ class PanelChartDetails(BaseModel):
     index: list[str] | None = None
     columns: list[str] | None = None
     values: list[str] | None = None
+    selectedColumns: list[str] | None = None
 
 class CreateDataBlend(BaseModel):
     projectId: str
