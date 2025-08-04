@@ -69,10 +69,11 @@ class DashboardService:
         try:
             resultDict = json.loads(result)
             widget.update(resultDict)
+
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
-            raise CustomException
+            raise exception   
 
         #     widgetChartType = widget.get("chartType")
         #     if widgetChartType == "card":
