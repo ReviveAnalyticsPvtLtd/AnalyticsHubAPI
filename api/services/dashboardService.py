@@ -69,21 +69,16 @@ class DashboardService:
         try:
             resultDict = json.loads(result)
             widget.update(resultDict)
-
-        except Exception as e:
-            exception = CustomException(e)
-            logger.error(exception)
-            raise exception   
-
-        #     widgetChartType = widget.get("chartType")
-        #     if widgetChartType == "card":
-        #         widget["data"] = None
-        #     else:
-        #         dataKey = widget.get("data")
-        #         datasets = dataKey.get("datasets")
-        #         for dataset in datasets:
-        #             dataset["data"] = list()
-        # return widget
+        except:
+            widgetChartType = widget.get("chartType")
+            if widgetChartType == "card":
+                widget["data"] = None
+            else:
+                dataKey = widget.get("data")
+                datasets = dataKey.get("datasets")
+                for dataset in datasets:
+                    dataset["data"] = list()
+        return widget
     
     @staticmethod
     def _getDataTypes(projectId: str, tableName: str) -> list[dict]:   
@@ -247,8 +242,8 @@ class DashboardService:
                 for widget in pageInfo["widgets"]: widget.pop("generatedCode")
             else:
                 widgets = pageInfo.get("widgets")
-                with ThreadPoolExecutor(max_workers = 10) as executor:
-                    numWidgets = len(widgets)
+                numWidgets = len(widgets)
+                with ThreadPoolExecutor(max_workers = 2) as executor:
                     results = executor.map(self._applyFilterToAWidget, widgets, [details.filters] * numWidgets, [replManager] * numWidgets)
                 pageInfo["widgets"] = [x for x in results]
             return pageInfo
