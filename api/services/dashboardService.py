@@ -69,16 +69,20 @@ class DashboardService:
         try:
             resultDict = json.loads(result)
             widget.update(resultDict)
-        except:
-            widgetChartType = widget.get("chartType")
-            if widgetChartType == "card":
-                widget["data"] = None
-            else:
-                dataKey = widget.get("data")
-                datasets = dataKey.get("datasets")
-                for dataset in datasets:
-                    dataset["data"] = list()
-        return widget
+        except Exception as e:
+            exception = CustomException(e)
+            logger.error(exception)
+            raise CustomException
+
+        #     widgetChartType = widget.get("chartType")
+        #     if widgetChartType == "card":
+        #         widget["data"] = None
+        #     else:
+        #         dataKey = widget.get("data")
+        #         datasets = dataKey.get("datasets")
+        #         for dataset in datasets:
+        #             dataset["data"] = list()
+        # return widget
     
     @staticmethod
     def _getDataTypes(projectId: str, tableName: str) -> list[dict]:   
