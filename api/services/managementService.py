@@ -201,7 +201,7 @@ class ManagementService:
             CustomException: For any errors during metadata generation.
         """
         try:
-            dataFiles = [x.get("name") for x in self.supabaseClient.storage.from_("AnalyticsHub").list(path = projectId) if x.get("name").endswith(".parquet")]
+            dataFiles = [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = projectId) if x.get("name").endswith(".parquet")]
             results = ""
             for fileName in dataFiles:
                 dataframeName = fileName.replace(".parquet", "")
