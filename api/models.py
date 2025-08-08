@@ -38,6 +38,7 @@ class UpdateProjectState(BaseModel):
 class CreateProject(BaseModel):
     projectName: str
     projectDescription: str | None = None
+    domain: str | None = None
 
 class GenerateChartInput(BaseModel):
     inputQuery: str
