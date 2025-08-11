@@ -56,12 +56,16 @@ class DataLoadSevice:
         try:
             project = self.client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", projectId).execute().data[0]                
             with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
-                pd.read_csv(io.BytesIO(await file.read()), parse_dates = True).to_parquet(temp.name, compression = "snappy")
+                bytesData = await file.read()
+                logger.debug(bytesData)
+                pd.read_csv(io.BytesIO(bytesData), parse_dates = True).to_parquet(temp.name, compression = "snappy")
+                logger.debug(temp.name)
                 _ = self.client.storage.from_("AnalyticsHub").upload(
                     file = temp.name,
                     path = f"{projectId}/{os.path.splitext(file.filename)[0] + '.parquet'}",
                     file_options = {"upsert": "true"}
                 )
+                logger.debug(f"{os.path.isfile(temp.name)}")
                 if project["dataTables"]:
                     if os.path.splitext(file.filename)[0] not in project["dataTables"]:
                         projectData = project["dataTables"] + f", {os.path.splitext(file.filename)[0]}"
