@@ -56,7 +56,7 @@ class DataLoadSevice:
         try:
             project = self.client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", projectId).execute().data[0]                
             with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
-                pd.read_csv(io.BytesIO(file.read()), parse_dates = True).to_parquet(temp.name, compression = "snappy")
+                pd.read_csv(io.BytesIO(await file.read()), parse_dates = True).to_parquet(temp.name, compression = "snappy")
                 _ = self.client.storage.from_("AnalyticsHub").upload(
                     file = temp.name,
                     path = f"{projectId}/{os.path.splitext(file.filename)[0] + '.parquet'}",
