@@ -39,7 +39,7 @@ async def loadCsvData(projectId: Annotated[str, Form()], file: Annotated[UploadF
         ORJSONResponse: Success or error message.
     """
     try:
-        dataLoadService.loadCsvData(projectId = projectId, file = file)
+        await dataLoadService.loadCsvData(projectId = projectId, file = file)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Data loaded successfully"})
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))
@@ -59,7 +59,7 @@ async def loadExcelData(projectId: Annotated[str, Form()], file: Annotated[Uploa
         ORJSONResponse: Success or error message.
     """
     try:
-        dataLoadService.loadExcelData(projectId = projectId, file = file, sheetName = sheetName)
+        await dataLoadService.loadExcelData(projectId = projectId, file = file, sheetName = sheetName)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Data loaded successfully"})
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))
