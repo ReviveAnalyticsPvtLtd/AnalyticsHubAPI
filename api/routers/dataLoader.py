@@ -27,20 +27,20 @@ Router for data loading-related endpoints.
 """
 
 @router.post("/loadCsvData")
-async def loadCsvData(projectId: Annotated[str, Form()], file: Annotated[UploadFile, File()], token = Depends(verifyToken)):
+async def loadCsvData(projectId: Annotated[str, Form()], files: list[UploadFile], token = Depends(verifyToken)):
     """
     Load data from a CSV file into the specified project.
 
     Args:
         projectId (str): The ID of the project to load data into.
-        file (UploadFile): The CSV file to upload.
+        files (list[UploadFile]): The CSV files to upload.
         token: Authorization token dependency.
 
     Returns:
         ORJSONResponse: Success or error message.
     """
     try:
-        await dataLoadService.loadCsvData(projectId = projectId, file = file)
+        await dataLoadService.loadCsvData(projectId = projectId, files = files)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Data loaded successfully"})
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))

@@ -30,18 +30,18 @@ import time
 import io
 import os
 
-class DataLoadSevice:
+class DataLoadService:
     """
     Service class for loading data from different sources and managing project tables.
     """
     def __init__(self) -> None:
         """
-        Initializes the DataLoadSevice and sets up the client for database operations.
+        Initializes the DataLoadService and sets up the client for database operations.
         """
         logger.info("Initializing Data Load Service.")
         self.client = client
 
-    async def loadCsvData(self, projectId: Annotated[str, Form()], file: Annotated[UploadFile, File()]) -> None:
+    async def loadCsvData(self, projectId: Annotated[str, Form()], files: list[UploadFile]) -> None:
         """
         Loads CSV data into the project, converts it to Parquet format, and uploads it to storage.
 
@@ -54,24 +54,25 @@ class DataLoadSevice:
             CustomException: If loading or uploading fails.
         """
         try:
-            project = self.client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", projectId).execute().data[0]                
-            with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
-                pd.read_csv(io.BytesIO(await file.read()), parse_dates = True).to_parquet(temp.name, compression = "snappy")
-                _ = self.client.storage.from_("AnalyticsHub").upload(
-                    file = temp.name,
-                    path = f"{projectId}/{os.path.splitext(file.filename)[0] + '.parquet'}",
-                    file_options = {"upsert": "true"}
-                )
-                if project["dataTables"]:
-                    if os.path.splitext(file.filename)[0] not in project["dataTables"]:
-                        projectData = project["dataTables"] + f", {os.path.splitext(file.filename)[0]}"
-                        _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
+            project = self.client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", projectId).execute().data[0]  
+            for file in files:              
+                with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
+                    pd.read_csv(io.BytesIO(await file.read()), parse_dates = True).to_parquet(temp.name, compression = "snappy")
+                    _ = self.client.storage.from_("AnalyticsHub").upload(
+                        file = temp.name,
+                        path = f"{projectId}/{os.path.splitext(file.filename)[0] + '.parquet'}",
+                        file_options = {"upsert": "true"}
+                    )
+                    if project["dataTables"]:
+                        if os.path.splitext(file.filename)[0] not in project["dataTables"]:
+                            projectData = project["dataTables"] + f", {os.path.splitext(file.filename)[0]}"
+                            _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
+                        else:
+                            pass
                     else:
-                        pass
-                else:
-                    projectData = os.path.splitext(file.filename)[0]
-                    _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
-                temp.close()
+                        projectData = os.path.splitext(file.filename)[0]
+                        _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
+                    temp.close()
             return 
         except Exception as e:
             exception  = CustomException(e)
@@ -263,5 +264,5 @@ class DataLoadSevice:
             exception  = CustomException(e)
             logger.error(exception)
             raise exception
-        
-dataLoadService = DataLoadSevice()
+
+dataLoadService = DataLoadService()
