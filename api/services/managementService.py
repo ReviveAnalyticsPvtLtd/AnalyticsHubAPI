@@ -9,6 +9,7 @@ __all__ = ["managementService"]
 
 
 from analyticsHub.components.metadataGenerator import MetadataGenerator
+from analyticsHub.components.insightGenerator import InsightGenerator
 from analyticsHub.components.reportGenerator import ReportGenerator
 from utils.exceptionHandler import CustomException
 from concurrent.futures import ProcessPoolExecutor
@@ -42,6 +43,7 @@ class ManagementService:
         """
         logger.info("Initializing Authentication Service.")
         self.metadataGenerator = MetadataGenerator()
+        self.insightGenerator = InsightGenerator()
         self.reportGenerator = ReportGenerator()
         self.client = client
 
@@ -215,16 +217,37 @@ class ManagementService:
         except Exception as e:
             logger.error(CustomException(e))
             raise CustomException(e)
-
-    def generateMetadata(self, projectId: str) -> dict:
+        
+    def _generateInsightsFromMetadata(self, metadata: dict) -> dict:
         """
-        Generate or update metadata for a project, uploading it to storage.
+        Generate insights from the provided metadata.
+
+        Args:
+            metadata (dict): The metadata dictionary containing information about dataframes.
+
+        Returns:
+            dict: A dictionary containing generated insights.
+        """
+        try:
+            insightGeneratorChain = self.insightGenerator.getInsightGeneratorChain()
+            insights = insightGeneratorChain.invoke({"metadata": metadata})
+            insightsParts = insights.split("```")
+            insights = insightsParts[-2]
+            insights = orjson.loads("\n".join(insights.split("\n")[1:]).encode())
+            return insights
+        except Exception as e:
+            logger.error(CustomException(e))
+            raise CustomException(e)
+
+    def generateMetadataAndInsights(self, projectId: str) -> dict:
+        """
+        Generate or update metadata for a project, uploading it to storage, and generating insights.
 
         Args:
             projectId (str): The project identifier.
 
         Returns:
-            dict: The updated metadata dictionary.
+            dict: The updated metadata dictionary with important insights.
 
         Raises:
             CustomException: For any errors during metadata generation or upload.
@@ -252,11 +275,12 @@ class ManagementService:
                     pass
             else:
                 jsonData = self._generateMetadata(projectId = projectId)
+            insights = self._generateInsightsFromMetadata(metadata = jsonData)
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(jsonData, indent=4).encode("utf-8"))
                 buffer.seek(0)
                 self.client.storage.from_("AnalyticsHub").upload(path = f"{projectId}/metadata.json", file = buffer.getvalue(), file_options = {"upsert": "true"})     
-            return jsonData
+            return {"metadata": jsonData, "insights": insights}
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)

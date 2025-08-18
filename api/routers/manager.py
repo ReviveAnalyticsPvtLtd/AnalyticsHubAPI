@@ -117,18 +117,18 @@ async def updateTrash(updateTrashDetails: UpdateProjectState, token = Depends(ve
 @router.post("/generateMetadata/{projectId}")
 async def generateMetadata(projectId: str, token = Depends(verifyToken)):
     """
-    Generate metadata for a given project.
+    Generate metadata and important KPIs for a given project.
 
     Args:
         projectId (str): The ID of the project.
         token: Authorization token dependency.
 
     Returns:
-        ORJSONResponse: Generated metadata or error message.
+        ORJSONResponse: Generated metadata and insights or error message.
     """
     try:
-        jsonData = managementService.generateMetadata(projectId = projectId)
-        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "metadata": jsonData})
+        jsonData = managementService.generateMetadataAndInsights(projectId = projectId)
+        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "metadata": jsonData["metadata"], "insights": jsonData["insights"]})
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))
 
