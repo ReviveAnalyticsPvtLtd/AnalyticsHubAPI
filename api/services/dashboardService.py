@@ -242,10 +242,13 @@ class DashboardService:
                 for widget in pageInfo["widgets"]: widget.pop("generatedCode")
             else:
                 widgets = pageInfo.get("widgets")
-                numWidgets = len(widgets)
-                with ThreadPoolExecutor(max_workers = 2) as executor:
-                    results = executor.map(self._applyFilterToAWidget, widgets, [details.filters] * numWidgets, [replManager] * numWidgets)
-                pageInfo["widgets"] = [x for x in results]
+                results = list()
+                for widget in widgets:
+                    results.append(self._applyFilterToAWidget(widget = widget, filters = details.filters, codeExecutor = replManager))
+                # numWidgets = len(widgets)
+                # with ThreadPoolExecutor(max_workers = 2) as executor:
+                #     results = executor.map(self._applyFilterToAWidget, widgets, [details.filters] * numWidgets, [replManager] * numWidgets)
+                pageInfo["widgets"] = results
             return pageInfo
         except Exception as e:
             exception = CustomException(e)
