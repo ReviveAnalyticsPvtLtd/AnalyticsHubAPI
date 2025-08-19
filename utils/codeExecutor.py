@@ -6,7 +6,7 @@ This module provides the REPLManager class for executing arbitrary code strings 
 
 __version__ = "1.0.0"
 __author__ = "Rauhan Ahmed Siddiqui"
-__all__ = ["replManager", "REPLManager"]
+__all__ = ["replManager"]
 
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
