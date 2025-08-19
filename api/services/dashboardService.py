@@ -11,7 +11,7 @@ __all__ = ["dashboardService"]
 
 from utils.exceptionHandler import CustomException
 from concurrent.futures import ThreadPoolExecutor
-from utils.codeExecutor import replManager
+from utils.codeExecutor import REPLManager
 from utils.logger import logger
 from urllib.request import urlopen
 from api.commons import client
@@ -242,13 +242,13 @@ class DashboardService:
                 for widget in pageInfo["widgets"]: widget.pop("generatedCode")
             else:
                 widgets = pageInfo.get("widgets")
-                results = list()
-                for widget in widgets:
-                    results.append(self._applyFilterToAWidget(widget = widget, filters = details.filters, codeExecutor = replManager))
-                # numWidgets = len(widgets)
-                # with ThreadPoolExecutor(max_workers = 2) as executor:
-                #     results = executor.map(self._applyFilterToAWidget, widgets, [details.filters] * numWidgets, [replManager] * numWidgets)
-                pageInfo["widgets"] = results
+                # results = list()
+                # for widget in widgets:
+                #     results.append(self._applyFilterToAWidget(widget = widget, filters = details.filters, codeExecutor = replManager))
+                numWidgets = len(widgets)
+                with ThreadPoolExecutor(max_workers = 3) as executor:
+                    results = executor.map(self._applyFilterToAWidget, widgets, [details.filters] * numWidgets, [REPLManager(timeoutSeconds=7)] * numWidgets)
+                pageInfo["widgets"] = [x for x in results]
             return pageInfo
         except Exception as e:
             exception = CustomException(e)
