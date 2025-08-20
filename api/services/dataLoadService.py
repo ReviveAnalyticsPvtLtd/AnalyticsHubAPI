@@ -92,9 +92,9 @@ class DataLoadService:
             CustomException: If loading or uploading fails.
         """
         try:
-            project = self.client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", projectId).execute().data[0]                
             allSheetData = pd.read_excel(io.BytesIO(await file.read()), sheet_name = None, parse_dates = True)
             for sheetName, sheetData in allSheetData.items():
+                project = self.client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", projectId).execute().data[0]                
                 with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
                     sheetData.to_parquet(temp.name, compression = "snappy")
                     fileName = f"{os.path.splitext(file.filename)[0] + '_' + sheetName + '.parquet'}"
