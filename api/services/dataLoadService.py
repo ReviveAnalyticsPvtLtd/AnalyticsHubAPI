@@ -54,8 +54,8 @@ class DataLoadService:
             CustomException: If loading or uploading fails.
         """
         try:
-            project = self.client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", projectId).execute().data[0]  
             for file in files:              
+                project = self.client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", projectId).execute().data[0]  
                 with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
                     pd.read_csv(io.BytesIO(await file.read()), parse_dates = True).to_parquet(temp.name, compression = "snappy")
                     _ = self.client.storage.from_("AnalyticsHub").upload(
