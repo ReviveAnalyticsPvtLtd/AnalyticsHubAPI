@@ -44,6 +44,10 @@ class GenerateChartInput(BaseModel):
     inputQuery: str
     projectId: str
 
+class GenerateChartsInParallel(BaseModel):
+    projectId: str
+    inputQueries: list[str]
+
 class SpeechToTextModel(BaseModel):
     b64String: str
 

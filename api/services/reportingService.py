@@ -9,10 +9,10 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["reportingService"] 
 
 
+from api.models import GenerateChartInput, PanelChartDetails, GenerateChartsInParallel
 from analyticsHub.workflows.reportingToolWorkflow import reportingToolWorkflow
-from api.models import GenerateChartInput, PanelChartDetails
 from utils.exceptionHandler import CustomException
-from utils.codeExecutor import replManager
+from concurrent.futures import ProcessPoolExecutor
 from utils.initMethods import fetch_data
 from analyticsHub.utils import readYaml
 from urllib.request import urlopen
@@ -198,6 +198,35 @@ class ReportingService:
             logger.error(exception)
             raise exception
         
+    def generateChartsInParallel(self, details: GenerateChartsInParallel) -> list[dict]:
+        """
+        Generates multiple charts in parallel based on the provided details. 
+
+        Args:
+            details (GenerateChartsInParallel): The details for generating charts in parallel, including project ID and input queries.
+
+        Returns:
+            list[dict]: A list of generated chart data dictionaries.
+
+        Raises:
+            CustomException: If chart generation fails for any reason.
+        """
+        try:
+            fileUrl = os.environ["FILE_URL"].format(projectId=details.projectId, fileName="metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            metadata = json.loads(urlopen(fileUrl).read())
+            with ProcessPoolExecutor(max_workers=4) as executor:
+                responses = executor.map(lambda query: self.reportingToolWorkflow.invoke({
+                    "metadata": metadata,
+                    "inputQuery": query,
+                    "projectId": details.projectId
+                }), details.inputQueries)
+                responses = list(responses)
+            return responses
+        except Exception as e:
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception
+
     def generatePanelChart(self, panelChartDetails: PanelChartDetails) -> dict:
         """
         Generates a panel chart, optionally using blend configuration if available.

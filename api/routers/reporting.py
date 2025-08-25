@@ -13,7 +13,7 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["router"]
 
 
-from api.models import GenerateChartInput, PanelChartDetails
+from api.models import GenerateChartInput, PanelChartDetails, GenerateChartsInParallel
 from api.services.reportingService import reportingService
 from fastapi.exceptions import HTTPException
 from fastapi.responses import ORJSONResponse
@@ -64,5 +64,26 @@ async def generatePanelChart(panelChartDetails: PanelChartDetails, token = Depen
     try:
         response = reportingService.generatePanelChart(panelChartDetails = panelChartDetails)
         return ORJSONResponse(status_code = 200, content = response)
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = str(e))
+    
+@router.post("/generateChartsInParallel")
+async def generateChartsInParallel(details: GenerateChartsInParallel, token = Depends(verifyToken)):
+    """
+    Generate and export multiple charts in parallel based on the provided details.
+
+    Args:
+        details (GenerateChartsInParallel): The details for generating charts in parallel, including project ID and input queries.
+        token: Authorization token dependency, automatically injected by FastAPI for authentication.
+
+    Returns:
+        ORJSONResponse: A response containing the generated chart data in JSON format, or an error message if generation fails.
+
+    Raises:
+        HTTPException: If an error occurs during chart generation, returns a 500 status code with the error details.
+    """
+    try:
+        response = reportingService.generateChartsInParallel(details = details)
+        return ORJSONResponse(status_code = 200, content = {"message": "Charts generated successfully", "data": response})
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))
