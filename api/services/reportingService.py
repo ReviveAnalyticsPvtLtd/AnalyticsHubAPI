@@ -197,7 +197,35 @@ class ReportingService:
             exception  = CustomException(e)
             logger.error(exception)
             raise exception
-        
+
+    def _generateSingleChartForParallel(self, workflow, metadata, projectId, query):
+        """
+        Helper function to generate a single chart in parallel.
+
+        Args:
+            workflow: The reporting tool workflow instance.
+            metadata: The metadata for the project.
+            projectId: The project ID.
+            query: The input query for the chart.
+
+        Returns:
+            dict: The generated chart data.
+
+        Raises:
+            CustomException: If chart generation fails for any reason.
+        """
+        try:
+            response = workflow.invoke({
+                "metadata": metadata,
+                "inputQuery": query,
+                "projectId": projectId
+            })
+            return response
+        except Exception as e:
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception
+
     def generateChartsInParallel(self, details: GenerateChartsInParallel) -> list[dict]:
         """
         Generates multiple charts in parallel based on the provided details. 
@@ -215,12 +243,11 @@ class ReportingService:
             fileUrl = os.environ["FILE_URL"].format(projectId=details.projectId, fileName="metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             metadata = json.loads(urlopen(fileUrl).read())
             with ProcessPoolExecutor(max_workers=4) as executor:
-                responses = executor.map(lambda query: self.reportingToolWorkflow.invoke({
-                    "metadata": metadata,
-                    "inputQuery": query,
-                    "projectId": details.projectId
-                }), details.inputQueries)
-                responses = list(responses)
+                futures = [
+                    executor.submit(self._generateSingleChartForParallel, self.reportingToolWorkflow, metadata, details.projectId, query)
+                    for query in details.inputQueries
+                ]
+                responses = [f.result() for f in futures]
             return responses
         except Exception as e:
             exception = CustomException(e)
