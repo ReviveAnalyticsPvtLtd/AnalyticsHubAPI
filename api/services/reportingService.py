@@ -12,7 +12,7 @@ __all__ = ["reportingService"]
 from api.models import GenerateChartInput, PanelChartDetails, GenerateChartsInParallel
 from analyticsHub.workflows.reportingToolWorkflow import reportingToolWorkflow
 from utils.exceptionHandler import CustomException
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from utils.initMethods import fetch_data
 from analyticsHub.utils import readYaml
 from urllib.request import urlopen
@@ -242,7 +242,7 @@ class ReportingService:
         try:
             fileUrl = os.environ["FILE_URL"].format(projectId=details.projectId, fileName="metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             metadata = json.loads(urlopen(fileUrl).read())
-            with ProcessPoolExecutor(max_workers=4) as executor:
+            with ThreadPoolExecutor(max_workers=4) as executor:
                 futures = [
                     executor.submit(self._generateSingleChartForParallel, self.reportingToolWorkflow, metadata, details.projectId, query)
                     for query in details.inputQueries
