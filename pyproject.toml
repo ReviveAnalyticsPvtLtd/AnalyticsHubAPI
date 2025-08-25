@@ -154,6 +154,7 @@ dependencies = [
     "wcwidth==0.2.13",
     "websockets==15.0.1",
     "wordcloud==1.9.4",
+    "xlrd>=2.0.2",
     "xxhash==3.5.0",
     "yarl==1.20.1",
     "ydata-profiling==4.16.1",
