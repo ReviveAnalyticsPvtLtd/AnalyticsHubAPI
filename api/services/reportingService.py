@@ -198,7 +198,7 @@ class ReportingService:
             logger.error(exception)
             raise exception
 
-    def _generateSingleChartForParallel(self, workflow, metadata, projectId, query):
+    def _generateSingleChartForParallel(self, workflow, metadata, projectId, query) -> dict:
         """
         Helper function to generate a single chart in parallel.
 
@@ -220,6 +220,7 @@ class ReportingService:
                 "inputQuery": query,
                 "projectId": projectId
             })
+            _ = response.pop("metadata")
             return response
         except Exception as e:
             exception = CustomException(e)
