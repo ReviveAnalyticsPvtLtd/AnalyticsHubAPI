@@ -10,12 +10,11 @@ __all__ = ["reportingService"]
 
 
 from api.models import GenerateChartInput, PanelChartDetails, GenerateChartsInParallel
-from analyticsHub.workflows.reportingToolWorkflow import reportingToolWorkflow
+from analyticsHub.workflows.reportingToolWorkflow import buildReportingWorkflow
 from utils.exceptionHandler import CustomException
 from concurrent.futures import ProcessPoolExecutor
 from utils.initMethods import fetch_data
 from analyticsHub.utils import readYaml
-from multiprocessing import get_context
 from urllib.request import urlopen
 from utils.logger import logger
 from api.commons import client
@@ -25,6 +24,15 @@ import orjson
 import json
 import time
 import os
+
+WORKFLOW = None
+def initWorkflow():
+    global WORKFLOW
+    logger.disable(__name__) 
+    try:
+        WORKFLOW = buildReportingWorkflow()
+    finally:
+        logger.enable(__name__) 
 
 class ReportingService:
     """
@@ -40,7 +48,7 @@ class ReportingService:
         """
         logger.info("Initializing Reporting Service.")
         self.codeTemplates = readYaml(os.path.join(os.getcwd(), "codeTemplates.yaml"))
-        self.reportingToolWorkflow = reportingToolWorkflow
+        self.reportingToolWorkflow = buildReportingWorkflow()
         self.client = client
 
     @staticmethod
@@ -199,7 +207,8 @@ class ReportingService:
             logger.error(exception)
             raise exception
 
-    def _generateSingleChartForParallel(self, workflow, metadata, projectId, query) -> dict:
+    @staticmethod
+    def _generateSingleChartForParallel(metadata: dict, projectId: str, query: str) -> dict:
         """
         Helper function to generate a single chart in parallel.
 
@@ -216,7 +225,8 @@ class ReportingService:
             CustomException: If chart generation fails for any reason.
         """
         try:
-            response = workflow.invoke({
+            global WORKFLOW
+            response = WORKFLOW.invoke({
                 "metadata": metadata,
                 "inputQuery": query,
                 "projectId": projectId
@@ -246,10 +256,9 @@ class ReportingService:
         try:
             fileUrl = os.environ["FILE_URL"].format(projectId=details.projectId, fileName="metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             metadata = json.loads(urlopen(fileUrl).read())
-            ctx = get_context("fork")
-            with ProcessPoolExecutor(max_workers=4, mp_context=ctx) as executor:
+            with ProcessPoolExecutor(max_workers=4, initializer=initWorkflow) as executor:
                 futures = [
-                    executor.submit(self._generateSingleChartForParallel, self.reportingToolWorkflow, metadata, details.projectId, query)
+                    executor.submit(self._generateSingleChartForParallel, metadata, details.projectId, query)
                     for query in details.inputQueries
                 ]
                 responses = [f.result() for f in futures]

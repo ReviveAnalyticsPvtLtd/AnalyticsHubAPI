@@ -6,7 +6,7 @@ This module defines the ReportingToolWorkflow class, which orchestrates a multi-
 
 __version__ = "1.0.0"
 __author__ = "Rauhan Ahmed Siddiqui"
-__all__ = ["reportingToolWorkflow"]
+__all__ = ["buildReportingWorkflow"]
 
 
 from analyticsHub.components.queryRephraser import QueryRephaser
@@ -198,6 +198,17 @@ class ReportingToolWorkflow:
         workflow = workflow.compile()
         logger.info("reporting workflow compilation successful.")
         return workflow
-    
-graph = ReportingToolWorkflow()
-reportingToolWorkflow = graph.createWorkflow()
+
+
+def buildReportingWorkflow():
+    """
+    Builds the reporting workflow for generating reports.
+
+    Args:
+        None
+
+    Returns:
+        StateGraph: The compiled workflow graph ready for execution.
+    """
+    graph = ReportingToolWorkflow()
+    return graph.createWorkflow()
