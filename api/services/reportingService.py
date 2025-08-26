@@ -15,6 +15,7 @@ from utils.exceptionHandler import CustomException
 from concurrent.futures import ProcessPoolExecutor
 from utils.initMethods import fetch_data
 from analyticsHub.utils import readYaml
+from multiprocessing import get_context
 from urllib.request import urlopen
 from utils.logger import logger
 from api.commons import client
@@ -245,7 +246,8 @@ class ReportingService:
         try:
             fileUrl = os.environ["FILE_URL"].format(projectId=details.projectId, fileName="metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             metadata = json.loads(urlopen(fileUrl).read())
-            with ProcessPoolExecutor(max_workers=4) as executor:
+            ctx = get_context("fork")
+            with ProcessPoolExecutor(max_workers=4, mp_context=ctx) as executor:
                 futures = [
                     executor.submit(self._generateSingleChartForParallel, self.reportingToolWorkflow, metadata, details.projectId, query)
                     for query in details.inputQueries
