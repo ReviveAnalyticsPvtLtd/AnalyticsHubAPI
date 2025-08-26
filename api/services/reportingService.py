@@ -28,11 +28,11 @@ import os
 WORKFLOW = None
 def initWorkflow():
     global WORKFLOW
-    logger.disable("analyticsHub.workflows.reportingToolWorkflow") 
+    logger.disable("") 
     try:
         WORKFLOW = buildReportingWorkflow()
     finally:
-        logger.enable("analyticsHub.workflows.reportingToolWorkflow") 
+        logger.enable("") 
 
 class ReportingService:
     """
