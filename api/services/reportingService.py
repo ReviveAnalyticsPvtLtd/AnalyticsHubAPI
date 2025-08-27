@@ -22,8 +22,10 @@ from string import Template
 import pandas as pd
 import orjson
 import json
+import uuid
 import time
 import os
+import io
 
 WORKFLOW = None
 def initWorkflow():
@@ -240,20 +242,21 @@ class ReportingService:
             logger.error(exception)
             raise exception
 
-    def generateChartsInParallel(self, details: GenerateChartsInParallel) -> list[dict]:
+    def generateChartsInParallel(self, details: GenerateChartsInParallel) -> dict:
         """
-        Generates multiple charts in parallel based on the provided details. 
+        Generates multiple charts in parallel based on the provided details and export them to an automatic dashboard page. 
 
         Args:
             details (GenerateChartsInParallel): The details for generating charts in parallel, including project ID and input queries.
 
         Returns:
-            list[dict]: A list of generated chart data dictionaries.
+            dict: A dictionary containing the generated chart data.
 
         Raises:
             CustomException: If chart generation fails for any reason.
         """
         try:
+            # Generating charts in parallel
             fileUrl = os.environ["FILE_URL"].format(projectId=details.projectId, fileName="metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             metadata = json.loads(urlopen(fileUrl).read())
             with ProcessPoolExecutor(max_workers=4, initializer=initWorkflow) as executor:
@@ -262,7 +265,38 @@ class ReportingService:
                     for query in details.inputQueries
                 ]
                 responses = [f.result() for f in futures]
-            return responses
+
+            # Create a new dashboard page
+            pageId = str(uuid.uuid4())
+            if "dashboardConfig.json" in [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = details.projectId)]:
+                fileUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "dashboardConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+                dashboardConfig = json.loads(urlopen(fileUrl).read())
+                dashboardConfig[pageId] = {"name": "automaticDashboard", "widgets": []}
+            else:
+                dashboardConfig = {pageId: {"name": "automaticDashboard", "widgets": []}}
+
+            # Export to dashboard
+            pageDict = dashboardConfig.get(pageId)
+            for widget in responses:
+                widgetId = str(uuid.uuid4())
+                newWidget = {
+                    "id": widgetId,
+                    "chartType": widget.get("finalOutput").get("chartType"),
+                    "title": widget.get("finalOutput").get("title"),
+                    "label": widget.get("finalOutput").get("label"),
+                    "xLabels": widget.get("finalOutput").get("xLabels"),
+                    "yLabels": widget.get("finalOutput").get("yLabels"),
+                    "data": widget.get("finalOutput").get("data"),
+                    "layout": {"x": 0, "y": 0, "width": 10, "height": 10},
+                    "generatedCode": widget.get("finalOutput").get("generatedCode")
+                }
+                pageDict["widgets"].append(newWidget)
+            dashboardConfig[pageId] = pageDict
+            with io.BytesIO() as buffer:
+                buffer.write(json.dumps(dashboardConfig, indent=4).encode("utf-8"))
+                buffer.seek(0)
+                _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/dashboardConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"}) 
+            return dashboardConfig.get(pageId)
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)

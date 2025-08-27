@@ -67,8 +67,8 @@ async def generatePanelChart(panelChartDetails: PanelChartDetails, token = Depen
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))
     
-@router.post("/generateChartsInParallel")
-async def generateChartsInParallel(details: GenerateChartsInParallel, token = Depends(verifyToken)):
+@router.post("/generateAndExportChartsInParallel")
+async def generateAndExportChartsInParallel(details: GenerateChartsInParallel, token = Depends(verifyToken)):
     """
     Generate and export multiple charts in parallel based on the provided details.
 
@@ -84,6 +84,6 @@ async def generateChartsInParallel(details: GenerateChartsInParallel, token = De
     """
     try:
         response = reportingService.generateChartsInParallel(details = details)
-        return ORJSONResponse(status_code = 200, content = {"message": "Charts generated successfully", "data": response})
+        return ORJSONResponse(status_code = 200, content = {"message": "Charts generated successfully", "pageData": response})
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))
