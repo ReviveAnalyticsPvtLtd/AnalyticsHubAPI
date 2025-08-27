@@ -194,9 +194,10 @@ queryRephraserAgentPrompt: |
     - **Example**: `fetch_data('orders')`, `fetch_data('customers')`
 
     ### **METADATA HANDLING:**
-    - **IMPORTANT**: The `metadata` variable is NOT preloaded
-    - **IF QUERY NEEDS METADATA**: First define `metadata` as a dictionary using the prompt, then refer to it explicitly in transformations
-    - **METADATA ACCESS**: If query involves dataset structure (row counts, column counts, table counts), extract from metadata available in memory
+    - **The metadata provided in the prompt is descriptive only.**
+    - Do NOT recreate or hardcode the metadata dictionary in the environment.
+    - If query requires dataset details (e.g., row counts, column counts, table names), always fetch the dataframe at runtime using `fetch_data("<dataframe_name>")` and use pandas attributes (e.g., `.shape`, `.columns`) to derive structure.
+    - All structural inferences must be done dynamically at runtime, not from static metadata text.
 
     ### **CHART TYPE ANALYSIS - SPECIAL CASES:**
 
@@ -205,9 +206,10 @@ queryRephraserAgentPrompt: |
     - **Categorical comparisons**: Specify when hue/color encoding needed (e.g., `bar chart with hue by category`)
 
     **FOR METADATA-DERIVED QUERIES:**
-    - **Dataset structure queries** (number of rows, columns, tables): Can be derived from metadata
-    - **Select appropriate chart type** and extract relevant metrics directly from metadata
-    - **Example**: "Show row counts for all tables" → Extract from metadata, use bar chart
+    - **Dataset structure queries** (number of rows, columns, tables): Must be derived dynamically at runtime.
+    - Always fetch the dataframe using `fetch_data("<dataframe_name>")` and use pandas attributes like `.shape` or `.columns` to calculate counts.
+    - **Select appropriate chart type** based on the metric (e.g., row counts → bar chart, column count → card if single value).
+    - **Example**: "Show row counts for all tables" → For each table, fetch with `fetch_data`, compute `.shape[0]`, then build a bar chart.
 
     ---
 
@@ -340,7 +342,7 @@ queryRephraserAgentPrompt: |
     **Metadata:** Contains multiple dataframes with shape information
     ```json
     {{
-    "rephrasedOutput": "Display row counts for all tables using a bar chart. Steps: 1) Define metadata dictionary from available metadata, 2) Extract shape[0] (row count) for each dataframe, 3) Create dataframe with table names and row counts, 4) Store result as final_df",
+    "rephrasedOutput": "Display row counts for all tables using a bar chart. Steps: 1) For each available dataframe name from metadata, fetch it using fetch_data('<table_name>'), 2) Compute row count using .shape[0], 3) Collect results into a new dataframe with table names and row counts, 4) Store result as final_df",
     "doubt": null
     }}
     ```
@@ -469,8 +471,9 @@ codeGeneratorAgentPrompt: |
         - For example: `sales_data = fetch_data("sales_data")`
     - **The `fetch_data` function is already defined in the environment - do not redefine it**
 
-    2. **The `metadata` variable is NOT preloaded in the environment.**
-    - If metadata is required, you must define the `metadata` variable correctly using the information provided in the prompt before using it in your code. No room for any modification to the metadata.
+    2. The `metadata` variable is NOT preloaded in the environment.
+    - If metadata is required, you may define it **only for validating dataset names and column existence**.
+    - Do NOT define or use a `metadata` variable inside the Python code. Metadata is provided only in the prompt for reference, to identify available dataframe names and their columns. All structural queries (row counts, column counts, etc.) must be answered by fetching the datasets with `fetch_data` and checking their `.shape` or `.columns` at runtime.
 
     3. **DO NOT assume any new data or create placeholder/sample data.**
 
@@ -596,7 +599,7 @@ codeGeneratorAgentPrompt: |
         - **type:** The data type (e.g., "int64", "float64", "object").
         - **description:** A brief description of the column's content.
     - **sample_row:** An object representing an example record from the dataframe.
-    - If you need to access metadata, define a `metadata` variable using the JSON/YAML structure provided in the prompt. Then use it to verify dataset structure and column names.
+    - Metadata is provided only for reference in the prompt. Do not define or use a `metadata` variable in code. Instead, use it to know which dataframe names exist and which columns they contain. For row/column counts or table lists, fetch each dataframe using fetch_data and compute `.shape` or `.columns` at runtime. Then use it to verify dataset structure and column names.
 
     ### Python Script Requirements
     - **Imports:** Include necessary imports (e.g., `json`, `pandas`).
@@ -725,7 +728,7 @@ codeGeneratorAgentPrompt: |
     ### Example 3: Metadata variable usage
 
     **User Query:**
-    "Display total number of tables using a card. Steps: 1) Define the metadata variable using the provided input, 2) Count keys using len() to get the number of tables, 3) Create final_df with count value"
+    "Display total number of tables using a card. Steps: 1) Identify available tables from metadata, 2) Fetch each dataframe using fetch_data(), 3) Count how many tables exist, 4) Create final_df with count value"
 
     **Metadata:**
     {{
@@ -769,48 +772,16 @@ codeGeneratorAgentPrompt: |
     import pandas as pd
     import json
 
-    # Step 1: Define metadata manually from the provided input
-    metadata = {{
-        "sales": {{
-            "description": "Sales records for 2023 and 2024",
-            "shape": [1000, 5],
-            "columns": [
-                {{"name": "date", "type": "datetime64", "description": "Transaction date"}},
-                {{"name": "region", "type": "object", "description": "Sales region"}},
-                {{"name": "amount", "type": "float64", "description": "Sale amount"}},
-                {{"name": "product", "type": "object", "description": "Product name"}},
-                {{"name": "channel", "type": "object", "description": "Sales channel"}}
-            ],
-            "sample_row": {{
-                "date": "2024-05-12",
-                "region": "North",
-                "amount": 1234.56,
-                "product": "Laptop",
-                "channel": "Online"
-            }}
-        }},
-        "customers": {{
-            "description": "Customer demographic data",
-            "shape": [500, 4],
-            "columns": [
-                {{"name": "customer_id", "type": "int64", "description": "Unique customer ID"}},
-                {{"name": "age", "type": "int64", "description": "Age of customer"}},
-                {{"name": "gender", "type": "object", "description": "Gender of customer"}},
-                {{"name": "region", "type": "object", "description": "Region of residence"}}
-            ],
-            "sample_row": {{
-                "customer_id": 101,
-                "age": 34,
-                "gender": "Female",
-                "region": "West"
-            }}
-        }}
-    }}
+    # Step 1: Identify available tables (from metadata description)
+    table_names = ["sales", "customers"]
 
-    # Step 2: Count total number of tables
-    table_count = len(metadata.keys())
+    # Step 2: Fetch each table to validate availability
+    dataframes = [fetch_data(name) for name in table_names]
 
-    # Step 3: Create final_df with table count
+    # Step 3: Count total number of tables
+    table_count = len(dataframes)
+
+    # Step 4: Create final_df with table count
     final_df = pd.DataFrame({{
         "total_tables": [table_count]
     }})
@@ -828,7 +799,7 @@ codeGeneratorAgentPrompt: |
 
     - **ALWAYS use the `fetch_data` function to retrieve the dataframes you need.**
     - **The `fetch_data` function is already defined - DO NOT redefine it.**
-    - **The `metadata` variable is NOT preloaded in the environment and needs to be defined correctly from the input.**
+    - **Do NOT define or use a `metadata` variable in code.** Metadata in the prompt is only for reference, to identify which tables and columns exist.
     - **Only retrieve datasets that are specifically needed for the query.**
     - **Ensure 100% JSON serializability.**
     - **Return only a fully executable Python script—NO additional commentary or explanation.**
@@ -836,7 +807,7 @@ codeGeneratorAgentPrompt: |
     - **The final transformed dataframe must always be named `final_df`.**
 
     ## **Provided Inputs:**
-    - **Metadata (Define a `metadata` variable if needed):** {metadata}
+    - **Metadata (for reference only, do not define in code):** {metadata}
     - **Query:** {query}
 
 
@@ -857,7 +828,7 @@ codeDebuggerAgentPrompt: |
     ## CRITICAL ENVIRONMENT KNOWLEDGE
 
     1. **The `fetch_data` function may not be predefined** – If missing from the code, it must be assumed to be already defined **only if referenced**. Do not define it yourself.  
-    2. **The `metadata` needs to be defined** – If metadata is used, it must be **explicitly defined** from the provided metadata input. Do not assume it already exists. Also, it needs to be defined correctly as is given in the input. No room for any modification to the metadata or mistakes.  
+    2. **Do NOT define or use a `metadata` variable in code** - Metadata provided in the prompt is for reference only (to know which tables and columns exist). All validation and structural checks (rows, columns, tables) must be done at runtime using fetch_data and pandas.
     3. **The final transformed dataframe must be named `final_df`** – Verify this dataframe exists and is properly structured.  
     4. **Chart.js JSON formats must be exact** – Different chart types require specific JSON structures.  
     5. **A custom serializer function is available** – The code calls `json.dumps(chart_data, indent=4, default=serializer)` with a pre-defined `serializer` function to handle non-standard JSON types. Do not modify or redefine this serializer function, but ensure it's correctly used when needed.
@@ -870,7 +841,7 @@ codeDebuggerAgentPrompt: |
     ### Code with Errors:
     {code_with_errors}
 
-    ### Metadata Context:
+    ### Metadata Context (for reference only – do not define or use in code):
     {metadata_context}
 
     ### User Query:
@@ -955,9 +926,9 @@ codeDebuggerAgentPrompt: |
 
     ### Environment & Setup Errors
     - Missing or incorrect imports
-    - Incorrect or missing definition of metadata
-    - Incorrect access to `metadata` or `fetch_data`
+    - Incorrect access to `fetch_data`
     - Redefinition of provided functions/variables
+    - Any attempt to define or use a `metadata` variable in code
 
     ### Data Processing Errors
     - Incorrect column references or typos in column names
@@ -990,7 +961,7 @@ codeDebuggerAgentPrompt: |
     ## APPROACH TO ERROR RESOLUTION
 
     1. **Identify Error Type**: Precisely locate the error in the code.
-    2. **Understand Context**: Review the metadata and user query to grasp what the code intends to do.
+    2. **Understand Context**: Use the metadata (provided only in the prompt) and the user query to understand available tables and columns. Never define or use metadata in code.
     3. **Trace Data Flow**: Follow the data transformation steps to locate where the error occurs.
     4. **Apply Minimal Fix**: Make the smallest possible change to fix the issue.
     5. **Verify Chart.js Compatibility**: Ensure the fix maintains proper Chart.js JSON format.
