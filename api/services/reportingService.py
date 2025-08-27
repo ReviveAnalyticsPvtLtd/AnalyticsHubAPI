@@ -287,7 +287,7 @@ class ReportingService:
                     "xLabels": widget.get("finalOutput").get("xLabels"),
                     "yLabels": widget.get("finalOutput").get("yLabels"),
                     "data": widget.get("finalOutput").get("data"),
-                    "layout": {"x": 0, "y": 0, "width": 10, "height": 10},
+                    "layout": {"x": 0, "y": 0, "w": 10, "h": 10},
                     "generatedCode": widget.get("generatedCode")
                 }
                 pageDict["widgets"].append(newWidget)
@@ -296,7 +296,7 @@ class ReportingService:
                 buffer.write(json.dumps(dashboardConfig, indent=4).encode("utf-8"))
                 buffer.seek(0)
                 _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/dashboardConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"}) 
-            return dashboardConfig.get(pageId)
+            return dashboardConfig.get(pageId) 
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
