@@ -288,7 +288,7 @@ class ReportingService:
                     "yLabels": widget.get("finalOutput").get("yLabels"),
                     "data": widget.get("finalOutput").get("data"),
                     "layout": {"x": 0, "y": 0, "width": 10, "height": 10},
-                    "generatedCode": widget.get("finalOutput").get("generatedCode")
+                    "generatedCode": widget.get("generatedCode")
                 }
                 pageDict["widgets"].append(newWidget)
             dashboardConfig[pageId] = pageDict
