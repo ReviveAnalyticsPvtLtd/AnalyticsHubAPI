@@ -59,7 +59,7 @@ async def loadExcelData(projectId: Annotated[str, Form()], files: list[UploadFil
         ORJSONResponse: Success or error message.
     """
     try:
-        await dataLoadService.loadExcelData(projectId = projectId, file = file)
+        await dataLoadService.loadExcelData(projectId = projectId, files = files)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Data loaded successfully"})
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))
