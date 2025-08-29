@@ -47,7 +47,7 @@ class DataLoadService:
 
         Args:
             projectId (str): The project identifier.
-            file (UploadFile): The uploaded CSV file.
+            files (list): The list of uploaded CSV files.
         Returns:
             None
         Raises:
@@ -79,40 +79,41 @@ class DataLoadService:
             logger.error(exception)
             raise exception
         
-    async def loadExcelData(self, projectId: Annotated[str, Form()], file: Annotated[UploadFile, File()]) -> None:
+    async def loadExcelData(self, projectId: Annotated[str, Form()], files: list[UploadFile]) -> None:
         """
         Loads Excel data (optionally from a specific sheet) into the project, converts it to Parquet format, and uploads it to storage.
 
         Args:
             projectId (str): The project identifier.
-            file (UploadFile): The uploaded Excel file.
+            files (list): The list of uploaded excels files.
         Returns:
             None
         Raises:
             CustomException: If loading or uploading fails.
         """
         try:
-            allSheetData = pd.read_excel(io.BytesIO(await file.read()), sheet_name = None, parse_dates = True)
-            for sheetName, sheetData in allSheetData.items():
-                project = self.client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", projectId).execute().data[0]                
-                with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
-                    sheetData.to_parquet(temp.name, compression = "snappy")
-                    fileName = f"{os.path.splitext(file.filename)[0] + '_' + sheetName + '.parquet'}"
-                    _ = self.client.storage.from_("AnalyticsHub").upload(
-                        file = temp.name,
-                        path = f"{projectId}/{fileName}",
-                        file_options = {"upsert": "true"}
-                    )
-                    if project["dataTables"]:
-                        if '.'.join(fileName.split('.')[:-1]) not in project["dataTables"]:
-                            projectData = project["dataTables"] + f", {'.'.join(fileName.split('.')[:-1])}"
-                            _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
+            for file in files:
+                allSheetData = pd.read_excel(io.BytesIO(await file.read()), sheet_name = None, parse_dates = True)
+                for sheetName, sheetData in allSheetData.items():
+                    project = self.client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", projectId).execute().data[0]                
+                    with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
+                        sheetData.to_parquet(temp.name, compression = "snappy")
+                        fileName = f"{os.path.splitext(file.filename)[0] + '_' + sheetName + '.parquet'}"
+                        _ = self.client.storage.from_("AnalyticsHub").upload(
+                            file = temp.name,
+                            path = f"{projectId}/{fileName}",
+                            file_options = {"upsert": "true"}
+                        )
+                        if project["dataTables"]:
+                            if '.'.join(fileName.split('.')[:-1]) not in project["dataTables"]:
+                                projectData = project["dataTables"] + f", {'.'.join(fileName.split('.')[:-1])}"
+                                _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
+                            else:
+                                pass
                         else:
-                            pass
-                    else:
-                        projectData = '.'.join(fileName.split('.')[:-1])
-                        _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
-                    temp.close()
+                            projectData = '.'.join(fileName.split('.')[:-1])
+                            _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
+                        temp.close()
             return
         except Exception as e:
             exception  = CustomException(e)
