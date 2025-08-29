@@ -46,13 +46,13 @@ async def loadCsvData(projectId: Annotated[str, Form()], files: list[UploadFile]
         raise HTTPException(status_code = 500, detail = str(e))
     
 @router.post("/loadExcelData")
-async def loadExcelData(projectId: Annotated[str, Form()], file: Annotated[UploadFile, File()], token = Depends(verifyToken)):
+async def loadExcelData(projectId: Annotated[str, Form()], files: list[UploadFile]], token = Depends(verifyToken)):
     """
     Load data from an Excel file into the specified project.
 
     Args:
         projectId (str): The ID of the project to load data into.
-        file (UploadFile): The Excel file to upload.
+        files (list[UploadFile]): The Excel files to upload.
         token: Authorization token dependency.
 
     Returns:
