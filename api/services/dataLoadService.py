@@ -14,8 +14,8 @@ from pymongo.mongo_client import MongoClient
 from fastapi import Form, UploadFile, File
 from pymongo.server_api import ServerApi
 from sqlalchemy import create_engine
-from utils.logger import logger
 from urllib.request import urlopen
+from utils.logger import logger
 from api.commons import client
 from typing import Annotated
 from api.models import (
@@ -55,7 +55,6 @@ class DataLoadService:
         """
         try:
             for file in files:              
-                project = self.client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", projectId).execute().data[0]  
                 with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
                     pd.read_csv(io.BytesIO(await file.read()), parse_dates = True).to_parquet(temp.name, compression = "snappy")
                     _ = self.client.storage.from_("AnalyticsHub").upload(
@@ -63,15 +62,6 @@ class DataLoadService:
                         path = f"{projectId}/{os.path.splitext(file.filename)[0] + '.parquet'}",
                         file_options = {"upsert": "true"}
                     )
-                    if project["dataTables"]:
-                        if os.path.splitext(file.filename)[0] not in project["dataTables"]:
-                            projectData = project["dataTables"] + f", {os.path.splitext(file.filename)[0]}"
-                            _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
-                        else:
-                            pass
-                    else:
-                        projectData = os.path.splitext(file.filename)[0]
-                        _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
                     temp.close()
             return 
         except Exception as e:
@@ -95,7 +85,6 @@ class DataLoadService:
             for file in files:
                 allSheetData = pd.read_excel(io.BytesIO(await file.read()), sheet_name = None, parse_dates = True)
                 for sheetName, sheetData in allSheetData.items():
-                    project = self.client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", projectId).execute().data[0]                
                     with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
                         sheetData.to_parquet(temp.name, compression = "snappy")
                         fileName = f"{os.path.splitext(file.filename)[0] + '_' + sheetName + '.parquet'}"
@@ -104,15 +93,6 @@ class DataLoadService:
                             path = f"{projectId}/{fileName}",
                             file_options = {"upsert": "true"}
                         )
-                        if project["dataTables"]:
-                            if '.'.join(fileName.split('.')[:-1]) not in project["dataTables"]:
-                                projectData = project["dataTables"] + f", {'.'.join(fileName.split('.')[:-1])}"
-                                _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
-                            else:
-                                pass
-                        else:
-                            projectData = '.'.join(fileName.split('.')[:-1])
-                            _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", projectId).execute()
                         temp.close()
             return
         except Exception as e:
@@ -132,7 +112,6 @@ class DataLoadService:
             CustomException: If loading or uploading fails.
         """
         try:
-            project = self.client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", connection.projectId).execute().data[0]                
             with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
                 connStr = f"mysql+pymysql://{connection.user}:{connection.password}@{connection.host}:{connection.port}/{connection.db}"
                 engine = create_engine(connStr)
@@ -142,15 +121,6 @@ class DataLoadService:
                     path = f"{connection.projectId}/{connection.table + '.parquet'}",
                     file_options = {"upsert": "true"}
                 )
-                if project["dataTables"]:
-                    if connection.table not in project["dataTables"]:
-                        projectData = project["dataTables"] + f", {connection.table}"
-                        _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", connection.projectId).execute()
-                    else:
-                        pass
-                else:
-                    projectData = connection.table
-                    _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", connection.projectId).execute()
                 temp.close()
             return
         except Exception as e:
@@ -170,7 +140,6 @@ class DataLoadService:
             CustomException: If loading or uploading fails.
         """
         try:
-            project = self.client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", connection.projectId).execute().data[0]                
             with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
                 connStr = f"postgresql+psycopg2://{connection.user}:{connection.password}@{connection.host}:{connection.port}/{connection.db}"
                 engine = create_engine(connStr)
@@ -180,15 +149,6 @@ class DataLoadService:
                     path = f"{connection.projectId}/{connection.table + '.parquet'}",
                     file_options = {"upsert": "true"}
                 )
-                if project["dataTables"]:
-                    if connection.table not in project["dataTables"]:
-                        projectData = project["dataTables"] + f", {connection.table}"
-                        _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", connection.projectId).execute()
-                    else:
-                        pass
-                else:
-                    projectData = connection.table
-                    _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", connection.projectId).execute()
                 temp.close()
             return
         except Exception as e:
@@ -208,7 +168,6 @@ class DataLoadService:
             CustomException: If loading or uploading fails.
         """
         try:
-            project = self.client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", connection.projectId).execute().data[0]                
             with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
                 mongoClient = MongoClient(connection.connectionString, server_api=ServerApi('1'))
                 records = list(mongoClient[connection.db][connection.collection].find())
@@ -219,15 +178,6 @@ class DataLoadService:
                     path = f"{connection.projectId}/{connection.collection + '.parquet'}",
                     file_options = {"upsert": "true"}
                 )
-                if project["dataTables"]:
-                    if connection.collection not in project["dataTables"]:
-                        projectData = project["dataTables"] + f", {connection.collection}"
-                        _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", connection.projectId).execute()
-                    else:
-                        pass
-                else:
-                    projectData = connection.collection
-                    _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", connection.projectId).execute()
                 temp.close()
             return
         except Exception as e:
@@ -248,11 +198,6 @@ class DataLoadService:
         """
         try:
             _ = self.client.storage.from_("AnalyticsHub").remove(f"{tableDetails.projectId}/{tableDetails.tableName}" + ".parquet")
-            projectTables = self.client.table("Projects").select("dataTables").eq("projectId", tableDetails.projectId).execute().data[0]["dataTables"]
-            projectTables = projectTables.split(", ")
-            projectTables.remove(tableDetails.tableName)
-            projectTables = ", ".join(projectTables)
-            _ = self.client.table("Projects").update({"dataTables": projectTables}).eq("projectId", tableDetails.projectId).execute()
             fileUrl = os.environ["FILE_URL"].format(projectId = tableDetails.projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             jsonData = json.loads(urlopen(fileUrl).read())
             jsonData.pop(tableDetails.tableName)
