@@ -10,12 +10,12 @@ __all__ = ["router"]
 
 
 from fastapi import status, APIRouter, Depends, WebSocket, WebSocketDisconnect
+from api.models import SpeechToTextModel, ImageToInsightsModel
 from fastapi.security import HTTPAuthorizationCredentials
 from api.services.utilityService import utilityService
 from analyticsHub.triggers.celery import celeryApp
 from fastapi.responses import ORJSONResponse
 from fastapi.exceptions import HTTPException
-from api.models import SpeechToTextModel
 from api.commons import verifyToken
 import asyncio
 
@@ -42,6 +42,24 @@ async def getSpeechTranscript(speechToText: SpeechToTextModel, token = Depends(v
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))
     
+@router.post("/getInsightsFromImage")
+async def getInsightsFromImage(imageToInsights: ImageToInsightsModel, token = Depends(verifyToken)):
+    """
+    Extract strategic business insights from a base64-encoded image of a dashboard.
+
+    Args:
+        imageToInsights (ImageToInsightsModel): Input model containing the base64-encoded image string.
+        token: Authorization token dependency (for access control).
+
+    Returns:
+        ORJSONResponse: A JSON response containing the extracted insight text or an error message.
+    """
+    try:
+        insightText = utilityService.getInsightsFromImage(imageToInsights=imageToInsights)
+        return ORJSONResponse(status_code=200, content={"insightText": insightText})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/sendForecasts")
 async def sendForecasts(token = Depends(verifyToken)):
     """

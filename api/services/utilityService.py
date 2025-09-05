@@ -10,10 +10,11 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["utilityService"]
 
 
+from analyticsHub.components.imageToInsights import ImageToInsights
+from api.models import SpeechToTextModel, ImageToInsightsModel
 from analyticsHub.components.speechToText import SpeechToText
 from utils.exceptionHandler import CustomException
 from analyticsHub.triggers.celery import celeryApp
-from api.models import SpeechToTextModel
 from celery.result import AsyncResult
 from utils.logger import logger
 from api.commons import client
@@ -30,6 +31,7 @@ class UtilityService:
         """
         logger.info("Initializing Utility Service.")
         self.sampleDataset = sns.load_dataset("tips")
+        self.imageToInsightsModule = ImageToInsights()
         self.speechToTextModule = SpeechToText()
         self.client = client
     
@@ -51,6 +53,28 @@ class UtilityService:
             exception  = CustomException(e)
             logger.error(exception)
             raise exception
+        
+    def getInsightsFromImage(self, imageToInsights: ImageToInsightsModel) -> str:
+        """
+        Extracts insights from a base64-encoded image (e.g., a dashboard screenshot)
+        using the ImageToInsights module.
+
+        Args:
+            imageToInsights (ImageToInsightsModel): Model containing the base64-encoded image string.
+
+        Returns:
+            str: Text containing structured business insights extracted from the image.
+
+        Raises:
+            CustomException: If insight generation fails.
+        """
+        try:
+            insightText = self.imageToInsightsModule.getInsights(b64String=imageToInsights.b64String)
+            return insightText
+        except Exception as e:
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception   
         
     def sendForecasts(self) -> AsyncResult:
         """

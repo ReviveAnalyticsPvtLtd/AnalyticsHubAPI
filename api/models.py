@@ -51,6 +51,9 @@ class GenerateChartsInParallel(BaseModel):
 class SpeechToTextModel(BaseModel):
     b64String: str
 
+class ImageToInsightsModel(BaseModel):
+    b64String: str
+
 class DeleteTable(BaseModel):
     projectId: str
     tableName: str
