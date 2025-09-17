@@ -250,6 +250,27 @@ class ManagementService:
         except Exception as e:
             logger.error(CustomException(e))
             raise CustomException(e)
+        
+    def getInsights(self, projectId: str) -> dict:
+        """
+        Retrieve insights for a project.
+
+        Args:
+            projectId (str): The project identifier.
+
+        Returns:
+            dict: Dictionary containing insights for in the project.
+
+        Raises:
+            CustomException: For any errors during retrieval.
+        """
+        try:
+            fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "insights.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            jsonData = json.loads(urlopen(fileUrl).read())
+            return jsonData
+        except Exception as e:
+            logger.error(CustomException(e))
+            raise CustomException(e)
 
     def generateMetadata(self, projectId: str) -> dict:
         """

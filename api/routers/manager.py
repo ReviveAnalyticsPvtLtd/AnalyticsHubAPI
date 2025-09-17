@@ -151,6 +151,24 @@ async def generateKpis(projectId: str, token = Depends(verifyToken)):
         return ORJSONResponse(status_code = 200, content = response)
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))
+    
+@router.get("/getInsights/{projectId}")
+async def getInsights(projectId: str, token = Depends(verifyToken)):
+    """
+    Retrieve insights and their status for a given project.
+
+    Args:
+        projectId (str): The ID of the project.
+        token: Authorization token dependency.
+
+    Returns:
+        ORJSONResponse: Project metadata or error message.
+    """
+    try:
+        newJson = managementService.getInsights(projectId = projectId)
+        return ORJSONResponse(status_code = 200, content = newJson) 
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = str(e))
 
 @router.get("/getMetadata/{projectId}")
 async def getMetadata(projectId: str, token = Depends(verifyToken)):
