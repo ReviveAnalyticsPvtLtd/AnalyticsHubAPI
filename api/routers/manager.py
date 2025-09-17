@@ -117,7 +117,7 @@ async def updateTrash(updateTrashDetails: UpdateProjectState, token = Depends(ve
 @router.post("/generateMetadata/{projectId}")
 async def generateMetadata(projectId: str, token = Depends(verifyToken)):
     """
-    Generate metadata and important KPIs for a given project.
+    Generate metadata for a given project.
 
     Args:
         projectId (str): The ID of the project.
@@ -127,8 +127,28 @@ async def generateMetadata(projectId: str, token = Depends(verifyToken)):
         ORJSONResponse: Generated metadata and insights or error message.
     """
     try:
-        jsonData = managementService.generateMetadataAndInsights(projectId = projectId)
-        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "metadata": jsonData["metadata"], "insights": jsonData["insights"]})
+        jsonData = managementService.generateMetadata(projectId = projectId)
+        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "metadata": jsonData})
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = str(e))
+    
+@router.post("/generateKpis/{projectId}")
+async def generateKpis(projectId: str, token = Depends(verifyToken)):
+    """
+    Generate important KPIs for a given project.
+
+    Args:
+        projectId (str): The ID of the project.
+        token: Authorization token dependency.
+
+    Returns:
+        ORJSONResponse: Generated metadata and insights or error message.
+    """
+    try:
+        jsonData = managementService.generateInsightsFromMetadata(projectId = projectId)
+        response = {"status": "SUCCESS"}
+        response.update(jsonData)
+        return ORJSONResponse(status_code = 200, content = response)
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))
 

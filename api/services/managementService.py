@@ -218,28 +218,40 @@ class ManagementService:
             logger.error(CustomException(e))
             raise CustomException(e)
         
-    def _generateInsightsFromMetadata(self, metadata: dict) -> dict:
+    def generateInsightsFromMetadata(self, projectId: str) -> dict:
         """
-        Generate insights from the provided metadata.
+        Generate insights for the project from its metadata.
 
         Args:
-            metadata (dict): The metadata dictionary containing information about dataframes.
+            projectId (str): The project identifier.
 
         Returns:
             dict: A dictionary containing generated insights.
         """
         try:
+            fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            metadata = json.loads(urlopen(fileUrl).read())
             insightGeneratorChain = self.insightGenerator.getInsightGeneratorChain()
             insights = insightGeneratorChain.invoke({"metadata": metadata})
             insightsParts = insights.split("```")
             insights = insightsParts[-2]
             insights = orjson.loads("\n".join(insights.split("\n")[1:]).encode())
+            allInsights, counterValue = list(), 1
+            for insightKey in insights.keys():
+                insightDict = {"id": counterValue, "query": insights.get(insightKey), "isCharted": False}
+                allInsights.append(insightDict)
+                counterValue += 1
+            insights = {"insights": allInsights}
+            with io.BytesIO() as buffer:
+                buffer.write(json.dumps(insights, indent=4).encode("utf-8"))
+                buffer.seek(0)
+                self.client.storage.from_("AnalyticsHub").upload(path = f"{projectId}/insights.json", file = buffer.getvalue(), file_options = {"upsert": "true"})    
             return insights
         except Exception as e:
             logger.error(CustomException(e))
             raise CustomException(e)
 
-    def generateMetadataAndInsights(self, projectId: str) -> dict:
+    def generateMetadata(self, projectId: str) -> dict:
         """
         Generate or update metadata for a project, uploading it to storage, and generating insights.
 
@@ -275,12 +287,11 @@ class ManagementService:
                     pass
             else:
                 jsonData = self._generateMetadata(projectId = projectId)
-            insights = self._generateInsightsFromMetadata(metadata = jsonData)
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(jsonData, indent=4).encode("utf-8"))
                 buffer.seek(0)
                 self.client.storage.from_("AnalyticsHub").upload(path = f"{projectId}/metadata.json", file = buffer.getvalue(), file_options = {"upsert": "true"})     
-            return {"metadata": jsonData, "insights": insights}
+            return jsonData
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)

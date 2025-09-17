@@ -11,8 +11,8 @@ __all__ = ["dataLoadService"]
 
 from utils.exceptionHandler import CustomException
 from pymongo.mongo_client import MongoClient
-from fastapi import Form, UploadFile, File
 from pymongo.server_api import ServerApi
+from fastapi import Form, UploadFile
 from sqlalchemy import create_engine
 from urllib.request import urlopen
 from utils.logger import logger
