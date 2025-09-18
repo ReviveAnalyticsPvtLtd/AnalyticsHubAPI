@@ -257,8 +257,10 @@ class ReportingService:
         """
         try:
             # Generating charts in parallel
-            fileUrl = os.environ["FILE_URL"].format(projectId=details.projectId, fileName="metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
-            metadata = json.loads(urlopen(fileUrl).read())
+            metadataUrl = os.environ["FILE_URL"].format(projectId=details.projectId, fileName="metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            insightsUrl = os.environ["FILE_URL"].format(projectId=details.projectId, fileName="insights.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            metadata = json.loads(urlopen(metadataUrl).read())
+            insights = json.loads(urlopen(insightsUrl).read())
             with ProcessPoolExecutor(max_workers=4, initializer=initWorkflow) as executor:
                 futures = [
                     executor.submit(self._generateSingleChartForParallel, metadata, details.projectId, query)
@@ -296,6 +298,17 @@ class ReportingService:
                 buffer.write(json.dumps(dashboardConfig, indent=4).encode("utf-8"))
                 buffer.seek(0)
                 _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/dashboardConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"}) 
+            
+            # Updating insights.json
+            for insight in insights.get("insights"):
+                if insight.get("query") in details.inputQueries:
+                    insight["isCharted"] = True
+                else:
+                    continue
+            with io.BytesIO() as buffer:
+                buffer.write(json.dumps(insights, indent=4).encode("utf-8"))
+                buffer.seek(0)
+                self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/insights.json", file = buffer.getvalue(), file_options = {"upsert": "true"})  
             return dashboardConfig.get(pageId) 
         except Exception as e:
             exception = CustomException(e)
