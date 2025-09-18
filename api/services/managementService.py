@@ -236,8 +236,8 @@ class ManagementService:
             domainFile = self.client.table("Projects").select("domain").eq("projectId", projectId).execute().data[0].get("domain") + ".json"
             metadata = json.loads(urlopen(fileUrl).read())
             if domainFile in [x.get("name") for x in self.client.storage.from_("DomainSpecificKpis").list()]:
-                fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = domainFile).replace(".parquet", "") + f"?cb={int(time.time())}"
-                domainData = json.loads(urlopen(fileUrl).read())
+                domainFileUrl = os.environ["DOMAIN_FILE_URL"].format(fileName = domainFile) + f"?cb={int(time.time())}"
+                domainData = json.loads(urlopen(domainFileUrl).read())
                 domainKpiMapperChain = self.domainKpiMapper.getDomainKpiMapperChain()
                 domainKpiInsights = domainKpiMapperChain.invoke({"domainProfile": domainData, "metadata": metadata})
                 domainKpiInsightParts = domainKpiInsights.split("```")
