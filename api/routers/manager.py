@@ -145,7 +145,7 @@ async def generateKpis(projectId: str, token = Depends(verifyToken)):
         ORJSONResponse: Generated metadata and insights or error message.
     """
     try:
-        jsonData = managementService.generateInsightsFromMetadata(projectId = projectId)
+        jsonData = managementService.generateInsightsForProject(projectId = projectId)
         response = {"status": "SUCCESS"}
         response.update(jsonData)
         return ORJSONResponse(status_code = 200, content = response)
