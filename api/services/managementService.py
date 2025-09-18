@@ -11,6 +11,7 @@ __all__ = ["managementService"]
 from analyticsHub.components.metadataGenerator import MetadataGenerator
 from analyticsHub.components.insightGenerator import InsightGenerator
 from analyticsHub.components.reportGenerator import ReportGenerator
+from analyticsHub.components.domainKpiMapper import DomainKpiMapper
 from utils.exceptionHandler import CustomException
 from concurrent.futures import ProcessPoolExecutor
 from utils.logger import logger
@@ -45,6 +46,7 @@ class ManagementService:
         self.metadataGenerator = MetadataGenerator()
         self.insightGenerator = InsightGenerator()
         self.reportGenerator = ReportGenerator()
+        self.domainKpiMapper = DomainKpiMapper()
         self.client = client
 
     def createProject(self, projectDetails: CreateProject, token: str) -> str:
@@ -73,7 +75,8 @@ class ManagementService:
                 "projectName": projectDetails.projectName,
                 "projectDescription": projectDetails.projectDescription,
                 "ownerUserId": decodedToken["userId"],
-                "ownerUserMail": decodedToken["email"]
+                "ownerUserMail": decodedToken["email"],
+                "domain": projectDetails.domain
             }).execute()
             return projectId
         except Exception as e:
@@ -218,9 +221,9 @@ class ManagementService:
             logger.error(CustomException(e))
             raise CustomException(e)
         
-    def generateInsightsFromMetadata(self, projectId: str) -> dict:
+    def generateInsightsForProject(self, projectId: str) -> dict:
         """
-        Generate insights for the project from its metadata.
+        Generate insights for the project from its metadata and also determine the most important KPIs that can be derived from it.
 
         Args:
             projectId (str): The project identifier.
@@ -230,13 +233,29 @@ class ManagementService:
         """
         try:
             fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            domainFile = self.client.table("Projects").select("domain").eq("projectId", projectId).execute().data[0].get("domain") + ".json"
             metadata = json.loads(urlopen(fileUrl).read())
+            if domainFile in [x.get("name") for x in self.client.storage.from_("DomainSpecificKpis").list()]:
+                fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = domainFile).replace(".parquet", "") + f"?cb={int(time.time())}"
+                domainData = json.loads(urlopen(fileUrl).read())
+                domainKpiMapperChain = self.domainKpiMapper.getDomainKpiMapperChain()
+                domainKpiInsights = domainKpiMapperChain.invoke({"domainProfile": domainData, "metadata": metadata})
+                domainKpiInsightParts = domainKpiInsights.split("```")
+                domainKpiInsights = domainKpiInsightParts[-2]
+                domainKpiInsights = orjson.loads("\n".join(domainKpiInsights.split("\n")[1:]).encode("utf-8"))
+                overlapKpis = list(domainKpiInsights.values())
+            else:
+                overlapKpis = list()
             insightGeneratorChain = self.insightGenerator.getInsightGeneratorChain()
             insights = insightGeneratorChain.invoke({"metadata": metadata})
             insightsParts = insights.split("```")
             insights = insightsParts[-2]
-            insights = orjson.loads("\n".join(insights.split("\n")[1:]).encode())
+            insights = orjson.loads("\n".join(insights.split("\n")[1:]).encode("utf-8"))
             allInsights, counterValue = list(), 1
+            for kpi in overlapKpis:
+                insightDict = {"id": counterValue, "query": kpi, "isCharted": False}
+                allInsights.append(insightDict)
+                counterValue += 1
             for insightKey in insights.keys():
                 insightDict = {"id": counterValue, "query": insights.get(insightKey), "isCharted": False}
                 allInsights.append(insightDict)
