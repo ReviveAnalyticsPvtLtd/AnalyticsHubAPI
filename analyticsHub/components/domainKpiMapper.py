@@ -76,9 +76,9 @@ class DomainKpiMapper:
                 temperature = self.config.getfloat("DOMAINKPIMAPPER", "temperature")
             )
             domainKpiMapperParser = StrOutputParser()
-            insightGeneratorChain = RunnablePassthrough() | domainAwareKpiMappingAgentPrompt | llm | RunnableLambda(self._removeThinkTokens) | domainKpiMapperParser
+            domainKpiMapperChain = RunnablePassthrough() | domainAwareKpiMappingAgentPrompt | llm | RunnableLambda(self._removeThinkTokens) | domainKpiMapperParser
             logger.info("Domain KPI mapper chain created successfully.")
-            return insightGeneratorChain
+            return domainKpiMapperChain
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
