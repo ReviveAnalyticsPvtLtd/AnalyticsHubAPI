@@ -313,8 +313,8 @@ class ReportingService:
                     if otherWidgetsWidth == 12: otherWidgetsWidth = 0
                     else: otherWidgetsWidth += 6
                     otherWidgets.append(newWidget)
-                pageDict["widgets"].extend(cards)
-                pageDict["widgets"].extend(otherWidgets)
+            pageDict["widgets"].extend(cards)
+            pageDict["widgets"].extend(otherWidgets)
             dashboardConfig[pageId] = pageDict
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(dashboardConfig, indent=4).encode("utf-8"))
