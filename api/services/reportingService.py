@@ -279,20 +279,42 @@ class ReportingService:
 
             # Export to dashboard
             pageDict = dashboardConfig.get(pageId)
+            cards, otherWidgets = list(), list()
+            cardsWidth, otherWidgetsWidth = 0, 0
             for widget in responses:
                 widgetId = str(uuid.uuid4())
-                newWidget = {
-                    "id": widgetId,
-                    "chartType": widget.get("finalOutput").get("chartType"),
-                    "title": widget.get("finalOutput").get("title"),
-                    "label": widget.get("finalOutput").get("label"),
-                    "xLabels": widget.get("finalOutput").get("xLabels"),
-                    "yLabels": widget.get("finalOutput").get("yLabels"),
-                    "data": widget.get("finalOutput").get("data"),
-                    "layout": {"x": 0, "y": 0, "w": 10, "h": 10},
-                    "generatedCode": widget.get("generatedCode")
-                }
-                pageDict["widgets"].append(newWidget)
+                if widget.get("finalOutput").get("chartType") == "card":
+                    newWidget = {
+                        "id": widgetId,
+                        "chartType": widget.get("finalOutput").get("chartType"),
+                        "title": widget.get("finalOutput").get("title"),
+                        "label": widget.get("finalOutput").get("label"),
+                        "xLabels": widget.get("finalOutput").get("xLabels"),
+                        "yLabels": widget.get("finalOutput").get("yLabels"),
+                        "data": widget.get("finalOutput").get("data"),
+                        "layout": {"x": cardsWidth, "y": 0, "w": 4, "h": 6},
+                        "generatedCode": widget.get("generatedCode")
+                    }
+                    if cardsWidth == 12: cardsWidth = 0
+                    else: cardsWidth += 4
+                    cards.append(newWidget)
+                else:
+                    newWidget = {
+                        "id": widgetId,
+                        "chartType": widget.get("finalOutput").get("chartType"),
+                        "title": widget.get("finalOutput").get("title"),
+                        "label": widget.get("finalOutput").get("label"),
+                        "xLabels": widget.get("finalOutput").get("xLabels"),
+                        "yLabels": widget.get("finalOutput").get("yLabels"),
+                        "data": widget.get("finalOutput").get("data"),
+                        "layout": {"x": otherWidgetsWidth, "y": 0, "w": 6, "h": 10},
+                        "generatedCode": widget.get("generatedCode")
+                    }
+                    if otherWidgetsWidth == 12: otherWidgetsWidth = 0
+                    else: otherWidgetsWidth += 6
+                    otherWidgets.append(newWidget)
+                pageDict["widgets"].extend(cards)
+                pageDict["widgets"].extend(otherWidgets)
             dashboardConfig[pageId] = pageDict
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(dashboardConfig, indent=4).encode("utf-8"))
