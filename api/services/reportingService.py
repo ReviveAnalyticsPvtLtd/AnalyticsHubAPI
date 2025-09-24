@@ -284,6 +284,9 @@ class ReportingService:
             for widget in responses:
                 widgetId = str(uuid.uuid4())
                 if widget.get("finalOutput").get("chartType") == "card":
+                    data = widget.get("finalOutput").get("data")
+                    if isinstance(data, int) & isinstance(data, float): data = f"{data:.2f}"
+                    else: pass
                     newWidget = {
                         "id": widgetId,
                         "chartType": widget.get("finalOutput").get("chartType"),
@@ -291,7 +294,7 @@ class ReportingService:
                         "label": widget.get("finalOutput").get("label"),
                         "xLabels": widget.get("finalOutput").get("xLabels"),
                         "yLabels": widget.get("finalOutput").get("yLabels"),
-                        "data": widget.get("finalOutput").get("data"),
+                        "data": data,
                         "layout": {"x": cardsWidth, "y": 0, "w": 4, "h": 6},
                         "generatedCode": widget.get("generatedCode")
                     }
