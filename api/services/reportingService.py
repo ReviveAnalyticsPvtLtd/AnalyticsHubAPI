@@ -285,7 +285,7 @@ class ReportingService:
                 widgetId = str(uuid.uuid4())
                 if widget.get("finalOutput").get("chartType") == "card":
                     data = widget.get("finalOutput").get("data")
-                    if isinstance(data, int) & isinstance(data, float): data = f"{data:.2f}"
+                    if isinstance(data, int) & isinstance(data, float): data = float(f"{data:.2f}")
                     else: pass
                     newWidget = {
                         "id": widgetId,
