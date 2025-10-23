@@ -351,18 +351,23 @@ class ManagementService:
             CustomException: For any errors during retrieval.
         """
         try:
-            fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
-            jsonData = json.loads(urlopen(fileUrl).read())
-            newJson = {"tables": []}
-            for key in jsonData:
-                tableJson = {
-                    "tableName": key,
-                    "tableDesc": jsonData.get(key).get("description"),
-                    "shape": jsonData.get(key).get("shape"),
-                    "columns": jsonData.get(key).get("columns")
-                }
-                newJson.get("tables").append(tableJson)
-            return newJson
+            files = self.client.storage.from_("AnalyticsHub").list(projectId)
+            filenames = [x.get("name") for x in files]
+            if "metadata.json" not in filenames:
+                return dict()
+            else:
+                fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+                jsonData = json.loads(urlopen(fileUrl).read())
+                newJson = {"tables": []}
+                for key in jsonData:
+                    tableJson = {
+                        "tableName": key,
+                        "tableDesc": jsonData.get(key).get("description"),
+                        "shape": jsonData.get(key).get("shape"),
+                        "columns": jsonData.get(key).get("columns")
+                    }
+                    newJson.get("tables").append(tableJson)
+                return newJson
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
