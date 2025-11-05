@@ -37,7 +37,7 @@ async def createDataBlend(blendDetails: CreateDataBlend, token = Depends(verifyT
     """
     try:
         blendService.createDataBlend(blendDetails = blendDetails)
-        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", : "Blend created successfully."})
+        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Blend created successfully."})
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))
 

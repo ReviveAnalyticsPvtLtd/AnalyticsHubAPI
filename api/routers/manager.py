@@ -39,7 +39,7 @@ async def createProject(projectDetails: CreateProject, token = Depends(verifyTok
     """
     try:
         projectId = managementService.createProject(projectDetails = projectDetails, token = token)
-        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "projectId": projectId, : "Project created successfully"})
+        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "projectId": projectId, "message": "Project created successfully"})
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))
     
@@ -74,7 +74,7 @@ async def updateBookmark(updateBookmarkDetails: UpdateProjectState, token = Depe
     """
     try:
         managementService.updateBookmark(updateBookmarkDetails = updateBookmarkDetails)
-        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", : "Project bookmark status updated successfully"})
+        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Project bookmark status updated successfully"})
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))
     
@@ -92,7 +92,7 @@ async def updateArchive(updateArchiveDetails: UpdateProjectState, token = Depend
     """
     try:
         managementService.updateArchive(updateArchiveDetails = updateArchiveDetails)
-        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", : "Project archive status updated successfully"})
+        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Project archive status updated successfully"})
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))
     
@@ -110,7 +110,7 @@ async def updateTrash(updateTrashDetails: UpdateProjectState, token = Depends(ve
     """
     try:
             managementService.updateTrash(updateTrashDetails = updateTrashDetails)
-            return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", : "Project trash status updated successfully"})
+            return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Project trash status updated successfully"})
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))
     
@@ -220,7 +220,7 @@ async def deleteProject(projectId: str, token = Depends(verifyToken)):
     """
     try:
         managementService.deleteProject(projectId = projectId)
-        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", : "Project deleted successfully"})
+        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Project deleted successfully"})
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))
     

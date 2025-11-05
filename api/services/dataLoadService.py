@@ -100,7 +100,7 @@ class DataLoadService:
             logger.error(exception)
             raise exception
         
-    def loadMySql(connection: LoadMySQLorPostgreSQL) -> None:
+    def loadMySql(self, connection: LoadMySQLorPostgreSQL) -> None:
         """
         Loads data from a MySQL database table into the project, converts it to Parquet format, and uploads it to storage.
 
@@ -116,7 +116,7 @@ class DataLoadService:
                 connStr = f"mysql+pymysql://{connection.user}:{connection.password}@{connection.host}:{connection.port}/{connection.db}"
                 engine = create_engine(connStr)
                 pd.read_sql(f"SELECT * FROM {connection.table}", engine, parse_dates = True).to_parquet(temp.name, compression = "snappy")
-                _ = client.storage.from_("AnalyticsHub").upload(
+                _ = self.client.storage.from_("AnalyticsHub").upload(
                     file = temp.name,
                     path = f"{connection.projectId}/{connection.table + '.parquet'}",
                     file_options = {"upsert": "true"}

@@ -84,6 +84,6 @@ async def generateAndExportChartsInParallel(details: GenerateChartsInParallel, t
     """
     try:
         response = reportingService.generateChartsInParallel(details = details)
-        return ORJSONResponse(status_code = 200, content = {: "Charts generated successfully", "pageData": response})
+        return ORJSONResponse(status_code = 200, content = {"message": "Charts generated successfully", "pageData": response})
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))
