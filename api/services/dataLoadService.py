@@ -100,7 +100,7 @@ class DataLoadService:
             logger.error(exception)
             raise exception
         
-    def loadMySql(self, connection: LoadMySQLorPostgreSQL) -> None:
+    def loadMySql(connection: LoadMySQLorPostgreSQL) -> None:
         """
         Loads data from a MySQL database table into the project, converts it to Parquet format, and uploads it to storage.
 
@@ -116,18 +116,34 @@ class DataLoadService:
                 connStr = f"mysql+pymysql://{connection.user}:{connection.password}@{connection.host}:{connection.port}/{connection.db}"
                 engine = create_engine(connStr)
                 pd.read_sql(f"SELECT * FROM {connection.table}", engine, parse_dates = True).to_parquet(temp.name, compression = "snappy")
-                _ = self.client.storage.from_("AnalyticsHub").upload(
+                _ = client.storage.from_("AnalyticsHub").upload(
                     file = temp.name,
                     path = f"{connection.projectId}/{connection.table + '.parquet'}",
                     file_options = {"upsert": "true"}
                 )
+                if "connections.json" in [x.get("name") for x in client.storage.from_("AnalyticsHub").list(path = connection.projectId)]:
+                    databaseConnectionsUrl = os.environ["FILE_URL"].format(projectId = connection.projectId, fileName = "connections.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+                    databaseConnections = json.loads(urlopen(databaseConnectionsUrl).read())
+                    connectionDetails = connection.model_dump()
+                    connectionDetails.pop("projectId")
+                    connectionDetails["type"] = "MySQL/PostgreSQL"
+                    databaseConnections[max([int(x) for x in databaseConnections.keys()]) + 1] = connectionDetails
+                else:
+                    connectionDetails = connection.model_dump()
+                    connectionDetails.pop("projectId")
+                    connectionDetails["type"] = "MySQL/PostgreSQL"
+                    databaseConnections = {"1": connectionDetails}
+                with io.BytesIO() as buffer:
+                    buffer.write(json.dumps(databaseConnections, indent=4).encode("utf-8"))
+                    buffer.seek(0)
+                    _ = client.storage.from_("AnalyticsHub").upload(path = f"{connection.projectId}/connections.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
                 temp.close()
             return
         except Exception as e:
             exception  = CustomException(e)
             logger.error(exception)
             raise exception
-        
+            
     def loadPostgreSQL(self, connection: LoadMySQLorPostgreSQL) -> None:
         """
         Loads data from a PostgreSQL database table into the project, converts it to Parquet format, and uploads it to storage.

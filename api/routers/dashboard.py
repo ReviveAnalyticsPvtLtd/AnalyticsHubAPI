@@ -152,3 +152,12 @@ async def getAllColumns(projectId: str, token = Depends(verifyToken)):
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "details": results})
     except Exception as e:
         raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+    
+@router.get("/dashboardRefresh/{projectId}")
+async def dashboardRefresh(projectId: str, token = Depends(verifyToken)):
+    try:
+        result = dashboardService.pullDataInParallel(projectId = projectId)
+        result.update({"message": "Data refreshed successfully."})
+        return ORJSONResponse(status_code = 300, content = result)
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")

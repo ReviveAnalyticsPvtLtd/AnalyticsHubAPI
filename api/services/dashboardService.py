@@ -12,8 +12,9 @@ __all__ = ["dashboardService"]
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from utils.exceptionHandler import CustomException
 from utils.codeExecutor import replManager
-from utils.logger import logger
+from sqlalchemy import create_engine
 from urllib.request import urlopen
+from utils.logger import logger
 from api.commons import client
 from api.models import (
     DeleteDashboardElement,
@@ -23,6 +24,7 @@ from api.models import (
     GetData
 )
 import pandas as pd
+import tempfile
 import uuid
 import json
 import time
@@ -242,9 +244,6 @@ class DashboardService:
                 for widget in pageInfo["widgets"]: widget.pop("generatedCode")
             else:
                 widgets = pageInfo.get("widgets")
-                # results = list()
-                # for widget in widgets:
-                #     results.append(self._applyFilterToAWidget(widget = widget, filters = details.filters, codeExecutor = replManager))
                 numWidgets = len(widgets)
                 with ProcessPoolExecutor(max_workers = 4) as executor:
                     results = executor.map(self._applyFilterToAWidget, widgets, [details.filters] * numWidgets, [replManager] * numWidgets)
@@ -351,5 +350,68 @@ class DashboardService:
             exception  = CustomException(e)
             logger.error(exception)
             raise exception
+        
+    @staticmethod   
+    def _pullData(connection: dict):
+        """
+        Retrieve data from a database connection as a pandas DataFrame.
+
+        Args:
+            connection (dict): Dictionary containing database connection details,
+                including type, user, password, host, port, db, and table.
+
+        Returns:
+            pandas.DataFrame: DataFrame containing the contents of the specified table.
+
+        Raises:
+            CustomException: For any errors during data retrieval or connection issues.
+        """
+        if connection.get("type") == "MySQL/PostgreSQL":
+            connStr = f'mysql+pymysql://{connection.get("user")}:{connection.get("password")}@{connection.get("host")}:{connection.get("port")}/{connection.get("db")}'
+            engine = create_engine(connStr)
+            dataFrame = pd.read_sql(f"SELECT * FROM {connection.get("table")}", engine, parse_dates = True)
+            return dataFrame
+        else:
+            ...
+        
+    def pullDataInParallel(self, projectId: str) -> dict:
+        """
+        Retrieve data from multiple databases in parallel and upload results to the AnalyticsHub storage bucket.
+
+        Args:
+            projectId (str): The project identifier used to locate the connections.json file.
+
+        Returns:
+            dict: Dictionary containing the operation status, e.g., {"status": "SUCCESS"}.
+
+        Raises:
+            CustomException: For any errors encountered during data extraction or upload.
+        """
+        try:
+            if "connections.json" in [x.get("name") for x in client.storage.from_("AnalyticsHub").list(path = projectId)]:
+                databaseConnectionsUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "connections.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+                databaseConnections = json.loads(urlopen(databaseConnectionsUrl).read())
+            else:
+                pass
+            connections = databaseConnections.values()
+            with ThreadPoolExecutor(max_workers = 4) as executor:
+                futures = [executor.submit(self._pullData, connection) for connection in connections]
+                results = [x.result() for x in futures]
+                results = {connection.get("table"): result for connection, result in zip(connections, results)}
+            for result in results:
+                with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
+                    results[result].to_parquet(temp.name, compression = "snappy")
+                    _ = self.client.storage.from_("AnalyticsHub").upload(
+                        file = temp.name,
+                        path = f"{projectId}/{result + '.parquet'}",
+                        file_options = {"upsert": "true"}
+                    )
+                temp.close()
+            return {"status": "SUCCESS"}
+        except Exception as e:
+            exception  = CustomException(e)
+            logger.error(exception)
+            raise exception
+    
 
 dashboardService = DashboardService()

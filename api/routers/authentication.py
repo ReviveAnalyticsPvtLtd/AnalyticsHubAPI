@@ -105,7 +105,7 @@ async def onboarding(onboardingDetails: OnboardingDetails, credentials = Depends
     """
     try:
         authenticationService.onboarding(onboardingDetails = onboardingDetails)
-        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "User onboarded successfully."})        
+        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", : "User onboarded successfully."})        
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))
 
@@ -122,7 +122,7 @@ async def initiatePasswordReset(emailId: str):
     """
     try:
         authenticationService.initiatePasswordReset(emailId = emailId)
-        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Password reset initiated successfully."})
+        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", : "Password reset initiated successfully."})
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))    
 
@@ -139,7 +139,7 @@ async def resetPassword(newCredentials: NewCredentials):
     """
     try:
         authenticationService.resetPassword(newCredentials = newCredentials)
-        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Password updated successfully!"})
+        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", : "Password updated successfully!"})
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))
 
@@ -156,6 +156,6 @@ async def logout(token = Depends(verifyToken)):
     """
     try:
         authenticationService.logout(token = token)
-        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Session logged out successfully"})
+        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", : "Session logged out successfully"})
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))
