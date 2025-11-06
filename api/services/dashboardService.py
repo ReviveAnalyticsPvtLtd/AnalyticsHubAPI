@@ -369,7 +369,7 @@ class DashboardService:
         if connection.get("type") == "MySQL/PostgreSQL":
             connStr = f'mysql+pymysql://{connection.get("user")}:{connection.get("password")}@{connection.get("host")}:{connection.get("port")}/{connection.get("db")}'
             engine = create_engine(connStr)
-            dataFrame = pd.read_sql(f"SELECT * FROM {connection.get("table")}", engine, parse_dates = True)
+            dataFrame = pd.read_sql(f"SELECT * FROM {connection.get('table')}", engine, parse_dates = True)
             return dataFrame
         else:
             ...
