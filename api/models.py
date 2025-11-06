@@ -129,6 +129,7 @@ class GetData(BaseModel):
     projectId: str
     page: str
     filters: list[dict] | None = None
+    refresh: bool = False
 
 class DeleteDashboardElement(BaseModel):
     projectId: str

@@ -240,7 +240,7 @@ class DashboardService:
             dashboardConfig = json.loads(urlopen(fileUrl).read())
             pageInfo = dashboardConfig.get(details.page)
             pageInfo["id"] = details.page
-            if not details.filters:
+            if (not details.filters) and (not details.refresh):
                 for widget in pageInfo["widgets"]: widget.pop("generatedCode")
             else:
                 widgets = pageInfo.get("widgets")
