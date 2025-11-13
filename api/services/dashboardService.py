@@ -242,12 +242,32 @@ class DashboardService:
             pageInfo["id"] = details.page
             if (not details.filters) and (not details.refresh):
                 for widget in pageInfo["widgets"]: widget.pop("generatedCode")
-            else:
+            elif (details.filters) and (not details.refresh):
                 widgets = pageInfo.get("widgets")
                 numWidgets = len(widgets)
                 with ProcessPoolExecutor(max_workers = 4) as executor:
                     results = executor.map(self._applyFilterToAWidget, widgets, [details.filters] * numWidgets, [replManager] * numWidgets)
                 pageInfo["widgets"] = [x for x in results]
+            elif (not details.filters) and (details.refresh):
+                widgets = pageInfo.get("widgets")
+                numWidgets = len(widgets)
+                with ProcessPoolExecutor(max_workers = 4) as executor:
+                    results = executor.map(self._applyFilterToAWidget, widgets, [details.filters] * numWidgets, [replManager] * numWidgets)
+                pageInfo["widgets"] = [x for x in results] 
+                prevPageInfo = dashboardConfig.get(details.page)
+                for prevWidget in prevPageInfo.get("widgets"):
+                    for newWidget in pageInfo.get("widgets"):
+                        if newWidget.get("id") == prevWidget.get("id"):
+                            prevWidget.update(newWidget)
+                        else:
+                            continue
+                dashboardConfig[details.page] = prevPageInfo
+                with io.BytesIO() as buffer:
+                    buffer.write(json.dumps(dashboardConfig, indent=4).encode("utf-8"))
+                    buffer.seek(0)
+                    _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/dashboardConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"})    
+            else:
+                raise ValueError("Filters and Refresh cannot be implemented simultaneously.")
             return pageInfo
         except Exception as e:
             exception = CustomException(e)
