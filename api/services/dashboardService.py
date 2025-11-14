@@ -61,7 +61,6 @@ class DashboardService:
         """
         widget = widget.copy()
         code = widget.get("generatedCode")
-        _ = widget.pop("generatedCode")
         if "```" in code:
             code = "\n".join(code.split("```")[-2].split("\n")[1:])
         else:
@@ -241,7 +240,7 @@ class DashboardService:
             pageInfo = dashboardConfig.get(details.page)
             pageInfo["id"] = details.page
             if (not details.filters) and (not details.refresh):
-                for widget in pageInfo["widgets"]: widget.pop("generatedCode")
+                pass
             elif (details.filters) and (not details.refresh):
                 widgets = pageInfo.get("widgets")
                 numWidgets = len(widgets)
