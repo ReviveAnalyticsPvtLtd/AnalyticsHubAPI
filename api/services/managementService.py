@@ -18,6 +18,7 @@ from utils.logger import logger
 from urllib.request import urlopen
 from api.commons import client
 from api.models import (
+    SwitchWorkspaceDetails,
     UpdateProjectState,
     CreateProject,
     EditMetadata
@@ -168,6 +169,24 @@ class ManagementService:
             data = pd.DataFrame(self.client.table("Workspaces").select("*").execute().data)
             data = data[data["ownerId"] == decodedToken["userId"]]
             return data
+        except Exception as e:
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception
+    
+    def updateCurrentWorkspace(self, switchWorkspaceDetails: SwitchWorkspaceDetails) -> None:
+        """
+        Update the current Workspace ID of a user.
+
+        Args:
+            switchWorkspaceDetails (SwitchWorkspaceDetails): Details specifying userid and the updated workspace id.
+
+        Raises:
+            CustomException: For any errors during update.        
+        """
+        try:
+            _ = self.client.table("Users").update({"currentWorkspaceId": switchWorkspaceDetails.updatedWorkspaceId}).eq("userId", switchWorkspaceDetails.userId).execute()   
+            return
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)

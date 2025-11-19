@@ -76,7 +76,8 @@ class AuthenticationService:
                     {
                         "userId": response.user.id,
                         "email": signupDetails.email,
-                        "password": hashedPassword
+                        "password": hashedPassword,
+                        "currentWorkspaceId": workspaceId
                     }
                 ).execute()
                 _ = self.client.table("Workspaces").insert({
@@ -159,7 +160,7 @@ class AuthenticationService:
             elif filteredResult[0].user_metadata.get("email_verified") == False:
                 raise ValueError("Email not verified")
             else:  
-                allData = pd.DataFrame(self.client.table("Users").select("userId", "email", "password", "onboarded").execute().data, columns = ["userId", "email", "password", "onboarded"])
+                allData = pd.DataFrame(self.client.table("Users").select("userId", "email", "password", "onboarded", "currentWorkspaceId").execute().data, columns = ["userId", "email", "password", "onboarded", "currentWorkspaceId"])
                 dataSlice = allData[allData["email"] == loginDetails.email].iloc[0, :]
                 if dataSlice["password"] != hashedPassword:
                     raise ValueError("Invalid email or password")
@@ -184,7 +185,8 @@ class AuthenticationService:
                         "userId": dataSlice["userId"],
                         "email": dataSlice["email"],
                         "accessToken": accessToken,
-                        "onboarded": int(dataSlice["onboarded"])
+                        "onboarded": int(dataSlice["onboarded"]),
+                        "currentWorkspaceId": dataSlice["currentWorkspaceId"]
                     }
             return response
         except Exception as e:

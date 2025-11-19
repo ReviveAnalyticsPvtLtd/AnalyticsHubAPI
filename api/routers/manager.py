@@ -14,6 +14,7 @@ from fastapi.responses import ORJSONResponse, HTMLResponse
 from fastapi.exceptions import HTTPException
 from fastapi import APIRouter, Depends
 from api.models import (
+    SwitchWorkspaceDetails,
     UpdateProjectState,
     CreateProject,
     EditMetadata
@@ -94,7 +95,25 @@ async def listWorkspaces(token = Depends(verifyToken)):
         return ORJSONResponse(status_code = 200, content = {"projects": data.to_dict(orient = "records")})
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))
-    
+
+@router.patch("/updateWorkspaceId")
+async def updateWorkspaceId(switchWorkspaceDetails: SwitchWorkspaceDetails, token = Depends(verifyToken)):
+    """
+    Update the workspace id of a user.
+
+    Args:
+        switchWorkspaceDetails (SwitchWorkspaceDetails): Details for updating current workspace of a user.
+        token: Authorization token dependency.
+
+    Returns:
+        ORJSONResponse: Success or error message.
+    """
+    try:
+        managementService.updateCurrentWorkspace(switchWorkspaceDetails = switchWorkspaceDetails)
+        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Current workspace updated successfully"})
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = str(e))
+
 @router.patch("/updateBookmark")
 async def updateBookmark(updateBookmarkDetails: UpdateProjectState, token = Depends(verifyToken)):
     """

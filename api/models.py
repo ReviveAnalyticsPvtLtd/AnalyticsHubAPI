@@ -41,6 +41,10 @@ class CreateProject(BaseModel):
     workspaceId: str
     domainExpert: str
 
+class SwitchWorkspaceDetails(BaseModel):
+    updatedWorkspaceId: str
+    userId: str
+
 class GenerateChartInput(BaseModel):
     inputQuery: str
     projectId: str
