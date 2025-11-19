@@ -140,8 +140,11 @@ class ManagementService:
                 algorithms = ["HS256"]
             )
             data = pd.DataFrame(self.client.table("Projects").select("*").execute().data)
-            data = data[(data["ownerUserId"] == decodedToken["userId"]) & (data["workspaceId"] == workspaceId)]
-            return data
+            if len(data) == 0:
+                return data
+            else:
+                data = data[(data["ownerUserId"] == decodedToken["userId"]) & (data["workspaceId"] == workspaceId)]
+                return data
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
