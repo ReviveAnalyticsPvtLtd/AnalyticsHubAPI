@@ -23,6 +23,7 @@ from jose import jwt
 import pandas as pd
 import datetime
 import hashlib
+import uuid
 import os
 
 class AuthenticationService:    
@@ -56,6 +57,7 @@ class AuthenticationService:
         try:
             passwordString = signupDetails.password + os.environ["SECRET_KEY"]
             hashedPassword = hashlib.md5(passwordString.encode("utf-8")).hexdigest()
+            workspaceId = str(uuid.uuid4())
             allUsers = list()
             page = 1
             while True:
@@ -77,6 +79,12 @@ class AuthenticationService:
                         "password": hashedPassword
                     }
                 ).execute()
+                _ = self.client.table("Workspaces").insert({
+                    "id": workspaceId,
+                    "ownerId": response.user.id,
+                    "ownerEmail": signupDetails.email,
+                    "workspaceName": "Default"
+                }).execute()
                 return response.user.id
             else:
                 raise ValueError("User Already Exists")
