@@ -38,7 +38,8 @@ class UpdateProjectState(BaseModel):
 class CreateProject(BaseModel):
     projectName: str
     projectDescription: str | None = None
-    domain: str
+    workspaceId: str
+    domainExpert: str
 
 class GenerateChartInput(BaseModel):
     inputQuery: str

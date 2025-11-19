@@ -76,7 +76,8 @@ class ManagementService:
                 "projectDescription": projectDetails.projectDescription,
                 "ownerUserId": decodedToken["userId"],
                 "ownerUserMail": decodedToken["email"],
-                "domain": projectDetails.domain
+                "workspaceId": projectDetails.workspaceId,
+                "domainExpert": projectDetails.domainExpert
             }).execute()
             return projectId
         except Exception as e:
@@ -84,11 +85,45 @@ class ManagementService:
             logger.error(exception)
             raise exception
         
-    def listProjects(self, token: str) -> pd.DataFrame:
+    def createWorkspace(self, workspaceName: str, token: str) -> str:
+        """
+        Create a new workspace for a user.
+
+        Args:
+            workspaceName (str): Details of the workspace to create.
+            token (str): JWT token for user authentication.
+
+        Returns:
+            str: The unique workspace ID of the newly created project.
+
+        Raises:
+            CustomException: For any errors during workspace creation.
+        """
+        try:
+            workspaceId = str(uuid.uuid4())
+            decodedToken = jwt.decode(
+                token,
+                os.environ["SECRET_KEY"],
+                algorithms = ["HS256"]
+            )
+            _ = self.client.table("Workspaces").insert({
+                "id": workspaceId,
+                "ownerId": decodedToken["userId"],
+                "ownerEmail": decodedToken["email"],
+                "workspaceName": workspaceName
+            }).execute()
+            return workspaceId
+        except Exception as e:
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception
+        
+    def listProjects(self, workspaceId: str, token: str) -> pd.DataFrame:
         """
         List all projects owned by the user associated with the provided token.
 
         Args:
+            workspaceId (str): workspaceId for which the projects needs to be listed.
             token (str): JWT token for user authentication.
 
         Returns:
@@ -104,7 +139,34 @@ class ManagementService:
                 algorithms = ["HS256"]
             )
             data = pd.DataFrame(self.client.table("Projects").select("*").execute().data)
-            data = data[data["ownerUserId"] == decodedToken["userId"]]
+            data = data[(data["ownerUserId"] == decodedToken["userId"]) & (data["workspaceId"] == workspaceId)]
+            return data
+        except Exception as e:
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception
+        
+    def listWokspaces(self, token: str) -> pd.DataFrame:
+        """
+        List all workspaces owned by the user associated with the provided token.
+
+        Args:
+            token (str): JWT token for user authentication.
+
+        Returns:
+            pd.DataFrame: DataFrame containing the user's workspaces.
+
+        Raises:
+            CustomException: For any errors during retrieval.
+        """
+        try:
+            decodedToken = jwt.decode(
+                token,
+                os.environ["SECRET_KEY"],
+                algorithms = ["HS256"]
+            )
+            data = pd.DataFrame(self.client.table("Workspaces").select("*").execute().data)
+            data = data[data["ownerId"] == decodedToken["userId"]]
             return data
         except Exception as e:
             exception = CustomException(e)
@@ -233,7 +295,7 @@ class ManagementService:
         """
         try:
             fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
-            domainFile = self.client.table("Projects").select("domain").eq("projectId", projectId).execute().data[0].get("domain") + ".json"
+            domainFile = self.client.table("Projects").select("domainExpert").eq("projectId", projectId).execute().data[0].get("domainExpert") + ".json"
             metadata = json.loads(urlopen(fileUrl).read())
             if domainFile in [x.get("name") for x in self.client.storage.from_("DomainSpecificKpis").list()]:
                 domainFileUrl = os.environ["DOMAIN_FILE_URL"].format(fileName = domainFile) + f"?cb={int(time.time())}"

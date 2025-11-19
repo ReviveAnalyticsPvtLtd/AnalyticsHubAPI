@@ -43,8 +43,26 @@ async def createProject(projectDetails: CreateProject, token = Depends(verifyTok
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))
     
-@router.get("/listProjects")
-async def listProjects(token = Depends(verifyToken)):
+@router.post("/createWorkspace/{workspaceName}")
+async def createWorkspace(workspaceName: str, token = Depends(verifyToken)):
+    """
+    Create a new workspace.
+
+    Args:
+        workspaceName (str): The name required to create a new workspace.
+        token: Authorization token dependency.
+
+    Returns:
+        ORJSONResponse: Success message with the new project ID or error message.
+    """
+    try:
+        workspaceId = managementService.createWorkspace(workspaceName = workspaceName, token = token)
+        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "workspaceId": workspaceId, "message": "Workspace created successfully"})
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = str(e))
+    
+@router.get("/listProjects/{workspaceId}")
+async def listProjects(workspaceId: str, token = Depends(verifyToken)):
     """
     List all projects accessible to the user.
 
@@ -55,7 +73,24 @@ async def listProjects(token = Depends(verifyToken)):
         ORJSONResponse: List of projects or error message.
     """
     try:
-        data = managementService.listProjects(token = token)
+        data = managementService.listProjects(workspaceId = workspaceId, token = token)
+        return ORJSONResponse(status_code = 200, content = {"projects": data.to_dict(orient = "records")})
+    except Exception as e:
+        raise HTTPException(status_code = 500, detail = str(e))
+    
+@router.get("/listWorkspaces")
+async def listWorkspaces(token = Depends(verifyToken)):
+    """
+    List all workspaces accessible to the user.
+
+    Args:
+        token: Authorization token dependency.
+
+    Returns:
+        ORJSONResponse: List of workspaces or error message.
+    """
+    try:
+        data = managementService.listWokspaces(token = token)
         return ORJSONResponse(status_code = 200, content = {"projects": data.to_dict(orient = "records")})
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))
