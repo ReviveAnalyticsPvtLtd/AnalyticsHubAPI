@@ -96,20 +96,20 @@ async def listWorkspaces(token = Depends(verifyToken)):
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))
 
-@router.patch("/updateWorkspaceId")
-async def updateWorkspaceId(switchWorkspaceDetails: SwitchWorkspaceDetails, token = Depends(verifyToken)):
+@router.patch("/updateWorkspaceId/{updatedWorkspaceId}")
+async def updateWorkspaceId(updatedWorkspaceId: str, token = Depends(verifyToken)):
     """
     Update the workspace id of a user.
 
     Args:
-        switchWorkspaceDetails (SwitchWorkspaceDetails): Details for updating current workspace of a user.
+        updatedWorkspaceId (str): Details for updating current workspace of a user.
         token: Authorization token dependency.
 
     Returns:
         ORJSONResponse: Success or error message.
     """
     try:
-        managementService.updateCurrentWorkspace(switchWorkspaceDetails = switchWorkspaceDetails)
+        managementService.updateCurrentWorkspace(updatedWorkspaceId = updatedWorkspaceId, token = token)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Current workspace updated successfully"})
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))

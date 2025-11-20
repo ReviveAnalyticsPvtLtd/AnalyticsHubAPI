@@ -177,18 +177,24 @@ class ManagementService:
             logger.error(exception)
             raise exception
     
-    def updateCurrentWorkspace(self, switchWorkspaceDetails: SwitchWorkspaceDetails) -> None:
+    def updateCurrentWorkspace(self, updatedWorkspaceId: str, token: str) -> None:
         """
         Update the current Workspace ID of a user.
 
         Args:
-            switchWorkspaceDetails (SwitchWorkspaceDetails): Details specifying userid and the updated workspace id.
+            updatedWorkspaceId (str): Details specifying the updated workspace id.
+            token (str): Token for extracting the user id.
 
         Raises:
             CustomException: For any errors during update.        
         """
         try:
-            _ = self.client.table("Users").update({"currentWorkspaceId": switchWorkspaceDetails.updatedWorkspaceId}).eq("userId", switchWorkspaceDetails.userId).execute()   
+            decodedToken = jwt.decode(
+                token,
+                os.environ["SECRET_KEY"],
+                algorithms = ["HS256"]
+            )
+            _ = self.client.table("Users").update({"currentWorkspaceId": updatedWorkspaceId}).eq("userId", decodedToken["userId"]).execute()   
             return
         except Exception as e:
             exception = CustomException(e)
