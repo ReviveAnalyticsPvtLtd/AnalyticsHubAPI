@@ -14,7 +14,6 @@ from fastapi.responses import ORJSONResponse, HTMLResponse
 from fastapi.exceptions import HTTPException
 from fastapi import APIRouter, Depends
 from api.models import (
-    SwitchWorkspaceDetails,
     UpdateProjectState,
     CreateProject,
     EditMetadata
