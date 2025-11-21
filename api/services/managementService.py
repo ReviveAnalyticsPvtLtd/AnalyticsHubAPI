@@ -18,7 +18,6 @@ from utils.logger import logger
 from urllib.request import urlopen
 from api.commons import client
 from api.models import (
-    SwitchWorkspaceDetails,
     UpdateProjectState,
     CreateProject,
     EditMetadata
