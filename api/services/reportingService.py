@@ -18,9 +18,10 @@ from analyticsHub.utils import readYaml
 from urllib.request import urlopen
 from utils.logger import logger
 from api.commons import client
-from string import Template
 import pandas as pd
+import string
 import orjson
+import random
 import json
 import uuid
 import time
@@ -60,7 +61,7 @@ class ReportingService:
 
         Args:
             projectId (str): The project ID.
-            chartType (str): The type of chart to generate (e.g., bar, line, pie, table, pivot, etc.).
+            chartType (str): The type of chart to generate (e.g., bar, line, pie, table, pivot, geoMap, etc.).
             xAxis (str): The column to use for the X axis.
             yAxis (str): The column to use for the Y axis.
             aggregationMetric (str, optional): The aggregation metric (sum, mean, etc.).
@@ -180,6 +181,16 @@ class ReportingService:
                 "chartType": "pivot",
                 "title": f"Pivot for {dataSourceName}",
                 "data": orjson.loads(pivotData)
+            }
+        elif chartType == "geoMap":
+            response = {
+                "chartType": "geoMap",
+                "map": {
+                    "mapType": "scatterMap",
+                    "data": {
+                        "points": [{"id": "".join(random.choice(string.ascii_letters + string.digits) for i in range(36)), "lat": lat, "long": long}] for lat, long in zip(finalResult[xAxis].tolist(), finalResult[yAxis].tolist())
+                    }
+                }
             }
         return response
     
@@ -371,7 +382,7 @@ class ReportingService:
                     values=panelChartDetails.values,
                     selectedColumns=panelChartDetails.selectedColumns
                 )
-                generatedCodeTemplate = Template(self.codeTemplates.get("panelChartWithoutBlend"))
+                generatedCodeTemplate = string.Template(self.codeTemplates.get("panelChartWithoutBlend"))
                 generatedCode = generatedCodeTemplate.substitute(
                     projectId = panelChartDetails.projectId,
                     chartType = panelChartDetails.chartType,
@@ -406,7 +417,7 @@ class ReportingService:
                     values=panelChartDetails.values,
                     selectedColumns=panelChartDetails.selectedColumns
                 )
-                generatedCodeTemplate = Template(self.codeTemplates.get("panelChartWithBlend"))
+                generatedCodeTemplate = string.Template(self.codeTemplates.get("panelChartWithBlend"))
                 generatedCode = generatedCodeTemplate.substitute(
                     projectId = panelChartDetails.projectId,
                     chartType = panelChartDetails.chartType,

@@ -124,6 +124,16 @@ panelChartWithBlend: |
                 "title": f"Pivot for {dataSourceName}",
                 "data": orjson.loads(pivotData)
             }
+        elif chartType == "geoMap":
+            response = {
+                "chartType": "geoMap",
+                "map": {
+                    "mapType": "scatterMap",
+                    "data": {
+                        "points": [{"id": "".join(random.choice(string.ascii_letters + string.digits) for i in range(36)), "lat": lat, "long": long}] for lat, long in zip(finalResult[xAxis].tolist(), finalResult[yAxis].tolist())
+                    }
+                }
+            }
         print(json.dumps(response, indent = 4, default=serializer))
     panelChart(
         projectId = "$projectId", 
