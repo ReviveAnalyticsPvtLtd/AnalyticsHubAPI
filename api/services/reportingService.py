@@ -188,7 +188,7 @@ class ReportingService:
                 "map": {
                     "mapType": "scatterMap",
                     "data": {
-                        "points": [{"id": "".join(random.choice(string.ascii_letters + string.digits) for i in range(12)), "lat": lat, "long": long}] for lat, long in zip(finalResult[xAxis].tolist(), finalResult[yAxis].tolist())
+                        "points": [{"id": "".join(random.choice(string.ascii_letters + string.digits) for i in range(16)), "lat": lat, "long": long} for lat, long in zip(finalResult[xAxis].tolist(), finalResult[yAxis].tolist())]
                     }
                 }
             }
