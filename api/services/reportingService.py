@@ -69,7 +69,7 @@ class ReportingService:
             tablesUsed (list[str] | str): Tables to use for the chart. Can be a single table or a list for blending.
             joinTypes (list[str], optional): Join types for merging tables (if blending).
             blendOn (list[str], optional): Columns to join on (if blending).
-            **kwargs: Additional keyword arguments for pivot charts (index, columns, values, selectedColumns).
+            **kwargs: Additional keyword arguments for pivot charts (index, columns, values, selectedColumns, mapType).
 
         Returns:
             dict: Chart-ready data structure suitable for frontend rendering.
@@ -188,7 +188,7 @@ class ReportingService:
                 "map": {
                     "mapType": "scatterMap",
                     "data": {
-                        "points": [{"id": "".join(random.choice(string.ascii_letters + string.digits) for i in range(36)), "lat": lat, "long": long}] for lat, long in zip(finalResult[xAxis].tolist(), finalResult[yAxis].tolist())
+                        "points": [{"id": "".join(random.choice(string.ascii_letters + string.digits) for i in range(12)), "lat": lat, "long": long}] for lat, long in zip(finalResult[xAxis].tolist(), finalResult[yAxis].tolist())
                     }
                 }
             }
@@ -380,7 +380,8 @@ class ReportingService:
                     index=panelChartDetails.index,
                     columns=panelChartDetails.columns,
                     values=panelChartDetails.values,
-                    selectedColumns=panelChartDetails.selectedColumns
+                    selectedColumns=panelChartDetails.selectedColumns,
+                    mapType=panelChartDetails.mapType
                 )
                 generatedCodeTemplate = string.Template(self.codeTemplates.get("panelChartWithoutBlend"))
                 generatedCode = generatedCodeTemplate.substitute(
@@ -394,7 +395,8 @@ class ReportingService:
                     index=panelChartDetails.index,
                     columns=panelChartDetails.columns,
                     values=panelChartDetails.values,
-                    selectedColumns=panelChartDetails.selectedColumns
+                    selectedColumns=panelChartDetails.selectedColumns,
+                    mapType=panelChartDetails.mapType
                 )
             elif "blendConfig.json" in allFiles:
                 blendConfigUrl = os.environ["FILE_URL"].format(projectId = panelChartDetails.projectId, fileName = "blendConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
@@ -415,7 +417,8 @@ class ReportingService:
                     index=panelChartDetails.index,
                     columns=panelChartDetails.columns,
                     values=panelChartDetails.values,
-                    selectedColumns=panelChartDetails.selectedColumns
+                    selectedColumns=panelChartDetails.selectedColumns,
+                    mapType=panelChartDetails.mapType
                 )
                 generatedCodeTemplate = string.Template(self.codeTemplates.get("panelChartWithBlend"))
                 generatedCode = generatedCodeTemplate.substitute(
@@ -431,7 +434,8 @@ class ReportingService:
                     index=panelChartDetails.index,
                     columns=panelChartDetails.columns,
                     values=panelChartDetails.values,
-                    selectedColumns=panelChartDetails.selectedColumns
+                    selectedColumns=panelChartDetails.selectedColumns,
+                    mapType=panelChartDetails.mapType
                 )
             else:
                 pass
