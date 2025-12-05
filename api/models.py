@@ -78,6 +78,8 @@ class PanelChartDetails(BaseModel):
     values: list[str] | None = None
     selectedColumns: list[str] | None = None
     mapType: str | None = None
+    isFilterApplied: bool | None = None
+    filters: list[dict] | None = None
 
 class CreateDataBlend(BaseModel):
     projectId: str

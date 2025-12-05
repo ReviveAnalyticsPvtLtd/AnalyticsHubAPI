@@ -7,7 +7,7 @@ panelChartWithBlend: |
         yAxis: str, 
         aggregationMetric: str | None, 
         dataSourceName: str, 
-        tablesUsed: list[str] | str, 
+        tablesUsed: list[str], 
         joinTypes: list[str] | None = None, 
         blendOn: list[str] | None = None,
         **kwargs
@@ -15,13 +15,16 @@ panelChartWithBlend: |
         import pandas as pd
         import orjson
         import json
-        if isinstance(tablesUsed, list):
+        if (not chartType == "geoMap") and (not kwargs.get("isFilterApplied")):
             allTables = [fetch_data(projectId, x) for x in tablesUsed]
             result = allTables[0]
             for i in range(len(joinTypes)):
                 result = pd.merge(left = result, right = allTables[i+1], on = blendOn[i], how = joinTypes[i], suffixes = ['_left', '_right'])
         else:
-            result = fetch_data(projectId, tablesUsed)
+            allTables = [fetch_data(projectId, x, kwargs.get("filters")) for x in tablesUsed]
+            result = allTables[0]
+            for i in range(len(joinTypes)):
+                result = pd.merge(left = result, right = allTables[i+1], on = blendOn[i], how = joinTypes[i], suffixes = ['_left', '_right'])
         if chartType != "pivot":
             if aggregationMetric == "sum":
                 finalResult = result.groupby(xAxis)[yAxis].sum().reset_index()
@@ -149,7 +152,9 @@ panelChartWithBlend: |
         columns = $columns,
         values = $values,
         selectedColumns = $selectedColumns,
-        mapType = $mapType
+        mapType = $mapType,
+        isFilterApplied = $isFilterApplied,
+        filters = $filters
     )
     ```
 
@@ -168,13 +173,10 @@ panelChartWithoutBlend: |
         import pandas as pd
         import orjson
         import json
-        if isinstance(tablesUsed, list):
-            allTables = [fetch_data(projectId, x) for x in tablesUsed]
-            result = allTables[0]
-            for i in range(len(joinTypes)):
-                result = pd.merge(left = result, right = allTables[i+1], on = blendOn[i], how = joinTypes[i], suffixes = ['_left', '_right'])
-        else:
+        if (not chartType == "geoMap") and (not kwargs.get("isFilterApplied")):
             result = fetch_data(projectId, tablesUsed)
+        else:
+            result = fetch_data(projectId, tablesUsed, kwargs.get("filters"))
         if chartType != "pivot":
             if aggregationMetric == "sum":
                 finalResult = result.groupby(xAxis)[yAxis].sum().reset_index()
@@ -300,6 +302,8 @@ panelChartWithoutBlend: |
         columns = $columns,
         values = $values,
         selectedColumns = $selectedColumns,
-        mapType = $mapType
+        mapType = $mapType,
+        isFilterApplied = $isFilterApplied,
+        filters = $filters
     )
     ```

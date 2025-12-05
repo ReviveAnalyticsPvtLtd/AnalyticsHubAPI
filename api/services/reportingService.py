@@ -69,18 +69,27 @@ class ReportingService:
             tablesUsed (list[str] | str): Tables to use for the chart. Can be a single table or a list for blending.
             joinTypes (list[str], optional): Join types for merging tables (if blending).
             blendOn (list[str], optional): Columns to join on (if blending).
-            **kwargs: Additional keyword arguments for pivot charts (index, columns, values, selectedColumns, mapType).
+            **kwargs: Additional keyword arguments for few charts (index, columns, values, selectedColumns, mapType, isFilterApplied, filters).
 
         Returns:
             dict: Chart-ready data structure suitable for frontend rendering.
         """
-        if isinstance(tablesUsed, list):
-            allTables = [fetch_data(projectId, x) for x in tablesUsed]
-            result = allTables[0]
-            for i in range(len(joinTypes)):
-                result = pd.merge(left = result, right = allTables[i+1], on = blendOn[i], how = joinTypes[i], suffixes = ['_left', '_right'])
+        if (not chartType == "geoMap") and (not kwargs.get("isFilterApplied")):
+            if isinstance(tablesUsed, list):
+                allTables = [fetch_data(projectId, x) for x in tablesUsed]
+                result = allTables[0]
+                for i in range(len(joinTypes)):
+                    result = pd.merge(left = result, right = allTables[i+1], on = blendOn[i], how = joinTypes[i], suffixes = ['_left', '_right'])
+            else:
+                result = fetch_data(projectId, tablesUsed)
         else:
-            result = fetch_data(projectId, tablesUsed)
+            if isinstance(tablesUsed, list):
+                allTables = [fetch_data(projectId = projectId, tableName = x, baseFilters = kwargs.get("filters")) for x in tablesUsed]
+                result = allTables[0]
+                for i in range(len(joinTypes)):
+                    result = pd.merge(left = result, right = allTables[i+1], on = blendOn[i], how = joinTypes[i], suffixes = ['_left', '_right'])
+            else:
+                result = fetch_data(projectId = projectId, tableName = tablesUsed, baseFilters = kwargs.get("filters"))
         if chartType != "pivot":
             if aggregationMetric == "sum":
                 finalResult = result.groupby(xAxis)[yAxis].sum().reset_index()
@@ -381,7 +390,9 @@ class ReportingService:
                     columns=panelChartDetails.columns,
                     values=panelChartDetails.values,
                     selectedColumns=panelChartDetails.selectedColumns,
-                    mapType=panelChartDetails.mapType
+                    mapType=panelChartDetails.mapType,
+                    isFilterApplied=panelChartDetails.isFilterApplied,
+                    filters=panelChartDetails.filters
                 )
                 generatedCodeTemplate = string.Template(self.codeTemplates.get("panelChartWithoutBlend"))
                 generatedCode = generatedCodeTemplate.substitute(
@@ -396,7 +407,9 @@ class ReportingService:
                     columns=panelChartDetails.columns,
                     values=panelChartDetails.values,
                     selectedColumns=panelChartDetails.selectedColumns,
-                    mapType=panelChartDetails.mapType
+                    mapType=panelChartDetails.mapType,
+                    isFilterApplied=panelChartDetails.isFilterApplied,
+                    filters=panelChartDetails.filters
                 )
             elif "blendConfig.json" in allFiles:
                 blendConfigUrl = os.environ["FILE_URL"].format(projectId = panelChartDetails.projectId, fileName = "blendConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
@@ -418,7 +431,9 @@ class ReportingService:
                     columns=panelChartDetails.columns,
                     values=panelChartDetails.values,
                     selectedColumns=panelChartDetails.selectedColumns,
-                    mapType=panelChartDetails.mapType
+                    mapType=panelChartDetails.mapType,
+                    isFilterApplied=panelChartDetails.isFilterApplied,
+                    filters=panelChartDetails.filters
                 )
                 generatedCodeTemplate = string.Template(self.codeTemplates.get("panelChartWithBlend"))
                 generatedCode = generatedCodeTemplate.substitute(
@@ -435,7 +450,9 @@ class ReportingService:
                     columns=panelChartDetails.columns,
                     values=panelChartDetails.values,
                     selectedColumns=panelChartDetails.selectedColumns,
-                    mapType=panelChartDetails.mapType
+                    mapType=panelChartDetails.mapType,
+                    isFilterApplied=panelChartDetails.isFilterApplied,
+                    filters=panelChartDetails.filters
                 )
             else:
                 pass
