@@ -206,6 +206,7 @@ class DashboardService:
                 "xLabels": details.xLabels,
                 "yLabels": details.yLabels,
                 "data": details.data,
+                "map": details.map,
                 "layout": details.layout,
                 "generatedCode": details.generatedCode
             }
