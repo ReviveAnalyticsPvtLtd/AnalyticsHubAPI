@@ -120,7 +120,7 @@ class ExportToDashboard(BaseModel):
     xLabels: list[str] | None = None
     yLabels: list[str] | None = None
     data: dict[str, list | dict] | list[dict] | str | None = None
-    map: dict
+    map: dict | None = None
     layout: dict[str, int]
     generatedCode: str
 
