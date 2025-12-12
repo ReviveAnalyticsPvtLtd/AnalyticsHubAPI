@@ -154,7 +154,7 @@ panelChartWithBlend: |
         columns = $columns,
         values = $values,
         selectedColumns = $selectedColumns,
-        mapType = $mapType,
+        mapType = "$mapType",
         isFilterApplied = $isFilterApplied,
         filters = $filters
     )
@@ -306,7 +306,7 @@ panelChartWithoutBlend: |
         columns = $columns,
         values = $values,
         selectedColumns = $selectedColumns,
-        mapType = $mapType,
+        mapType = "$mapType",
         isFilterApplied = $isFilterApplied,
         filters = $filters
     )
