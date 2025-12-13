@@ -28,9 +28,20 @@ import tempfile
 import uuid
 import json
 import time
+import ast
 import os
 import io
 import re
+
+class _FetchDataFilterTransformer(ast.NodeTransformer):
+    def __init__(self, filters: list):
+        self.filters = filters
+
+    def visit_Call(self, node):
+        if isinstance(node.func, ast.Name) and node.func.id == "fetch_data":
+            filters_node = ast.parse(repr(self.filters)).body[0].value
+            node.args.append(filters_node)
+        return self.generic_visit(node)
 
 class DashboardService:
     """
@@ -47,6 +58,20 @@ class DashboardService:
         self.client = client
 
     @staticmethod
+    def _removeCodeFences(code: str):
+        """
+        Remove code fences from a string.
+        """
+        return "\n".join(code.split("```")[-2].split("\n")[1:])
+
+    @staticmethod
+    def _addCodeFences(code: str):
+        """
+        Add code fences to a string.
+        """
+        return "```python\n" + code.strip() + "\n```"
+
+    @staticmethod
     def _applyFilterToAWidget(widget: dict, filters: list, codeExecutor: callable) -> dict:
         """
         Apply filters to a widget's generated code and update its data accordingly.
@@ -61,12 +86,16 @@ class DashboardService:
         """
         widget = widget.copy()
         code = widget.get("generatedCode")
-        if "```" in code:
-            code = "\n".join(code.split("```")[-2].split("\n")[1:])
-        else:
-            pass
-        code = re.sub(r'fetch_data\(([^)]+)\)', r'fetch_data(\1, {filters})'.format(filters = filters), code)
+        if "```" in code: code = DashboardService._removeCodeFences(code)
+        else: pass
+        tree = ast.parse(code)
+        transformer = _FetchDataFilterTransformer(filters)
+        tree = transformer.visit(tree)
+        ast.fix_missing_locations(tree)
+        code = ast.unparse(tree)
+        code = DashboardService._addCodeFences(code)
         result = codeExecutor.run(code)
+        widget["generatedCode"] = code
         try:
             resultDict = json.loads(result)
             widget.update(resultDict)
