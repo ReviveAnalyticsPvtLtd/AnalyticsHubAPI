@@ -141,14 +141,14 @@ class DashboardService:
                 columnInfo = dict()
                 columnInfo["columnName"] = column
                 columnInfo["type"] = dtype.name
-                columnInfo["min"] = df[column].min()
-                columnInfo["max"] = df[column].max()
+                columnInfo["min"] = str(df[column].min())
+                columnInfo["max"] = str(df[column].max())
                 allColumns.append(columnInfo)
             else:
                 columnInfo = dict()
                 columnInfo["columnName"] = column
                 columnInfo["type"] = dtype.name
-                columnInfo["uniqueValues"] = df[column].unique().tolist()
+                columnInfo["uniqueValues"] = [str(x) for x in df[column].unique().tolist()]
                 allColumns.append(columnInfo)
         return allColumns
 
