@@ -160,25 +160,25 @@ class AuthenticationService:
             elif filteredResult[0].user_metadata.get("email_verified") == False:
                 raise ValueError("Email not verified")
             else:  
-                allData = pd.DataFrame(self.client.table("Users").select("userId", "email", "password", "onboarded", "currentWorkspaceId").execute().data, columns = ["userId", "email", "password", "onboarded", "currentWorkspaceId"])
+                allData = pd.DataFrame(self.client.table("Users").select("userId", "email", "password", "onboarded", "currentWorkspaceId", "createdAt", "subscriptionExpiry", "subscriptionPlan").execute().data, columns = ["userId", "email", "password", "onboarded", "currentWorkspaceId", "createdAt", "subscriptionExpiry", "subscriptionPlan"])
                 dataSlice = allData[allData["email"] == loginDetails.email].iloc[0, :]
                 if dataSlice["password"] != hashedPassword:
                     raise ValueError("Invalid email or password")
                 else:
-                    sessionStartTime = str(datetime.datetime.now())
+                    sessionStartTime = datetime.datetime.utcnow()
                     dictItems = {
                         "userId": dataSlice["userId"],
                         "email": loginDetails.email,
                         "password": hashedPassword,
-                        "sessionStartTime": sessionStartTime
+                        "sessionStartTime": str(sessionStartTime)
                     }
                     accessToken = jwt.encode(dictItems, os.environ["SECRET_KEY"], "HS256")
                     self.client.table("Sessions").insert({
                         "userId": dataSlice["userId"],
                         "email": dataSlice["email"],
                         "accessToken": accessToken,
-                        "sessionStartTime": sessionStartTime,
-                        "lastActivity": sessionStartTime
+                        "sessionStartTime": str(sessionStartTime),
+                        "lastActivity": str(sessionStartTime)
                     }).execute()
                     response = {
                         "status": "SUCCESS",
@@ -186,7 +186,11 @@ class AuthenticationService:
                         "email": dataSlice["email"],
                         "accessToken": accessToken,
                         "onboarded": int(dataSlice["onboarded"]),
-                        "currentWorkspaceId": dataSlice["currentWorkspaceId"]
+                        "currentWorkspaceId": dataSlice["currentWorkspaceId"],
+                        "subscriptionStatus": "Active" if pd.to_datetime(dataSlice["subscriptionExpiry"]) > pd.to_datetime(datetime.datetime.utcnow()) else "Expired",
+                        "createdAt": str(dataSlice["createdAt"]),
+                        "subscriptionExpiry": str(dataSlice["subscriptionExpiry"]),
+                        "subscriptionPlan": dataSlice["subscriptionPlan"]
                     }
             return response
         except Exception as e:
