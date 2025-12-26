@@ -8,7 +8,7 @@ __version__ = "1.0.0"
 __author__ = "Rauhan Ahmed Siddiqui"
 
 
-from api.routers import authentication, manager, dataLoader, reporting, utils, blends, dashboard
+from api.routers import authentication, manager, dataLoader, reporting, utils, blends, dashboard, subscriptions
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from api_analytics.fastapi import Analytics
@@ -64,3 +64,4 @@ app.include_router(blends.router, prefix = "/blends", tags = ["Blends"])
 app.include_router(reporting.router, prefix = "/reportingTool", tags = ["Reporting Tool"])
 app.include_router(dashboard.router, prefix = "/dashboard", tags = ["Dashboard"])
 app.include_router(utils.router, prefix = "/utils", tags = ["Utilities"])
+app.include_router(subscriptions.router, prefix = "/subscriptions", tags = ["Subscriptions"])
