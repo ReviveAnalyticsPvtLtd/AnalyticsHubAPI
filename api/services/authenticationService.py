@@ -160,7 +160,7 @@ class AuthenticationService:
             elif filteredResult[0].user_metadata.get("email_verified") == False:
                 raise ValueError("Email not verified")
             else:  
-                allData = pd.DataFrame(self.client.table("Users").select("userId", "email", "password", "onboarded", "currentWorkspaceId", "createdAt", "subscriptionExpiry", "subscriptionPlan").execute().data, columns = ["userId", "email", "password", "onboarded", "currentWorkspaceId", "createdAt", "subscriptionExpiry", "subscriptionPlan"])
+                allData = pd.DataFrame(self.client.table("Users").select("userId", "email", "password", "onboarded", "currentWorkspaceId", "createdAt", "subscriptionStart", "subscriptionExpiry", "subscriptionPlan").execute().data, columns = ["userId", "email", "password", "onboarded", "currentWorkspaceId", "createdAt", "subscriptionStart", "subscriptionExpiry", "subscriptionPlan"])
                 dataSlice = allData[allData["email"] == loginDetails.email].iloc[0, :]
                 if dataSlice["password"] != hashedPassword:
                     raise ValueError("Invalid email or password")
@@ -187,8 +187,8 @@ class AuthenticationService:
                         "accessToken": accessToken,
                         "onboarded": int(dataSlice["onboarded"]),
                         "currentWorkspaceId": dataSlice["currentWorkspaceId"],
-                        "subscriptionStatus": "Active" if pd.to_datetime(dataSlice["subscriptionExpiry"]) > pd.to_datetime(datetime.datetime.utcnow()) else "Expired",
-                        "createdAt": str(dataSlice["createdAt"]),
+                        "subscriptionStatus": "ACTIVE" if pd.to_datetime(dataSlice["subscriptionExpiry"]) >= pd.to_datetime(datetime.datetime.utcnow()) else "INACTIVE",
+                        "subscriptionStart": str(dataSlice["subscriptionStart"]),
                         "subscriptionExpiry": str(dataSlice["subscriptionExpiry"]),
                         "subscriptionPlan": dataSlice["subscriptionPlan"]
                     }
@@ -214,7 +214,7 @@ class AuthenticationService:
         try:
             passwordString = str(loginDetails.sub) + str(loginDetails.id) + str(loginDetails.nodeId) + os.environ["SECRET_KEY"]
             hashedPassword = hashlib.md5(passwordString.encode("utf-8")).hexdigest()
-            registeredUsers = pd.DataFrame(self.client.table("Users").select("userId", "email", "password", "onboarded").execute().data, columns = ["userId", "email", "password", "onboarded"])
+            registeredUsers = pd.DataFrame(self.client.table("Users").select("userId", "email", "password", "onboarded", "currentWorkspaceId", "createdAt", "subscriptionStart", "subscriptionExpiry", "subscriptionPlan").execute().data, columns = ["userId", "email", "password", "onboarded", "currentWorkspaceId", "createdAt", "subscriptionStart", "subscriptionExpiry", "subscriptionPlan"])
             if loginDetails.email not in registeredUsers["email"].unique():
                 response = self.client.table(table_name = "Users").insert(
                     {
@@ -222,11 +222,11 @@ class AuthenticationService:
                         "password": hashedPassword
                     }
                 ).execute()
-                registeredUsers = pd.DataFrame(self.client.table("Users").select("userId", "email", "password", "onboarded").execute().data, columns = ["userId", "email", "password", "onboarded"])
+                registeredUsers = pd.DataFrame(self.client.table("Users").select("userId", "email", "password", "onboarded", "currentWorkspaceId", "createdAt", "subscriptionStart", "subscriptionExpiry", "subscriptionPlan").execute().data, columns = ["userId", "email", "password", "onboarded", "currentWorkspaceId", "createdAt", "subscriptionStart", "subscriptionExpiry", "subscriptionPlan"])
             else:
                 pass
             dataSlice = registeredUsers[registeredUsers["email"] == loginDetails.email].iloc[0, :]
-            sessionStartTime = str(datetime.datetime.now())
+            sessionStartTime = str(datetime.datetime.utcnow())
             dictItems = {
                 "userId": dataSlice["userId"],
                 "email": loginDetails.email,
