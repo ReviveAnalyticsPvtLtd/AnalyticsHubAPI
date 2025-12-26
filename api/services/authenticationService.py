@@ -180,6 +180,13 @@ class AuthenticationService:
                         "sessionStartTime": str(sessionStartTime),
                         "lastActivity": str(sessionStartTime)
                     }).execute()
+                    if dataSlice["subscriptionExpiry"] is None:
+                        subscriptionStatus = "INACTIVE"
+                    else:
+                        if pd.to_datetime(dataSlice["subscriptionExpiry"]) >= pd.to_datetime(datetime.datetime.utcnow()):
+                            subscriptionStatus = "ACTIVE"
+                        else:
+                            subscriptionStatus = "INACTIVE"
                     response = {
                         "status": "SUCCESS",
                         "userId": dataSlice["userId"],
@@ -187,7 +194,7 @@ class AuthenticationService:
                         "accessToken": accessToken,
                         "onboarded": int(dataSlice["onboarded"]),
                         "currentWorkspaceId": dataSlice["currentWorkspaceId"],
-                        "subscriptionStatus": "ACTIVE" if pd.to_datetime(dataSlice["subscriptionExpiry"]) >= pd.to_datetime(datetime.datetime.utcnow()) else "INACTIVE",
+                        "subscriptionStatus": subscriptionStatus,
                         "subscriptionStart": str(dataSlice["subscriptionStart"]),
                         "subscriptionExpiry": str(dataSlice["subscriptionExpiry"]),
                         "subscriptionPlan": dataSlice["subscriptionPlan"]
