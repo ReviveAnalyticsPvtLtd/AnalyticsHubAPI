@@ -12,19 +12,7 @@ __all__ = ["subscriptionService"]
 from utils.exceptionHandler import CustomException
 from utils.logger import logger
 from api.commons import client
-from api.models import (
-    OnboardingDetails,
-    LoginWithProvider,
-    NewCredentials,
-    Login,
-    SignUp
-)
-from jose import jwt
-import pandas as pd
 import datetime
-import hashlib
-import uuid
-import os
 
 class SubscriptionService:    
     """
@@ -47,7 +35,6 @@ class SubscriptionService:
         Args:
             userId (str): The ID of the user to activate the free trial for.
         """
-        logger.info(f"Activating free trial for user: {userId}")
         try:
             currentTime = datetime.datetime.utcnow()
             trialDurationDays = 12
@@ -55,8 +42,8 @@ class SubscriptionService:
             subscriptionExpiry = currentTime + datetime.timedelta(days=trialDurationDays)
             updateData = {
                 "subscriptionPlan": "free",
-                "subscriptionStart": subscriptionStart,
-                "subscriptionExpiry": subscriptionExpiry
+                "subscriptionStart": str(subscriptionStart),
+                "subscriptionExpiry": str(subscriptionExpiry)
             }
             _ = self.client.table("Users").update(updateData).eq("userId", userId).execute()
             return
