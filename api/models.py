@@ -140,3 +140,9 @@ class DeleteDashboardElement(BaseModel):
     projectId: str
     deletionObject: str
     id: str
+
+class VerifySubscriptionRequest(BaseModel):
+    razorpaySubscriptionId: str
+    razorpayPaymentId: str 
+    razorpaySignature: str 
+    userId: str 
