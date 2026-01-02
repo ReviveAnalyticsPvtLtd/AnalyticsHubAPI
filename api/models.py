@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+from enum import Enum
 
 class SignUp(BaseModel):
     email: str
@@ -146,3 +147,9 @@ class VerifySubscriptionRequest(BaseModel):
     razorpayPaymentId: str 
     razorpaySignature: str 
     userId: str 
+
+class SubscriptionPlan(str, Enum):
+    MONTHLY_20 = "plan_RyCW915DB49WRM"
+    MONTHLY_40 = "plan_RyCW9rJJqElXWS"
+    MONTHLY_60 = "plan_RyCWAg6yJRfm0I"
+    MONTHLY_80 = "plan_RyCWBUIbiGQwTv"

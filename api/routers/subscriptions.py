@@ -9,8 +9,8 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["router"]
 
 
+from api.models import VerifySubscriptionRequest, SubscriptionPlan
 from api.services.subscriptionService import subscriptionService
-from api.models import VerifySubscriptionRequest
 from fastapi.exceptions import HTTPException
 from fastapi.responses import ORJSONResponse
 from fastapi import APIRouter, Depends
@@ -48,19 +48,19 @@ async def activateFreeTrial(userId: str, token=Depends(verifyToken)):
 
 
 @router.post("/createSubscription")
-async def createSubscription(planId: str, token=Depends(verifyToken)):
+async def createSubscription(planId: SubscriptionPlan, token=Depends(verifyToken)):
     """
     Create a Razorpay subscription.
 
     Args:
-        planId (str): Razorpay plan ID.
+        planId (SubscriptionPlan): Razorpay plan ID.
         token: Authorization token dependency.
 
     Returns:
         ORJSONResponse: Subscription details required for checkout.
     """
     try:
-        result = subscriptionService.createSubscription(planId=planId)
+        result = subscriptionService.createSubscription(planId=planId.value)
         return ORJSONResponse(status_code=200, content=result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
