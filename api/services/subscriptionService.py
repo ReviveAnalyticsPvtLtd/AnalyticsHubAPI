@@ -41,6 +41,12 @@ class SubscriptionService:
                 os.environ["RAZORPAY_KEY_SECRET"]
             )
         )
+        self.PLAN_ID_MAP = {
+            "MONTHLY_20": "plan_RyCW915DB49WRM",
+            "MONTHLY_40": "plan_RyCW9rJJqElXWS",
+            "MONTHLY_60": "plan_RyCWAg6yJRfm0I",
+            "MONTHLY_80": "plan_RyCWBUIbiGQwTv",
+        }
 
     def activateFreeTrial(self, userId: str) -> None:
         """
@@ -84,7 +90,7 @@ class SubscriptionService:
         """
         try:
             subscription = self.razorpayClient.subscription.create({
-                "plan_id": planId,
+                "plan_id": self.PLAN_ID_MAP[planId],
                 "customer_notify": 1,
                 "total_count": 12
             })

@@ -149,7 +149,7 @@ class VerifySubscriptionRequest(BaseModel):
     userId: str 
 
 class SubscriptionPlan(str, Enum):
-    MONTHLY_20 = "plan_RyCW915DB49WRM"
-    MONTHLY_40 = "plan_RyCW9rJJqElXWS"
-    MONTHLY_60 = "plan_RyCWAg6yJRfm0I"
-    MONTHLY_80 = "plan_RyCWBUIbiGQwTv"
+    MONTHLY_20 = "MONTHLY_20"
+    MONTHLY_40 = "MONTHLY_40"
+    MONTHLY_60 = "MONTHLY_60"
+    MONTHLY_80 = "MONTHLY_80"
