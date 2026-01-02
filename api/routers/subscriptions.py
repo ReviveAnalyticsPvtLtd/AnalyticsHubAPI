@@ -53,14 +53,14 @@ async def createSubscription(planId: SubscriptionPlan, token=Depends(verifyToken
     Create a Razorpay subscription.
 
     Args:
-        planId (SubscriptionPlan): Razorpay plan ID.
+        planId (str): Razorpay plan ID.
         token: Authorization token dependency.
 
     Returns:
         ORJSONResponse: Subscription details required for checkout.
     """
     try:
-        result = subscriptionService.createSubscription(planId=planId.value)
+        result = subscriptionService.createSubscription(planId=planId.value, token=token)
         return ORJSONResponse(status_code=200, content=result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

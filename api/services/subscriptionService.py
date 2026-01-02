@@ -14,11 +14,12 @@ __all__ = ["subscriptionService"]
 from utils.exceptionHandler import CustomException
 from utils.logger import logger
 from api.commons import client
-import datetime
-import os
-import hmac
-import hashlib
+from jose import jwt
 import razorpay
+import datetime
+import hashlib
+import hmac
+import os
 
 
 class SubscriptionService:
@@ -58,32 +59,28 @@ class SubscriptionService:
         try:
             currentTime = datetime.datetime.utcnow()
             trialDurationDays = 12
-
             updateData = {
                 "subscriptionPlan": "free",
                 "subscriptionStart": currentTime.isoformat(),
                 "subscriptionExpiry": (
                     currentTime + datetime.timedelta(days=trialDurationDays)
-                ).isoformat()
+                ).isoformat(),
+                "subscribedExperts": "banking, manufacturing, supplychain, telecom"
             }
-
-            self.client.table("Users").update(
-                updateData
-            ).eq("userId", userId).execute()
-
+            self.client.table("Users").update(updateData).eq("userId", userId).execute()
             return
-
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
             raise exception
 
-    def createSubscription(self, planId: str) -> dict:
+    def createSubscription(self, planId: str, token: str) -> dict:
         """
         Create a Razorpay subscription.
 
         Args:
             planId (str): Razorpay plan ID.
+            token (str): Authorization token.
 
         Returns:
             dict: Data required to open Razorpay checkout.
@@ -94,7 +91,15 @@ class SubscriptionService:
                 "customer_notify": 1,
                 "total_count": 12
             })
+            decodedToken = jwt.decode(
+                token,
+                os.environ["SECRET_KEY"],
+                algorithms = ["HS256"]
+            )
             return {
+                "userId": decodedToken.get("userId"),
+                "userEmail": decodedToken.get("email"),
+                "razorpayKey": os.environ["RAZORPAY_KEY_ID"],
                 "subscriptionId": subscription["id"],
                 "status": subscription["status"]
             }
@@ -102,14 +107,13 @@ class SubscriptionService:
             exception = CustomException(e)
             logger.error(exception)
             raise exception
-
+        
     def verifySubscription(self, payload: dict) -> None:
         """
         Verify Razorpay subscription checkout signature.
 
         This method performs official HMAC SHA256 verification
-        using Razorpay API secret. Intended for MVP usage
-        without webhook integration.
+        using Razorpay API secret. 
 
         Args:
             payload (dict): Razorpay checkout response payload.
@@ -119,7 +123,8 @@ class SubscriptionService:
             subscriptionId = payload.get("razorpaySubscriptionId")
             signature = payload.get("razorpaySignature")
             userId = payload.get("userId")
-            if not all([paymentId, subscriptionId, signature, userId]):
+            experts = payload.get("subscribedExperts")  
+            if not all([paymentId, subscriptionId, signature, userId, experts]):
                 raise Exception("Missing Razorpay verification fields")
             message = f"{paymentId}|{subscriptionId}"
             expectedSignature = hmac.new(
@@ -136,12 +141,14 @@ class SubscriptionService:
                 "subscriptionStatus": "active",
                 "subscriptionPlan": "paid",
                 "subscriptionStart": currentTime,
-                "subscriptionExpiry": expiry
+                "subscriptionExpiry": expiry,
+                "subscribedExperts": ", ".join(experts)
             }).eq("userId", userId).execute()
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
             raise exception
+
 
 
 subscriptionService = SubscriptionService()

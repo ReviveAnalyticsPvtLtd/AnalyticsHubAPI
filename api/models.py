@@ -143,6 +143,7 @@ class DeleteDashboardElement(BaseModel):
     id: str
 
 class VerifySubscriptionRequest(BaseModel):
+    subscribedExperts: list[str]
     razorpaySubscriptionId: str
     razorpayPaymentId: str 
     razorpaySignature: str 
