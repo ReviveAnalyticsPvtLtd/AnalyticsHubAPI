@@ -61,7 +61,7 @@ class SubscriptionService:
             trialDurationDays = 12
             updateData = {
                 "subscriptionPlan": "free",
-                "subscriptionStart": currentTime.isoformat(),
+                "subscriptionStart": currentTime,
                 "subscriptionExpiry": (
                     currentTime + datetime.timedelta(days=trialDurationDays)
                 ).isoformat(),
@@ -140,8 +140,8 @@ class SubscriptionService:
                 "razorpaySubscriptionId": subscriptionId,
                 "subscriptionStatus": "active",
                 "subscriptionPlan": "paid",
-                "subscriptionStart": currentTime,
-                "subscriptionExpiry": expiry,
+                "subscriptionStart": str(currentTime),
+                "subscriptionExpiry": str(expiry),
                 "subscribedExperts": ", ".join(experts)
             }).eq("userId", userId).execute()
         except Exception as e:
