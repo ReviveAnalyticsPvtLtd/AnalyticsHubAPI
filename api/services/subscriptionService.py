@@ -138,7 +138,6 @@ class SubscriptionService:
             expiry = currentTime + datetime.timedelta(days=30)
             self.client.table("Users").update({
                 "razorpaySubscriptionId": subscriptionId,
-                "subscriptionStatus": "active",
                 "subscriptionPlan": "paid",
                 "subscriptionStart": str(currentTime),
                 "subscriptionExpiry": str(expiry),
