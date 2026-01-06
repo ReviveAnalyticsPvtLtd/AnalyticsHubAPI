@@ -101,6 +101,7 @@ class SubscriptionService:
                 "userEmail": decodedToken.get("email"),
                 "razorpayKey": os.environ["RAZORPAY_KEY_ID"],
                 "subscriptionId": subscription["id"],
+                "shortUrl": subscription["short_url"],
                 "status": subscription["status"]
             }
         except Exception as e:
