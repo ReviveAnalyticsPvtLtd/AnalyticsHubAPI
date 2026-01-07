@@ -10,6 +10,7 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["CustomException"]
 
 
+from sys import exception
 from fastapi import HTTPException
 import traceback
 
@@ -28,21 +29,27 @@ class CustomException(Exception):
         """
         self.statusCode = statusCode
         self.uiMessage = uiMessage
-        tb = traceback.extract_tb(tb = exception.__traceback__)[-1]
-        customErrorMessage = "Error encountered in line no [{lineNumber}], filename : [{fileName}], saying [{errorMessage}]"
-        self.customErrorMessage = customErrorMessage.format(
-            lineNumber = tb.lineno,
-            fileName = tb.filename,
-            errorMessage = str(exception)
-        )
+        tbList = traceback.extract_tb(exception.__traceback__) if exception.__traceback__ else []
+        if tbList:
+            tb = tbList[-1]
+            lineNumber = tb.lineno
+            fileName = tb.filename
+            customErrorMessage = "Error encountered in line no: [{lineNumber}], filename: [{fileName}], saying: [{errorMessage}]"
+            self.customErrorMessage = customErrorMessage.format(
+                lineNumber = lineNumber,
+                fileName = fileName,
+                errorMessage = str(exception)
+            )
+        else:
+            self.customErrorMessage = self.uiMessage
         super().__init__(self.customErrorMessage)
 
 def raiseHttpException(e: CustomException):
     raise HTTPException(
         status_code=e.statusCode,
         detail={
-            "uiMessage": e.uiMessage,
-            "customErrorMessage": e.customErrorMessage,
-            "statusCode": e.statusCode
+            "status": e.statusCode,
+            "message": e.uiMessage,
+            "backendLogMessage": e.customErrorMessage,
         }
     )
