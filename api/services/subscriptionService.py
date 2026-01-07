@@ -61,10 +61,10 @@ class SubscriptionService:
             trialDurationDays = 12
             updateData = {
                 "subscriptionPlan": "free",
-                "subscriptionStart": currentTime,
-                "subscriptionExpiry": (
+                "subscriptionStart": str(currentTime),
+                "subscriptionExpiry": str(
                     currentTime + datetime.timedelta(days=trialDurationDays)
-                ).isoformat(),
+                ),
                 "subscribedExperts": "banking, manufacturing, supplychain, telecom"
             }
             self.client.table("Users").update(updateData).eq("userId", userId).execute()
