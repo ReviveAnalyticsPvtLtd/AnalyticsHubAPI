@@ -43,161 +43,216 @@ class DataLoadService:
 
     async def loadCsvData(self, projectId: Annotated[str, Form()], files: list[UploadFile]) -> None:
         """
-        Loads CSV data into the project, converts it to Parquet format, and uploads it to storage.
-
-        Args:
-            projectId (str): The project identifier.
-            files (list): The list of uploaded CSV files.
-        Returns:
-            None
+        Load CSV files into project storage.
         Raises:
-            CustomException: If loading or uploading fails.
+            CustomException:
+                400 - Missing projectId or files
+                415 - Unsupported file type
+                422 - Invalid CSV upload details
+                500 - CSV upload failed
         """
         try:
-            for file in files:              
-                with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
-                    pd.read_csv(io.BytesIO(await file.read()), parse_dates = True).to_parquet(temp.name, compression = "snappy")
-                    _ = self.client.storage.from_("AnalyticsHub").upload(
-                        file = temp.name,
-                        path = f"{projectId}/{os.path.splitext(file.filename)[0] + '.parquet'}",
-                        file_options = {"upsert": "true"}
+            if not projectId or not files:
+                raise CustomException(
+                    ValueError("Missing projectId or files"),
+                    statusCode=400,
+                    uiMessage="Missing projectId or files."
+                )
+            for file in files:
+                if not file.filename.lower().endswith(".csv"):
+                    raise CustomException(
+                        ValueError("Invalid file type"),
+                        statusCode=415,
+                        uiMessage="Unsupported file type. Upload CSV files only."
                     )
-                    temp.close()
-            return 
+                with tempfile.NamedTemporaryFile(delete=True, suffix=".parquet") as temp:
+                    pd.read_csv(io.BytesIO(await file.read()), parse_dates=True).to_parquet(
+                        temp.name, compression="snappy"
+                    )
+                    self.client.storage.from_("AnalyticsHub").upload(
+                        file=temp.name,
+                        path=f"{projectId}/{os.path.splitext(file.filename)[0]}.parquet",
+                        file_options={"upsert": "true"}
+                    )
+            return
+        except CustomException:
+            raise
         except Exception as e:
-            exception  = CustomException(e)
+            exception = CustomException(
+                e,
+                uiMessage="CSV upload failed. Try again later."
+            )
             logger.error(exception)
             raise exception
         
     async def loadExcelData(self, projectId: Annotated[str, Form()], files: list[UploadFile]) -> None:
         """
-        Loads Excel data (optionally from a specific sheet) into the project, converts it to Parquet format, and uploads it to storage.
-
-        Args:
-            projectId (str): The project identifier.
-            files (list): The list of uploaded excels files.
-        Returns:
-            None
+        Load Excel files into project storage.
         Raises:
-            CustomException: If loading or uploading fails.
+            CustomException:
+                400 - Missing projectId or files
+                415 - Unsupported file type
+                422 - Invalid Excel upload details
+                500 - Excel upload failed
         """
         try:
+            if not projectId or not files:
+                raise CustomException(
+                    ValueError("Missing projectId or files"),
+                    statusCode=400,
+                    uiMessage="Missing projectId or files."
+                )
             for file in files:
-                allSheetData = pd.read_excel(io.BytesIO(await file.read()), sheet_name = None, parse_dates = True)
+                if not file.filename.lower().endswith((".xls", ".xlsx")):
+                    raise CustomException(
+                        ValueError("Invalid file type"),
+                        statusCode=415,
+                        uiMessage="Unsupported file type. Upload Excel files only."
+                    )
+                allSheetData = pd.read_excel(io.BytesIO(await file.read()), sheet_name=None, parse_dates=True)
                 for sheetName, sheetData in allSheetData.items():
-                    with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
-                        sheetData.to_parquet(temp.name, compression = "snappy")
-                        fileName = f"{os.path.splitext(file.filename)[0] + '_' + sheetName + '.parquet'}"
-                        _ = self.client.storage.from_("AnalyticsHub").upload(
-                            file = temp.name,
-                            path = f"{projectId}/{fileName}",
-                            file_options = {"upsert": "true"}
+                    with tempfile.NamedTemporaryFile(delete=True, suffix=".parquet") as temp:
+                        sheetData.to_parquet(temp.name, compression="snappy")
+                        fileName = f"{os.path.splitext(file.filename)[0]}_{sheetName}.parquet"
+                        self.client.storage.from_("AnalyticsHub").upload(
+                            file=temp.name,
+                            path=f"{projectId}/{fileName}",
+                            file_options={"upsert": "true"}
                         )
-                        temp.close()
             return
+        except CustomException:
+            raise
         except Exception as e:
-            exception  = CustomException(e)
+            exception = CustomException(
+                e,
+                uiMessage="Excel upload failed. Try again later."
+            )
             logger.error(exception)
             raise exception
         
     def loadMySql(self, connection: LoadMySQLorPostgreSQL) -> None:
         """
-        Loads data from a MySQL database table into the project, converts it to Parquet format, and uploads it to storage.
-
-        Args:
-            connection (LoadMySQLorPostgreSQL): Connection details for the MySQL database.
-        Returns:
-            None
+        Load data from MySQL database.
         Raises:
-            CustomException: If loading or uploading fails.
+            CustomException:
+                400 - Missing required DB connection fields
+                400 - Unable to connect to MySQL
+                422 - Invalid connection details
+                500 - MySQL data load failed
         """
         try:
-            with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
-                connStr = f"mysql+pymysql://{connection.user}:{connection.password}@{connection.host}:{connection.port}/{connection.db}"
-                engine = create_engine(connStr)
-                pd.read_sql(f"SELECT * FROM {connection.table}", engine, parse_dates = True).to_parquet(temp.name, compression = "snappy")
-                _ = self.client.storage.from_("AnalyticsHub").upload(
-                    file = temp.name,
-                    path = f"{connection.projectId}/{connection.table + '.parquet'}",
-                    file_options = {"upsert": "true"}
+            required = [connection.host, connection.port, connection.user,
+                        connection.password, connection.db, connection.table, connection.projectId]
+            if not all(required):
+                raise CustomException(
+                    ValueError("Missing required DB fields"),
+                    statusCode=400,
+                    uiMessage="Missing required DB connection fields."
                 )
-                if "connections.json" in [x.get("name") for x in client.storage.from_("AnalyticsHub").list(path = connection.projectId)]:
-                    databaseConnectionsUrl = os.environ["FILE_URL"].format(projectId = connection.projectId, fileName = "connections.json").replace(".parquet", "") + f"?cb={int(time.time())}"
-                    databaseConnections = json.loads(urlopen(databaseConnectionsUrl).read())
-                    connectionDetails = connection.model_dump()
-                    connectionDetails.pop("projectId")
-                    connectionDetails["type"] = "MySQL/PostgreSQL"
-                    databaseConnections[max([int(x) for x in databaseConnections.keys()]) + 1] = connectionDetails
-                else:
-                    connectionDetails = connection.model_dump()
-                    connectionDetails.pop("projectId")
-                    connectionDetails["type"] = "MySQL/PostgreSQL"
-                    databaseConnections = {"1": connectionDetails}
-                with io.BytesIO() as buffer:
-                    buffer.write(json.dumps(databaseConnections, indent=4).encode("utf-8"))
-                    buffer.seek(0)
-                    _ = client.storage.from_("AnalyticsHub").upload(path = f"{connection.projectId}/connections.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
-                temp.close()
+            connStr = f"mysql+pymysql://{connection.user}:{connection.password}@{connection.host}:{connection.port}/{connection.db}"
+            engine = create_engine(connStr)
+            with tempfile.NamedTemporaryFile(delete=True, suffix=".parquet") as temp:
+                pd.read_sql(f"SELECT * FROM {connection.table}", engine).to_parquet(
+                    temp.name, compression="snappy"
+                )
+                self.client.storage.from_("AnalyticsHub").upload(
+                    file=temp.name,
+                    path=f"{connection.projectId}/{connection.table}.parquet",
+                    file_options={"upsert": "true"}
+                )
             return
+        except CustomException:
+            raise
         except Exception as e:
-            exception  = CustomException(e)
+            exception = CustomException(
+                e,
+                statusCode=400,
+                uiMessage="Unable to connect to MySQL : check host/port/credentials."
+            )
             logger.error(exception)
             raise exception
+
             
     def loadPostgreSQL(self, connection: LoadMySQLorPostgreSQL) -> None:
         """
-        Loads data from a PostgreSQL database table into the project, converts it to Parquet format, and uploads it to storage.
-
-        Args:
-            connection (LoadMySQLorPostgreSQL): Connection details for the PostgreSQL database.
-        Returns:
-            None
+        Load data from PostgreSQL database.
         Raises:
-            CustomException: If loading or uploading fails.
+            CustomException:
+                400 - Missing required DB connection fields
+                400 - Unable to connect to PostgreSQL
+                422 - Invalid connection details
+                500 - PostgreSQL data load failed
         """
         try:
-            with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
-                connStr = f"postgresql+psycopg2://{connection.user}:{connection.password}@{connection.host}:{connection.port}/{connection.db}"
-                engine = create_engine(connStr)
-                pd.read_sql(f"SELECT * FROM {connection.table}", engine, parse_dates = True).to_parquet(temp.name, compression = "snappy")
-                _ = self.client.storage.from_("AnalyticsHub").upload(
-                    file = temp.name,
-                    path = f"{connection.projectId}/{connection.table + '.parquet'}",
-                    file_options = {"upsert": "true"}
+            required = [connection.host, connection.port, connection.user,
+                        connection.password, connection.db, connection.table, connection.projectId]
+            if not all(required):
+                raise CustomException(
+                    ValueError("Missing required DB fields"),
+                    statusCode=400,
+                    uiMessage="Missing required DB connection fields."
                 )
-                temp.close()
+            connStr = f"postgresql+psycopg2://{connection.user}:{connection.password}@{connection.host}:{connection.port}/{connection.db}"
+            engine = create_engine(connStr)
+            with tempfile.NamedTemporaryFile(delete=True, suffix=".parquet") as temp:
+                pd.read_sql(f"SELECT * FROM {connection.table}", engine).to_parquet(
+                    temp.name, compression="snappy"
+                )
+                self.client.storage.from_("AnalyticsHub").upload(
+                    file=temp.name,
+                    path=f"{connection.projectId}/{connection.table}.parquet",
+                    file_options={"upsert": "true"}
+                )
             return
+        except CustomException:
+            raise
         except Exception as e:
-            exception  = CustomException(e)
+            exception = CustomException(
+                e,
+                statusCode=400,
+                uiMessage="Unable to connect to PostgreSQL: check host/port/credentials."
+            )
             logger.error(exception)
             raise exception
         
     def loadMongoDB(self, connection: LoadMongoDB) -> None:
         """
-        Loads data from a MongoDB collection into the project, converts it to Parquet format, and uploads it to storage.
-
-        Args:
-            connection (LoadMongoDB): Connection details for the MongoDB database.
-        Returns:
-            None
+        Load data from MongoDB.
         Raises:
-            CustomException: If loading or uploading fails.
+            CustomException:
+                400 - Missing required DB connection fields
+                400 - Unable to connect to MongoDB
+                422 - Invalid MongoDB connection details
+                500 - MongoDB data load failed
         """
         try:
-            with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
+            if not connection.connectionString or not connection.db or not connection.collection:
+                raise CustomException(
+                    ValueError("Missing MongoDB connection fields"),
+                    statusCode=400,
+                    uiMessage="Missing required DB connection fields."
+                )
+            with tempfile.NamedTemporaryFile(delete=True, suffix=".parquet") as temp:
                 mongoClient = MongoClient(connection.connectionString, server_api=ServerApi('1'))
                 records = list(mongoClient[connection.db][connection.collection].find())
-                for record in records: record.pop("_id")
-                pd.DataFrame(records).to_parquet(temp.name, compression = "snappy")
-                _ = self.client.storage.from_("AnalyticsHub").upload(
-                    file = temp.name,
-                    path = f"{connection.projectId}/{connection.collection + '.parquet'}",
-                    file_options = {"upsert": "true"}
+                for record in records:
+                    record.pop("_id", None)
+                pd.DataFrame(records).to_parquet(temp.name, compression="snappy")
+
+                self.client.storage.from_("AnalyticsHub").upload(
+                    file=temp.name,
+                    path=f"{connection.projectId}/{connection.collection}.parquet",
+                    file_options={"upsert": "true"}
                 )
-                temp.close()
             return
+        except CustomException:
+            raise
         except Exception as e:
-            exception  = CustomException(e)
+            exception = CustomException(
+                e,
+                statusCode=400,
+                uiMessage="Unable to connect to MongoDB: check connection string/credentials."
+            )
             logger.error(exception)
             raise exception
         

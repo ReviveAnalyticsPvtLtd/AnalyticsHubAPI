@@ -14,6 +14,7 @@ from api.models import (
     LoadMongoDB,
     DeleteTable
 )
+from utils.exceptionHandler import CustomException, raiseHttpException
 from fastapi import APIRouter, Depends, UploadFile, File, Form
 from api.services.dataLoadService import dataLoadService
 from fastapi.exceptions import HTTPException
@@ -40,10 +41,10 @@ async def loadCsvData(projectId: Annotated[str, Form()], files: list[UploadFile]
         ORJSONResponse: Success or error message.
     """
     try:
-        await dataLoadService.loadCsvData(projectId = projectId, files = files)
-        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Data loaded successfully"})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+        await dataLoadService.loadCsvData(projectId=projectId, files=files)
+        return ORJSONResponse(status_code=200, content={"status": "SUCCESS"})
+    except CustomException as e:
+        raiseHttpException(e)
     
 @router.post("/loadExcelData")
 async def loadExcelData(projectId: Annotated[str, Form()], files: list[UploadFile], token = Depends(verifyToken)):
@@ -59,10 +60,10 @@ async def loadExcelData(projectId: Annotated[str, Form()], files: list[UploadFil
         ORJSONResponse: Success or error message.
     """
     try:
-        await dataLoadService.loadExcelData(projectId = projectId, files = files)
-        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Data loaded successfully"})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+        await dataLoadService.loadExcelData(projectId=projectId, files=files)
+        return ORJSONResponse(status_code=200, content={"status": "SUCCESS"})
+    except CustomException as e:
+        raiseHttpException(e)
 
 @router.post("/loadMySql")
 async def loadMySql(connection: LoadMySQLorPostgreSQL, token = Depends(verifyToken)):
@@ -77,10 +78,10 @@ async def loadMySql(connection: LoadMySQLorPostgreSQL, token = Depends(verifyTok
         ORJSONResponse: Success or error message.
     """
     try:
-        dataLoadService.loadMySql(connection = connection)
-        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Data loaded successfully"})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+        dataLoadService.loadMySql(connection=connection)
+        return ORJSONResponse(status_code=200, content={"status": "SUCCESS"})
+    except CustomException as e:
+        raiseHttpException(e)
     
 @router.post("/loadPostgreSQL")
 async def loadPostgreSQL(connection: LoadMySQLorPostgreSQL, token = Depends(verifyToken)):
@@ -95,10 +96,10 @@ async def loadPostgreSQL(connection: LoadMySQLorPostgreSQL, token = Depends(veri
         ORJSONResponse: Success or error message.
     """
     try:
-        dataLoadService.loadPostgreSQL(connection = connection)
-        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Data loaded successfully"})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+        dataLoadService.loadPostgreSQL(connection=connection)
+        return ORJSONResponse(status_code=200, content={"status": "SUCCESS"})
+    except CustomException as e:
+        raiseHttpException(e)
     
 @router.post("/loadMongoDB")
 async def loadMongoDB(connection: LoadMongoDB, token = Depends(verifyToken)):
@@ -113,10 +114,10 @@ async def loadMongoDB(connection: LoadMongoDB, token = Depends(verifyToken)):
         ORJSONResponse: Success or error message.
     """
     try:
-        dataLoadService.loadMongoDB(connection = connection)
-        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Data loaded successfully"})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+        dataLoadService.loadMongoDB(connection=connection)
+        return ORJSONResponse(status_code=200, content={"status": "SUCCESS"})
+    except CustomException as e:
+        raiseHttpException(e)
 
 @router.delete("/deleteTable")
 async def deleteTable(tableDetails: DeleteTable, token = Depends(verifyToken)):

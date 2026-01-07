@@ -51,26 +51,38 @@ class ManagementService:
 
     def createProject(self, projectDetails: CreateProject, token: str) -> str:
         """
-        Create a new project for a user.
-
-        Args:
-            projectDetails (CreateProject): Details of the project to create.
-            token (str): JWT token for user authentication.
-
-        Returns:
-            str: The unique project ID of the newly created project.
-
+        Create a new project.
         Raises:
-            CustomException: For any errors during project creation.
+            CustomException:
+                401 - User not authenticated
+                409 - Project already exists in workspace
+                422 - Invalid project details
+                500 - Project creation failure
         """
         try:
-            projectId = str(uuid.uuid4())
+            if not projectDetails.projectName or not projectDetails.workspaceId or not projectDetails.domainExpert:
+                raise CustomException(
+                    ValueError("Invalid project details"),
+                    statusCode=422,
+                    uiMessage="Invalid project details."
+                )
             decodedToken = jwt.decode(
                 token,
                 os.environ["SECRET_KEY"],
-                algorithms = ["HS256"]
+                algorithms=["HS256"]
             )
-            _ = self.client.table("Projects").insert({
+            existingProjects = self.client.table("Projects") \
+                .select("projectName") \
+                .eq("workspaceId", projectDetails.workspaceId) \
+                .execute().data
+            if projectDetails.projectName in [x.get("projectName") for x in existingProjects]:
+                raise CustomException(
+                    ValueError("Duplicate project"),
+                    statusCode=409,
+                    uiMessage="A project with this name already exists in the workspace."
+                )
+            projectId = str(uuid.uuid4())
+            self.client.table("Projects").insert({
                 "projectId": projectId,
                 "projectName": projectDetails.projectName,
                 "projectDescription": projectDetails.projectDescription,
@@ -80,41 +92,75 @@ class ManagementService:
                 "domainExpert": projectDetails.domainExpert
             }).execute()
             return projectId
+        except jwt.ExpiredSignatureError:
+            raise CustomException(
+                ValueError("Unauthenticated"),
+                statusCode=401,
+                uiMessage="Please login to create a project."
+            )
+        except CustomException:
+            raise
         except Exception as e:
-            exception = CustomException(e)
+            exception = CustomException(
+                e,
+                uiMessage="Failed to create project. Try again later."
+            )
             logger.error(exception)
             raise exception
         
     def createWorkspace(self, workspaceName: str, token: str) -> str:
         """
-        Create a new workspace for a user.
-
-        Args:
-            workspaceName (str): Details of the workspace to create.
-            token (str): JWT token for user authentication.
-
-        Returns:
-            str: The unique workspace ID of the newly created project.
-
+        Create a new workspace.
         Raises:
-            CustomException: For any errors during workspace creation.
+            CustomException:
+                401 - User not authenticated
+                409 - Workspace already exists
+                422 - Invalid workspace name
+                500 - Workspace creation failure
         """
         try:
-            workspaceId = str(uuid.uuid4())
+            if not workspaceName:
+                raise CustomException(
+                    ValueError("Invalid workspace name"),
+                    statusCode=422,
+                    uiMessage="Invalid workspace name."
+                )
             decodedToken = jwt.decode(
                 token,
                 os.environ["SECRET_KEY"],
-                algorithms = ["HS256"]
+                algorithms=["HS256"]
             )
-            _ = self.client.table("Workspaces").insert({
+            existingWorkspaces = self.client.table("Workspaces") \
+                .select("workspaceName") \
+                .eq("ownerId", decodedToken["userId"]) \
+                .execute().data
+            if workspaceName in [x.get("workspaceName") for x in existingWorkspaces]:
+                raise CustomException(
+                    ValueError("Duplicate workspace"),
+                    statusCode=409,
+                    uiMessage="Workspace with this name already exists."
+                )
+            workspaceId = str(uuid.uuid4())
+            self.client.table("Workspaces").insert({
                 "id": workspaceId,
                 "ownerId": decodedToken["userId"],
                 "ownerEmail": decodedToken["email"],
                 "workspaceName": workspaceName
             }).execute()
             return workspaceId
+        except jwt.ExpiredSignatureError:
+            raise CustomException(
+                ValueError("Unauthenticated"),
+                statusCode=401,
+                uiMessage="Please login to create a workspace."
+            )
+        except CustomException:
+            raise
         except Exception as e:
-            exception = CustomException(e)
+            exception = CustomException(
+                e,
+                uiMessage="Unable to create workspace. Try again later."
+            )
             logger.error(exception)
             raise exception
         

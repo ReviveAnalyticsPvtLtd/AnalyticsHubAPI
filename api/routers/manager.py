@@ -9,6 +9,7 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["router"]
 
 
+from utils.exceptionHandler import CustomException, raiseHttpException
 from api.services.managementService import managementService
 from fastapi.responses import ORJSONResponse, HTMLResponse
 from fastapi.exceptions import HTTPException
@@ -30,36 +31,50 @@ async def createProject(projectDetails: CreateProject, token = Depends(verifyTok
     """
     Create a new project.
 
-    Args:
-        projectDetails (CreateProject): The details required to create a new project.
-        token: Authorization token dependency.
-
-    Returns:
-        ORJSONResponse: Success message with the new project ID or error message.
+    Status Codes:
+        200 - Success
+        401 - Please login to create a project.
+        409 - A project with this name already exists in the workspace.
+        422 - Invalid project details.
+        500 - Failed to create project. Try again later.
     """
     try:
-        projectId = managementService.createProject(projectDetails = projectDetails, token = token)
-        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "projectId": projectId, "message": "Project created successfully"})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+        projectId = managementService.createProject(projectDetails=projectDetails, token=token)
+        return ORJSONResponse(
+            status_code=200,
+            content={
+                "status": "SUCCESS",
+                "projectId": projectId,
+                "message": "Project created successfully"
+            }
+        )
+    except CustomException as e:
+        raiseHttpException(e)
     
 @router.post("/createWorkspace/{workspaceName}")
 async def createWorkspace(workspaceName: str, token = Depends(verifyToken)):
     """
     Create a new workspace.
 
-    Args:
-        workspaceName (str): The name required to create a new workspace.
-        token: Authorization token dependency.
-
-    Returns:
-        ORJSONResponse: Success message with the new project ID or error message.
+    Status Codes:
+        200 - Success
+        401 - Please login to create a workspace.
+        409 - Workspace with this name already exists.
+        422 - Invalid workspace name.
+        500 - Unable to create workspace. Try again later.
     """
     try:
-        workspaceId = managementService.createWorkspace(workspaceName = workspaceName, token = token)
-        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "workspaceId": workspaceId, "message": "Workspace created successfully"})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+        workspaceId = managementService.createWorkspace(workspaceName=workspaceName, token=token)
+        return ORJSONResponse(
+            status_code=200,
+            content={
+                "status": "SUCCESS",
+                "workspaceId": workspaceId,
+                "message": "Workspace created successfully"
+            }
+        )
+    except CustomException as e:
+        raiseHttpException(e)
     
 @router.get("/listProjects/{workspaceId}")
 async def listProjects(workspaceId: str, token = Depends(verifyToken)):
