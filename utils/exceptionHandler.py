@@ -10,7 +10,6 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["CustomException"]
 
 
-from sys import exception
 from fastapi import HTTPException
 import traceback
 
