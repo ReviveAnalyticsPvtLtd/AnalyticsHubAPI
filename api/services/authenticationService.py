@@ -268,11 +268,11 @@ class AuthenticationService:
                             subscriptionPlan = "expired"
                     else:
                         subscriptionStatus = "INACTIVE"
-                        subscriptionPlan = "unclaimedFreeTrial"
+                        subscriptionPlan = "unclaimedFreeSubscription"
                 # --- Scenario 2: New User (Signup + Free Trial Flow) ---
                 else:
                     subscriptionStatus = "INACTIVE"
-                    subscriptionPlan = "unclaimedFreeTrial"
+                    subscriptionPlan = "unclaimedFreeSubscription"
                     userId = str(uuid.uuid4())
                     workspaceId = str(uuid.uuid4())
                     # Generate a consistent hash for provider users (acts as password)
