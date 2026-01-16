@@ -226,7 +226,7 @@ class AuthenticationService:
             Authenticate or register a user using a third-party provider (Google/GitHub).
             
             If the user does not exist:
-            - Creates a new user record with a 14-day free trial.
+            - Creates a new user record with a 12-day free trial.
             - Creates a default workspace.
             - Logs them in.
             
@@ -268,10 +268,7 @@ class AuthenticationService:
                         "password": hashedPassword,
                         "createdAt": str(sessionStartTime),
                         "onboarded": False,
-                        "currentWorkspaceId": workspaceId,
-                        "subscriptionStart": str(subscriptionStart),
-                        "subscriptionExpiry": str(subscriptionExpiry),
-                        "subscriptionPlan": "free" 
+                        "currentWorkspaceId": workspaceId
                     }
                     # Insert into Users table
                     self.client.table("Users").insert(userData).execute()
