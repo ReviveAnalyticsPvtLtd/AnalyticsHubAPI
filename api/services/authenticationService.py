@@ -268,7 +268,10 @@ class AuthenticationService:
                         "password": hashedPassword,
                         "createdAt": str(sessionStartTime),
                         "onboarded": False,
-                        "currentWorkspaceId": workspaceId
+                        "currentWorkspaceId": workspaceId,
+                        "subscriptionStart": str(subscriptionStart),
+                        "subscriptionExpiry": str(subscriptionExpiry),
+                        "subscriptionPlan": "unclaimedFreeSubscription" 
                     }
                     # Insert into Users table
                     self.client.table("Users").insert(userData).execute()
