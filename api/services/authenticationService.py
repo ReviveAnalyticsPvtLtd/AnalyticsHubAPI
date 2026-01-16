@@ -270,7 +270,8 @@ class AuthenticationService:
                         "onboarded": False,
                         "currentWorkspaceId": workspaceId,
                         "subscriptionStart": str(subscriptionStart),
-                        "subscriptionExpiry": str(subscriptionExpiry)
+                        "subscriptionExpiry": str(subscriptionExpiry),
+                        "subscriptionPlan": "unclaimedFreeSubscription" 
                     }
                     # Insert into Users table
                     self.client.table("Users").insert(userData).execute()
