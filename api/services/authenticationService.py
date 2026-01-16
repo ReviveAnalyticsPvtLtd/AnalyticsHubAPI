@@ -199,6 +199,13 @@ class AuthenticationService:
                 "sessionStartTime": str(sessionStartTime),
                 "lastActivity": str(sessionStartTime)
             }).execute()
+            if dataSlice["subscriptionExpiry"]:
+                if datetime.datetime.utcnow() <= datetime.datetime.strptime(dataSlice["subscriptionExpiry"], "%Y-%m-%dT%H:%M:%S.%f"):
+                    subscriptionStatus = "ACTIVE"
+                else:
+                    subscriptionStatus = "INACTIVE"
+            else:
+                subscriptionStatus = "INACTIVE"
             return {
                 "status": "SUCCESS",
                 "userId": dataSlice["userId"],
@@ -206,7 +213,7 @@ class AuthenticationService:
                 "accessToken": accessToken,
                 "onboarded": int(dataSlice["onboarded"]),
                 "currentWorkspaceId": dataSlice["currentWorkspaceId"],
-                "subscriptionStatus": "ACTIVE" if datetime.datetime.utcnow() <= datetime.datetime.strptime(dataSlice["subscriptionExpiry"], "%Y-%m-%dT%H:%M:%S.%f") else "INACTIVE",
+                "subscriptionStatus": subscriptionStatus,
                 "subscriptionStart": str(dataSlice["subscriptionStart"]),
                 "subscriptionExpiry": str(dataSlice["subscriptionExpiry"]),
                 "subscriptionPlan": dataSlice["subscriptionPlan"]
@@ -252,8 +259,20 @@ class AuthenticationService:
                 # --- Scenario 1: User Exists (Login Flow) ---
                 if response.data:
                     userData = response.data[0]
+                    if userData["subscriptionExpiry"]:
+                        if datetime.datetime.utcnow() <= datetime.datetime.strptime(userData["subscriptionExpiry"], "%Y-%m-%dT%H:%M:%S.%f"):
+                            subscriptionStatus = "ACTIVE"
+                            subscriptionPlan = userData["subscriptionPlan"]
+                        else:
+                            subscriptionStatus = "INACTIVE"
+                            subscriptionPlan = "expired"
+                    else:
+                        subscriptionStatus = "INACTIVE"
+                        subscriptionPlan = "unclaimedFreeTrial"
                 # --- Scenario 2: New User (Signup + Free Trial Flow) ---
                 else:
+                    subscriptionStatus = "INACTIVE"
+                    subscriptionPlan = "unclaimedFreeTrial"
                     userId = str(uuid.uuid4())
                     workspaceId = str(uuid.uuid4())
                     # Generate a consistent hash for provider users (acts as password)
@@ -268,10 +287,7 @@ class AuthenticationService:
                         "password": hashedPassword,
                         "createdAt": str(sessionStartTime),
                         "onboarded": False,
-                        "currentWorkspaceId": workspaceId,
-                        "subscriptionStart": str(subscriptionStart),
-                        "subscriptionExpiry": str(subscriptionExpiry),
-                        "subscriptionPlan": "unclaimedFreeSubscription" 
+                        "currentWorkspaceId": workspaceId
                     }
                     # Insert into Users table
                     self.client.table("Users").insert(userData).execute()
@@ -296,6 +312,7 @@ class AuthenticationService:
                     "sessionStartTime": str(sessionStartTime),
                     "lastActivity": str(sessionStartTime)
                 }).execute()
+
                 # --- Return Standard Login Response ---
                 return {
                     "status": "SUCCESS",
@@ -304,10 +321,8 @@ class AuthenticationService:
                     "accessToken": accessToken,
                     "onboarded": 1 if userData.get("onboarded") else 0,
                     "currentWorkspaceId": userData["currentWorkspaceId"],
-                    "subscriptionStatus": "ACTIVE" if datetime.datetime.utcnow() <= datetime.datetime.strptime(userData.get("subscriptionExpiry"), "%Y-%m-%dT%H:%M:%S.%f") else "INACTIVE",
-                    "subscriptionStart": str(userData.get("subscriptionStart")),
-                    "subscriptionExpiry": str(userData.get("subscriptionExpiry")),
-                    "subscriptionPlan": userData.get("subscriptionPlan")
+                    "subscriptionStatus": subscriptionStatus,
+                    "subscriptionPlan": subscriptionPlan 
                 }
             except CustomException:
                 raise
