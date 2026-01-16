@@ -206,7 +206,7 @@ class AuthenticationService:
                 "accessToken": accessToken,
                 "onboarded": int(dataSlice["onboarded"]),
                 "currentWorkspaceId": dataSlice["currentWorkspaceId"],
-                "subscriptionStatus": "ACTIVE" if datetime.datetime.utcnow() <= datetime.datetime.strptime(dataSlice["subscriptionExpiry"], "%Y-%m-%d %H:%M:%S") else "INACTIVE",
+                "subscriptionStatus": "ACTIVE" if datetime.datetime.utcnow() <= datetime.datetime.strptime(dataSlice["subscriptionExpiry"], "%Y-%m-%dT%H:%M:%S.%f") else "INACTIVE",
                 "subscriptionStart": str(dataSlice["subscriptionStart"]),
                 "subscriptionExpiry": str(dataSlice["subscriptionExpiry"]),
                 "subscriptionPlan": dataSlice["subscriptionPlan"]
@@ -304,7 +304,7 @@ class AuthenticationService:
                     "accessToken": accessToken,
                     "onboarded": 1 if userData.get("onboarded") else 0,
                     "currentWorkspaceId": userData["currentWorkspaceId"],
-                    "subscriptionStatus": "ACTIVE" if datetime.datetime.utcnow() <= datetime.datetime.strptime(userData.get("subscriptionExpiry"), "%Y-%m-%d %H:%M:%S") else "INACTIVE",
+                    "subscriptionStatus": "ACTIVE" if datetime.datetime.utcnow() <= datetime.datetime.strptime(userData.get("subscriptionExpiry"), "%Y-%m-%dT%H:%M:%S.%f") else "INACTIVE",
                     "subscriptionStart": str(userData.get("subscriptionStart")),
                     "subscriptionExpiry": str(userData.get("subscriptionExpiry")),
                     "subscriptionPlan": userData.get("subscriptionPlan")
