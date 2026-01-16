@@ -105,8 +105,8 @@ async def listWorkspaces(token = Depends(verifyToken)):
         ORJSONResponse: List of workspaces or error message.
     """
     try:
-        data = managementService.listWokspaces(token = token)
-        return ORJSONResponse(status_code = 200, content = {"workspaces": data.to_dict(orient = "records")})
+        response = managementService.listWokspaces(token = token)
+        return ORJSONResponse(status_code = 200, content = response)
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))
 

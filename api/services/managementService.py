@@ -216,7 +216,15 @@ class ManagementService:
             )
             data = pd.DataFrame(self.client.table("Workspaces").select("*").execute().data)
             data = data[data["ownerId"] == decodedToken["userId"]]
-            return data
+            subscribedExperts = [x.strip() for x in self.client.table("Users").select("subscribedExperts").eq("userId", decodedToken["userId"]).execute().data[0]["subscribedExperts"].split(",")]
+            response = {
+                "workspaces": data.to_dict(orient = "records"),
+                "aiExperts": {
+                    "subscribedExperts": subscribedExperts,
+                    "allExperts": ["banking", "manufacturing", "supplychain", "telecom"]
+                }
+            }
+            return response
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
