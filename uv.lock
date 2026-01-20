@@ -164,7 +164,6 @@ dependencies = [
     { name = "et-xmlfile" },
     { name = "exceptiongroup" },
     { name = "fastapi" },
-    { name = "fastapi-analytics" },
     { name = "fonttools" },
     { name = "frozenlist" },
     { name = "fsspec" },
@@ -324,7 +323,6 @@ requires-dist = [
     { name = "et-xmlfile", specifier = "==2.0.0" },
     { name = "exceptiongroup", specifier = "==1.3.0" },
     { name = "fastapi", specifier = "==0.116.1" },
-    { name = "fastapi-analytics", specifier = "==1.2.5" },
     { name = "fonttools", specifier = "==4.59.0" },
     { name = "frozenlist", specifier = "==1.7.0" },
     { name = "fsspec", specifier = "==2025.7.0" },
@@ -937,19 +935,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/78/d7/6c8b3bfe33eeffa208183ec037fee0cce9f7f024089ab1c5d12ef04bd27c/fastapi-0.116.1.tar.gz", hash = "sha256:ed52cbf946abfd70c5a0dccb24673f0670deeb517a88b3544d03c2a6bf283143", size = 296485, upload-time = "2025-07-11T16:22:32.057Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e5/47/d63c60f59a59467fda0f93f46335c9d18526d7071f025cb5b89d5353ea42/fastapi-0.116.1-py3-none-any.whl", hash = "sha256:c46ac7c312df840f0c9e220f7964bada936781bc4e2e6eb71f1c4d7553786565", size = 95631, upload-time = "2025-07-11T16:22:30.485Z" },
-]
-
-[[package]]
-name = "fastapi-analytics"
-version = "1.2.5"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "fastapi" },
-    { name = "requests" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/45/39/32a1ef824717578b358392656c6a4f82e77a3ade93332cfa9807e2eb324b/fastapi_analytics-1.2.5.tar.gz", hash = "sha256:8dca8e5079602da85971120ceb357918606a1be7706e7031f87e550e26fbab81", size = 9334, upload-time = "2025-05-17T12:01:39.68Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/05/e9/3f9b063d1f047f90c9231f0c8615e53cf44df5d40ad15bea2234512654a0/fastapi_analytics-1.2.5-py3-none-any.whl", hash = "sha256:e84bdf0bb603d6897dd7826f50ebf9b8d4d2424f19ee4dd465d743cd7208d52a", size = 8596, upload-time = "2025-05-17T12:01:38.276Z" },
 ]
 
 [[package]]
