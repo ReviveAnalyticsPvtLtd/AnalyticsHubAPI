@@ -351,12 +351,7 @@ class ManagementService:
                 .eq("workspaceId", workspaceId) \
                 .execute().data
             for project in projects:
-                projectId = project.get("projectId")
-                allFiles = self.client.storage.from_("AnalyticsHub").list(projectId)
-                fileNames = [os.path.join(projectId, x.get("name")) for x in allFiles]
-                if fileNames:
-                    _ = self.client.storage.from_("AnalyticsHub").remove(fileNames)
-            _ = self.client.table("Projects").delete().eq("workspaceId", workspaceId).execute()
+                self.deleteProject(projectId=project.get("projectId"))
             _ = self.client.table("Workspaces").delete().eq("id", workspaceId).execute()
             return
         except Exception as e:
