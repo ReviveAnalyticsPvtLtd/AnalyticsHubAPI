@@ -110,8 +110,8 @@ async def listWorkspaces(token = Depends(verifyToken)):
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))
 
-@router.patch("/updateWorkspaceId/{updatedWorkspaceId}")
-async def updateWorkspaceId(updatedWorkspaceId: str, token = Depends(verifyToken)):
+@router.patch("/updateCurrentWorkspace/{updatedWorkspaceId}")
+async def updateCurrentWorkspace(updatedWorkspaceId: str, token = Depends(verifyToken)):
     """
     Update the workspace id of a user.
 
