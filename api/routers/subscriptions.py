@@ -22,20 +22,19 @@ Router for subscription-related endpoints.
 """
 
 
-@router.get("/activateFreeTrial/{userId}")
-async def activateFreeTrial(userId: str, token=Depends(verifyToken)):
+@router.get("/activateFreeTrial")
+async def activateFreeTrial(token=Depends(verifyToken)):
     """
     Activate a free trial for a user.
 
     Args:
-        userId (str): The ID of the user to activate the free trial for.
         token: Authorization token dependency.
 
     Returns:
         ORJSONResponse: Success or error message.
     """
     try:
-        subscriptionService.activateFreeTrial(userId=userId)
+        subscriptionService.activateFreeTrial(token=token)
         return ORJSONResponse(
             status_code=200,
             content={

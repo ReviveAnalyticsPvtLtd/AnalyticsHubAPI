@@ -49,14 +49,43 @@ class SubscriptionService:
             "MONTHLY_80": "plan_RyCWBUIbiGQwTv",
         }
 
-    def activateFreeTrial(self, userId: str) -> None:
+    @staticmethod
+    def _sendFreeTrialEmail(email: str, name: str) -> None:
+        """
+        Send free trial email to a user.
+
+        Args:
+            email (str): The email address of the user.
+            name (str): The name of the user.
+        """
+        try:
+            requests.post(
+                url=os.environ["EMAIL_SERVICE_URL"],
+                data={
+                    "email": email,
+                    "name": name
+                }
+            )
+        except Exception as e:
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception
+
+    def activateFreeTrial(self, token: str) -> None:
         """
         Activate a free trial for a user.
 
         Args:
-            userId (str): The ID of the user to activate the free trial for.
+            token (str): Authorization token.
         """
         try:
+            decodedToken = jwt.decode(
+                token,
+                os.environ["SECRET_KEY"],
+                algorithms = ["HS256"]
+            )
+            userId = decodedToken.get("userId")
+            userEmail = decodedToken.get("email")
             currentTime = datetime.datetime.utcnow()
             trialDurationDays = 12
             updateData = {
@@ -68,6 +97,9 @@ class SubscriptionService:
                 "subscribedExperts": "banking, manufacturing, supplychain, telecom"
             }
             self.client.table("Users").update(updateData).eq("userId", userId).execute()
+            name = self.client.table("Users").select("fullName").eq("userId", userId).execute()[0]["fullName"]
+            self._sendFreeTrialEmail(email=userEmail, name=name)
+
             return
         except Exception as e:
             exception = CustomException(e)
