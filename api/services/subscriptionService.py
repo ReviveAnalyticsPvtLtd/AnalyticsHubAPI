@@ -96,8 +96,8 @@ class SubscriptionService:
                 ),
                 "subscribedExperts": "banking, manufacturing, supplychain, telecom"
             }
-            self.client.table("Users").update(updateData).eq("userId", userId).execute()
-            name = self.client.table("Users").select("fullName").eq("userId", userId).execute()[0]["fullName"]
+            records = self.client.table("Users").update(updateData).eq("userId", userId).execute()
+            name = records.data[0]["fullName"]
             self._sendFreeTrialEmail(email=userEmail, name=name)
 
             return
