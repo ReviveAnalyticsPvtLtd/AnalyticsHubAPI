@@ -60,10 +60,13 @@ class SubscriptionService:
         """
         try:
             requests.post(
-                url=os.environ["EMAIL_SERVICE_URL"],
+                url=os.environ["FREE_TRIAL_EMAIL_URL"],
                 data={
                     "email": email,
                     "name": name
+                },
+                headers={
+                    "Authorization": f"Bearer {os.environ['SUPABASE_KEY']}"
                 }
             )
         except Exception as e:
