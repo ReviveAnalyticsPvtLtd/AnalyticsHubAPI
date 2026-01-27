@@ -20,6 +20,7 @@ import razorpay
 import datetime
 import hashlib
 import hmac
+import json
 import os
 
 
@@ -62,10 +63,10 @@ class SubscriptionService:
         try:
             requests.post(
                 url=os.environ["FREE_TRIAL_EMAIL_URL"],
-                data={
+                data=json.dumps({
                     "email": email,
                     "name": name
-                },
+                }),
                 headers={
                     "Authorization": f"Bearer {os.environ['SUPABASE_KEY']}"
                 }
