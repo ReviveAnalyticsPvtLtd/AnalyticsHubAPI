@@ -128,6 +128,54 @@ async def updateWorkspaceId(updatedWorkspaceId: str, token = Depends(verifyToken
     except Exception as e:
         raise HTTPException(status_code = 500, detail = str(e))
 
+@router.patch("/updateWorkspaceName/{workspaceId}/{newWorkspaceName}")
+async def updateWorkspaceName(workspaceId: str, newWorkspaceName: str, token = Depends(verifyToken)):
+    """
+    Update the name of a workspace.
+
+    Status Codes:
+        200 - Success
+        401 - Please login to update workspace.
+        404 - Workspace not found.
+        409 - A workspace with this name already exists.
+        422 - Invalid workspace name.
+        500 - Failed to update workspace name. Try again later.
+    """
+    try:
+        managementService.updateWorkspaceName(workspaceId=workspaceId, newWorkspaceName=newWorkspaceName, token=token)
+        return ORJSONResponse(
+            status_code=200,
+            content={
+                "status": "SUCCESS",
+                "message": "Workspace name updated successfully"
+            }
+        )
+    except CustomException as e:
+        raiseHttpException(e)
+
+@router.delete("/deleteWorkspace/{workspaceId}")
+async def deleteWorkspace(workspaceId: str, token = Depends(verifyToken)):
+    """
+    Delete a workspace and all its projects.
+
+    Status Codes:
+        200 - Success
+        401 - Please login to delete workspace.
+        404 - Workspace not found.
+        500 - Failed to delete workspace. Try again later.
+    """
+    try:
+        managementService.deleteWorkspace(workspaceId=workspaceId, token=token)
+        return ORJSONResponse(
+            status_code=200,
+            content={
+                "status": "SUCCESS",
+                "message": "Workspace and all associated projects deleted successfully"
+            }
+        )
+    except CustomException as e:
+        raiseHttpException(e)
+
 @router.patch("/updateBookmark")
 async def updateBookmark(updateBookmarkDetails: UpdateProjectState, token = Depends(verifyToken)):
     """

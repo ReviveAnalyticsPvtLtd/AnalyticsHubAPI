@@ -74,6 +74,7 @@ class ManagementService:
             existingProjects = self.client.table("Projects") \
                 .select("projectName") \
                 .eq("workspaceId", projectDetails.workspaceId) \
+                .neq("isTrash", 1) \
                 .execute().data
             if projectDetails.projectName in [x.get("projectName") for x in existingProjects]:
                 raise CustomException(
@@ -251,6 +252,118 @@ class ManagementService:
             return
         except Exception as e:
             exception = CustomException(e)
+            logger.error(exception)
+            raise exception
+        
+    def updateWorkspaceName(self, workspaceId: str, newWorkspaceName: str, token: str) -> None:
+        """
+        Update the name of a workspace.
+
+        Args:
+            workspaceId (str): The ID of the workspace to rename.
+            newWorkspaceName (str): The new name for the workspace.
+            token (str): JWT token for user authentication.
+
+        Raises:
+            CustomException:
+                401 - User not authenticated
+                404 - Workspace not found
+                409 - Workspace with new name already exists
+                422 - Invalid workspace name
+                500 - Workspace update failure
+        """
+        try:
+            if not newWorkspaceName:
+                raise CustomException(
+                    ValueError("Invalid workspace name"),
+                    statusCode=422,
+                    uiMessage="Invalid workspace name."
+                )
+            decodedToken = jwt.decode(
+                token,
+                os.environ["SECRET_KEY"],
+                algorithms=["HS256"]
+            )
+            existingWorkspace = self.client.table("Workspaces") \
+                .select("*") \
+                .eq("id", workspaceId) \
+                .eq("ownerId", decodedToken["userId"]) \
+                .execute().data
+            if not existingWorkspace:
+                raise CustomException(
+                    ValueError("Workspace not found"),
+                    statusCode=404,
+                    uiMessage="Workspace not found."
+                )
+            existingWorkspaces = self.client.table("Workspaces") \
+                .select("workspaceName") \
+                .eq("ownerId", decodedToken["userId"]) \
+                .execute().data
+            if newWorkspaceName in [x.get("workspaceName") for x in existingWorkspaces]:
+                raise CustomException(
+                    ValueError("Duplicate workspace name"),
+                    statusCode=409,
+                    uiMessage="A workspace with this name already exists."
+                )
+            _ = self.client.table("Workspaces").update({"workspaceName": newWorkspaceName}).eq("id", workspaceId).execute()
+            return
+        except Exception as e:
+            exception = CustomException(
+                e,
+                uiMessage="Failed to update workspace name. Try again later."
+            )
+            logger.error(exception)
+            raise exception
+        
+    def deleteWorkspace(self, workspaceId: str, token: str) -> None:
+        """
+        Delete a workspace and all associated projects and files.
+
+        Args:
+            workspaceId (str): The ID of the workspace to delete.
+            token (str): JWT token for user authentication.
+
+        Raises:
+            CustomException:
+                401 - User not authenticated
+                404 - Workspace not found
+                500 - Workspace deletion failure
+        """
+        try:
+            decodedToken = jwt.decode(
+                token,
+                os.environ["SECRET_KEY"],
+                algorithms=["HS256"]
+            )
+            existingWorkspace = self.client.table("Workspaces") \
+                .select("*") \
+                .eq("id", workspaceId) \
+                .eq("ownerId", decodedToken["userId"]) \
+                .execute().data
+            if not existingWorkspace:
+                raise CustomException(
+                    ValueError("Workspace not found"),
+                    statusCode=404,
+                    uiMessage="Workspace not found."
+                )
+            projects = self.client.table("Projects") \
+                .select("projectId") \
+                .eq("workspaceId", workspaceId) \
+                .execute().data
+            for project in projects:
+                projectId = project.get("projectId")
+                allFiles = self.client.storage.from_("AnalyticsHub").list(projectId)
+                fileNames = [os.path.join(projectId, x.get("name")) for x in allFiles]
+                if fileNames:
+                    _ = self.client.storage.from_("AnalyticsHub").remove(fileNames)
+            _ = self.client.table("Projects").delete().eq("workspaceId", workspaceId).execute()
+            _ = self.client.table("Workspaces").delete().eq("id", workspaceId).execute()
+            return
+        except Exception as e:
+            exception = CustomException(
+                e,
+                uiMessage="Failed to delete workspace. Try again later."
+            )
             logger.error(exception)
             raise exception
         
