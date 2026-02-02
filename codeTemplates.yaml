@@ -7,21 +7,26 @@ panelChartWithBlend: |
         yAxis: str, 
         aggregationMetric: str | None, 
         dataSourceName: str, 
-        tablesUsed: list[str] | str, 
+        tablesUsed: list[str], 
         joinTypes: list[str] | None = None, 
         blendOn: list[str] | None = None,
         **kwargs
         ):
         import pandas as pd
         import orjson
+        import random
+        import string
         import json
-        if isinstance(tablesUsed, list):
+        if (not chartType == "geoMap") and (not kwargs.get("isFilterApplied")):
             allTables = [fetch_data(projectId, x) for x in tablesUsed]
             result = allTables[0]
             for i in range(len(joinTypes)):
                 result = pd.merge(left = result, right = allTables[i+1], on = blendOn[i], how = joinTypes[i], suffixes = ['_left', '_right'])
         else:
-            result = fetch_data(projectId, tablesUsed)
+            allTables = [fetch_data(projectId, x, kwargs.get("filters")) for x in tablesUsed]
+            result = allTables[0]
+            for i in range(len(joinTypes)):
+                result = pd.merge(left = result, right = allTables[i+1], on = blendOn[i], how = joinTypes[i], suffixes = ['_left', '_right'])
         if chartType != "pivot":
             if aggregationMetric == "sum":
                 finalResult = result.groupby(xAxis)[yAxis].sum().reset_index()
@@ -124,6 +129,16 @@ panelChartWithBlend: |
                 "title": f"Pivot for {dataSourceName}",
                 "data": orjson.loads(pivotData)
             }
+        elif chartType == "geoMap":
+            response = {
+                "chartType": "geoMap",
+                "map": {
+                    "mapType": "scatterMap",
+                    "data": {
+                        "points": [{"id": "".join(random.choice(string.ascii_letters + string.digits) for i in range(16)), "lat": lat, "long": long} for lat, long in zip(finalResult[xAxis].tolist(), finalResult[yAxis].tolist())]
+                    }
+                }
+            }
         print(json.dumps(response, indent = 4, default=serializer))
     panelChart(
         projectId = "$projectId", 
@@ -138,7 +153,10 @@ panelChartWithBlend: |
         index = $index,
         columns = $columns,
         values = $values,
-        selectedColumns = $selectedColumns
+        selectedColumns = $selectedColumns,
+        mapType = "$mapType",
+        isFilterApplied = $isFilterApplied,
+        filters = $filters
     )
     ```
 
@@ -156,14 +174,13 @@ panelChartWithoutBlend: |
         ):
         import pandas as pd
         import orjson
+        import random
+        import string
         import json
-        if isinstance(tablesUsed, list):
-            allTables = [fetch_data(projectId, x) for x in tablesUsed]
-            result = allTables[0]
-            for i in range(len(joinTypes)):
-                result = pd.merge(left = result, right = allTables[i+1], on = blendOn[i], how = joinTypes[i], suffixes = ['_left', '_right'])
-        else:
+        if (not chartType == "geoMap") and (not kwargs.get("isFilterApplied")):
             result = fetch_data(projectId, tablesUsed)
+        else:
+            result = fetch_data(projectId, tablesUsed, kwargs.get("filters"))
         if chartType != "pivot":
             if aggregationMetric == "sum":
                 finalResult = result.groupby(xAxis)[yAxis].sum().reset_index()
@@ -266,6 +283,16 @@ panelChartWithoutBlend: |
                 "title": f"Pivot for {dataSourceName}",
                 "data": orjson.loads(pivotData)
             }
+        elif chartType == "geoMap":
+            response = {
+                "chartType": "geoMap",
+                "map": {
+                    "mapType": "scatterMap",
+                    "data": {
+                        "points": [{"id": "".join(random.choice(string.ascii_letters + string.digits) for i in range(16)), "lat": lat, "long": long} for lat, long in zip(finalResult[xAxis].tolist(), finalResult[yAxis].tolist())]
+                    }
+                }
+            }
         print(json.dumps(response, indent = 4, default=serializer))
     panelChart(
         projectId = "$projectId", 
@@ -278,6 +305,9 @@ panelChartWithoutBlend: |
         index = $index,
         columns = $columns,
         values = $values,
-        selectedColumns = $selectedColumns
+        selectedColumns = $selectedColumns,
+        mapType = "$mapType",
+        isFilterApplied = $isFilterApplied,
+        filters = $filters
     )
     ```

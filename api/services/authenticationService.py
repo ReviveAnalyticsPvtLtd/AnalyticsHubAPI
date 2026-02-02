@@ -1,12 +1,17 @@
 """
 authenticationService.py
 
-This module provides the AuthenticationService class, which encapsulates all business logic related to user authentication, including sign up, login, third-party provider login, onboarding, password reset, and logout functionalities. It interacts with the Supabase client and manages user and session records in the database.
+This module provides the AuthenticationService class, which encapsulates all business logic
+related to user authentication, including sign up, login, third-party provider login,
+onboarding, password reset, and logout functionalities.
+
+It raises CustomException with appropriate status codes and UI messages
+to be handled at the API layer.
 """
 
 __version__ = "1.0.0"
 __author__ = "Rauhan Ahmed Siddiqui"
-__all__ = ["authenticationService"]      
+__all__ = ["authenticationService"]     
 
 
 from utils.exceptionHandler import CustomException
@@ -23,6 +28,7 @@ from jose import jwt
 import pandas as pd
 import datetime
 import hashlib
+import uuid
 import os
 
 class AuthenticationService:    
@@ -41,45 +47,57 @@ class AuthenticationService:
 
     def signup(self, signupDetails: SignUp) -> str:
         """
-        Register a new user with the provided signup details.
-
-        Args:
-            signupDetails (SignUp): The user's signup information (email, password, etc.).
-
-        Returns:
-            str: The user ID of the newly registered user.
+        Register a new user.
 
         Raises:
-            ValueError: If the user already exists.
-            CustomException: For any other errors during signup.
+            CustomException:
+                409 - User already exists
+                422 - Invalid signup details
+                500 - Generic signup failure
         """
         try:
+            if not signupDetails.email or not signupDetails.password:
+                raise CustomException(
+                    ValueError("Invalid signup payload"),
+                    statusCode=422,
+                    uiMessage="Invalid signup details. Please check the form."
+                )
             passwordString = signupDetails.password + os.environ["SECRET_KEY"]
             hashedPassword = hashlib.md5(passwordString.encode("utf-8")).hexdigest()
-            allUsers = list()
+            workspaceId = str(uuid.uuid4())
+            allUsers = []
             page = 1
             while True:
-                response = self.client.auth.admin.list_users(page = page, per_page = 1000)
+                response = self.client.auth.admin.list_users(page=page, per_page=1000)
                 if response == []:
                     break
-                else:
-                    allUsers.extend(response)
-                    page += 1
-            allUsers = [x.email for x in allUsers]
-            if signupDetails.email not in allUsers:
-                response = self.client.auth.sign_up(
-                    {"email": signupDetails.email, "password": hashedPassword}
+                allUsers.extend(response)
+                page += 1
+            allEmails = [x.email for x in allUsers]
+            if signupDetails.email in allEmails:
+                raise CustomException(
+                    ValueError("User already exists"),
+                    statusCode=409,
+                    uiMessage="An account with this email already exists."
                 )
-                self.client.table(table_name = "Users").insert(
-                    {
-                        "userId": response.user.id,
-                        "email": signupDetails.email,
-                        "password": hashedPassword
-                    }
-                ).execute()
-                return response.user.id
-            else:
-                raise ValueError("User Already Exists")
+            response = self.client.auth.sign_up(
+                {"email": signupDetails.email, "password": hashedPassword}
+            )
+            self.client.table("Users").insert({
+                "userId": response.user.id,
+                "email": signupDetails.email,
+                "password": hashedPassword,
+                "currentWorkspaceId": workspaceId
+            }).execute()
+            self.client.table("Workspaces").insert({
+                "id": workspaceId,
+                "ownerId": response.user.id,
+                "ownerEmail": signupDetails.email,
+                "workspaceName": "Default"
+            }).execute()
+            return response.user.id
+        except CustomException:
+            raise
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
@@ -123,122 +141,198 @@ class AuthenticationService:
         """
         Authenticate a user with email and password.
 
-        Args:
-            loginDetails (Login): The user's login credentials.
-
-        Returns:
-            dict: A dictionary containing authentication status, user info, and access token.
-
         Raises:
-            ValueError: If the user is not found, email is not verified, or credentials are invalid.
-            CustomException: For any other errors during login.
+            CustomException:
+                401 - Invalid credentials
+                422 - Invalid login payload
+                500 - Login failure
         """
         try:
+            if not loginDetails.email or not loginDetails.password:
+                raise CustomException(
+                    ValueError("Invalid login payload"),
+                    statusCode=422,
+                    uiMessage="Invalid login details. Please check the form."
+                )
             passwordString = loginDetails.password + os.environ["SECRET_KEY"]
             hashedPassword = hashlib.md5(passwordString.encode("utf-8")).hexdigest()
-            allUsers = list()
+            allUsers = []
             page = 1
             while True:
-                response = self.client.auth.admin.list_users(page = page, per_page = 1000)
+                response = self.client.auth.admin.list_users(page=page, per_page=1000)
                 if response == []:
                     break
-                else:
-                    allUsers.extend(response)
-                    page += 1
-            filteredResult = list(filter(lambda x: True if x.email == loginDetails.email else False, allUsers))
-            if filteredResult == []:
-                raise ValueError("User not found")
-            elif filteredResult[0].user_metadata.get("email_verified") == False:
-                raise ValueError("Email not verified")
-            else:  
-                allData = pd.DataFrame(self.client.table("Users").select("userId", "email", "password", "onboarded").execute().data, columns = ["userId", "email", "password", "onboarded"])
-                dataSlice = allData[allData["email"] == loginDetails.email].iloc[0, :]
-                if dataSlice["password"] != hashedPassword:
-                    raise ValueError("Invalid email or password")
-                else:
-                    sessionStartTime = str(datetime.datetime.now())
-                    dictItems = {
-                        "userId": dataSlice["userId"],
-                        "email": loginDetails.email,
-                        "password": hashedPassword,
-                        "sessionStartTime": sessionStartTime
-                    }
-                    accessToken = jwt.encode(dictItems, os.environ["SECRET_KEY"], "HS256")
-                    self.client.table("Sessions").insert({
-                        "userId": dataSlice["userId"],
-                        "email": dataSlice["email"],
-                        "accessToken": accessToken,
-                        "sessionStartTime": sessionStartTime,
-                        "lastActivity": sessionStartTime
-                    }).execute()
-                    response = {
-                        "status": "SUCCESS",
-                        "userId": dataSlice["userId"],
-                        "email": dataSlice["email"],
-                        "accessToken": accessToken,
-                        "onboarded": int(dataSlice["onboarded"])
-                    }
-            return response
-        except Exception as e:
-            exception = CustomException(e)
-            logger.error(exception)
-            raise exception
-        
-    def loginWithProvider(self, loginDetails: LoginWithProvider) -> dict:
-        """
-        Authenticate or register a user using a third-party provider.
-
-        Args:
-            loginDetails (LoginWithProvider): The provider's login details.
-
-        Returns:
-            dict: A dictionary containing authentication status, user info, and access token.
-
-        Raises:
-            CustomException: For any errors during provider login.
-        """
-        try:
-            passwordString = str(loginDetails.sub) + str(loginDetails.id) + str(loginDetails.nodeId) + os.environ["SECRET_KEY"]
-            hashedPassword = hashlib.md5(passwordString.encode("utf-8")).hexdigest()
-            registeredUsers = pd.DataFrame(self.client.table("Users").select("userId", "email", "password", "onboarded").execute().data, columns = ["userId", "email", "password", "onboarded"])
-            if loginDetails.email not in registeredUsers["email"].unique():
-                response = self.client.table(table_name = "Users").insert(
-                    {
-                        "email": loginDetails.email,
-                        "password": hashedPassword
-                    }
-                ).execute()
-                registeredUsers = pd.DataFrame(self.client.table("Users").select("userId", "email", "password", "onboarded").execute().data, columns = ["userId", "email", "password", "onboarded"])
-            else:
-                pass
-            dataSlice = registeredUsers[registeredUsers["email"] == loginDetails.email].iloc[0, :]
-            sessionStartTime = str(datetime.datetime.now())
-            dictItems = {
+                allUsers.extend(response)
+                page += 1
+            user = next((x for x in allUsers if x.email == loginDetails.email), None)
+            if not user:
+                raise CustomException(
+                    ValueError("Invalid credentials"),
+                    statusCode=401,
+                    uiMessage="Email or password is incorrect."
+                )
+            allData = pd.DataFrame(
+                self.client.table("Users")
+                .select("userId", "email", "password", "onboarded",
+                        "currentWorkspaceId", "subscriptionStart",
+                        "subscriptionExpiry", "subscriptionPlan")
+                .execute().data
+            )
+            dataSlice = allData[allData["email"] == loginDetails.email].iloc[0]
+            if dataSlice["password"] != hashedPassword:
+                raise CustomException(
+                    ValueError("Invalid credentials"),
+                    statusCode=401,
+                    uiMessage="Email or password is incorrect."
+                )
+            sessionStartTime = datetime.datetime.utcnow()
+            tokenPayload = {
                 "userId": dataSlice["userId"],
                 "email": loginDetails.email,
-                "password": hashedPassword,
-                "sessionStartTime": sessionStartTime
+                "sessionStartTime": str(sessionStartTime)
             }
-            accessToken = jwt.encode(dictItems, os.environ["SECRET_KEY"], "HS256")
+            accessToken = jwt.encode(tokenPayload, os.environ["SECRET_KEY"], "HS256")
             self.client.table("Sessions").insert({
                 "userId": dataSlice["userId"],
                 "email": dataSlice["email"],
                 "accessToken": accessToken,
-                "sessionStartTime": sessionStartTime,
-                "lastActivity": sessionStartTime
+                "sessionStartTime": str(sessionStartTime),
+                "lastActivity": str(sessionStartTime)
             }).execute()
-            response = {
+            if dataSlice["subscriptionExpiry"]:
+                if datetime.datetime.utcnow() <= datetime.datetime.strptime(dataSlice["subscriptionExpiry"], "%Y-%m-%dT%H:%M:%S.%f"):
+                    subscriptionStatus = "ACTIVE"
+                else:
+                    subscriptionStatus = "INACTIVE"
+            else:
+                subscriptionStatus = "INACTIVE"
+            return {
                 "status": "SUCCESS",
                 "userId": dataSlice["userId"],
                 "email": dataSlice["email"],
                 "accessToken": accessToken,
-                "onboarded": int(dataSlice["onboarded"])
+                "onboarded": int(dataSlice["onboarded"]),
+                "currentWorkspaceId": dataSlice["currentWorkspaceId"],
+                "subscriptionStatus": subscriptionStatus,
+                "subscriptionStart": str(dataSlice["subscriptionStart"]),
+                "subscriptionExpiry": str(dataSlice["subscriptionExpiry"]),
+                "subscriptionPlan": dataSlice["subscriptionPlan"]
             }
-            return response
+        except CustomException:
+            raise
         except Exception as e:
-            exception = CustomException(e)
+            exception = CustomException(
+                e,
+                uiMessage="Login failed. Please try again later."
+            )
             logger.error(exception)
             raise exception
+        
+    def loginWithProvider(self, loginDetails: LoginWithProvider) -> dict:
+            """
+            Authenticate or register a user using a third-party provider (Google/GitHub).
+            
+            If the user does not exist:
+            - Creates a new user record with a 12-day free trial.
+            - Creates a default workspace.
+            - Logs them in.
+            
+            If the user exists:
+            - Logs them in and returns the standard session details.
+
+            Raises:
+                CustomException:
+                    422 - Invalid provider payload
+                    500 - Provider login failure
+            """
+            try:
+                if not loginDetails.email:
+                    raise CustomException(
+                        ValueError("Invalid provider login payload"),
+                        statusCode=422,
+                        uiMessage="Invalid login details. Please check the form."
+                    )
+                # Query the Users table directly to check existence
+                response = self.client.table("Users").select("*").eq("email", loginDetails.email).execute()
+                userData = {}
+                sessionStartTime = datetime.datetime.utcnow()
+                # --- Scenario 1: User Exists (Login Flow) ---
+                if response.data:
+                    userData = response.data[0]
+                    if userData["subscriptionExpiry"]:
+                        if datetime.datetime.utcnow() <= datetime.datetime.strptime(userData["subscriptionExpiry"], "%Y-%m-%dT%H:%M:%S.%f"):
+                            subscriptionStatus = "ACTIVE"
+                            subscriptionPlan = userData["subscriptionPlan"]
+                        else:
+                            subscriptionStatus = "INACTIVE"
+                            subscriptionPlan = "expired"
+                    else:
+                        subscriptionStatus = "INACTIVE"
+                        subscriptionPlan = "unclaimedFreeSubscription"
+                # --- Scenario 2: New User (Signup + Free Trial Flow) ---
+                else:
+                    subscriptionStatus = "INACTIVE"
+                    subscriptionPlan = "unclaimedFreeSubscription"
+                    userId = str(uuid.uuid4())
+                    workspaceId = str(uuid.uuid4())
+                    # Generate a consistent hash for provider users (acts as password)
+                    passwordString = f"{loginDetails.sub}{loginDetails.id}{loginDetails.nodeId}{os.environ['SECRET_KEY']}"
+                    hashedPassword = hashlib.md5(passwordString.encode("utf-8")).hexdigest()
+                    # Start Free Trial Immediately (12 days)
+                    subscriptionStart = sessionStartTime
+                    subscriptionExpiry = sessionStartTime + datetime.timedelta(days=12)
+                    userData = {
+                        "userId": userId,
+                        "email": loginDetails.email,
+                        "password": hashedPassword,
+                        "createdAt": str(sessionStartTime),
+                        "onboarded": False,
+                        "currentWorkspaceId": workspaceId
+                    }
+                    # Insert into Users table
+                    self.client.table("Users").insert(userData).execute()
+                    # Create Default Workspace
+                    self.client.table("Workspaces").insert({
+                        "id": workspaceId,
+                        "ownerId": userId,
+                        "ownerEmail": loginDetails.email,
+                        "workspaceName": "Default"
+                    }).execute()
+                # --- Common Steps: Session Generation ---
+                tokenPayload = {
+                    "userId": userData["userId"],
+                    "email": userData["email"],
+                    "sessionStartTime": str(sessionStartTime)
+                }
+                accessToken = jwt.encode(tokenPayload, os.environ["SECRET_KEY"], "HS256")
+                self.client.table("Sessions").insert({
+                    "userId": userData["userId"],
+                    "email": userData["email"],
+                    "accessToken": accessToken,
+                    "sessionStartTime": str(sessionStartTime),
+                    "lastActivity": str(sessionStartTime)
+                }).execute()
+
+                # --- Return Standard Login Response ---
+                return {
+                    "status": "SUCCESS",
+                    "userId": userData["userId"],
+                    "email": userData["email"],
+                    "accessToken": accessToken,
+                    "onboarded": 1 if userData.get("onboarded") else 0,
+                    "currentWorkspaceId": userData["currentWorkspaceId"],
+                    "subscriptionStatus": subscriptionStatus,
+                    "subscriptionPlan": subscriptionPlan 
+                }
+            except CustomException:
+                raise
+            except Exception as e:
+                exception = CustomException(
+                    e,
+                    uiMessage="Login with provider failed. Please try again later."
+                )
+                logger.error(exception)
+                raise exception
         
     def onboarding(self, onboardingDetails = OnboardingDetails) -> None:
         """
@@ -329,12 +423,30 @@ class AuthenticationService:
     
     def logout(self, token: str) -> None:
         """
-        Log out the user by deleting their session using the provided access token.
+        Log out a user by deleting their session.
 
-        Args:
-            token (str): The access token of the session to be terminated.
+        Raises:
+            CustomException:
+                401 - User not logged in
+                500 - Logout failure
         """
-        self.client.table("Sessions").delete().eq("accessToken", token).execute()
-        return
+        try:
+            if not token:
+                raise CustomException(
+                    ValueError("No active session"),
+                    statusCode=401,
+                    uiMessage="You are not logged in."
+                )
+            self.client.table("Sessions").delete().eq("accessToken", token).execute()
+            return
+        except CustomException:
+            raise
+        except Exception as e:
+            exception = CustomException(
+                e,
+                uiMessage="Logout failed. Try again later."
+            )
+            logger.error(exception)
+            raise exception
 
 authenticationService = AuthenticationService()  

@@ -18,9 +18,10 @@ from analyticsHub.utils import readYaml
 from urllib.request import urlopen
 from utils.logger import logger
 from api.commons import client
-from string import Template
 import pandas as pd
+import string
 import orjson
+import random
 import json
 import uuid
 import time
@@ -60,7 +61,7 @@ class ReportingService:
 
         Args:
             projectId (str): The project ID.
-            chartType (str): The type of chart to generate (e.g., bar, line, pie, table, pivot, etc.).
+            chartType (str): The type of chart to generate (e.g., bar, line, pie, table, pivot, geoMap, etc.).
             xAxis (str): The column to use for the X axis.
             yAxis (str): The column to use for the Y axis.
             aggregationMetric (str, optional): The aggregation metric (sum, mean, etc.).
@@ -68,18 +69,27 @@ class ReportingService:
             tablesUsed (list[str] | str): Tables to use for the chart. Can be a single table or a list for blending.
             joinTypes (list[str], optional): Join types for merging tables (if blending).
             blendOn (list[str], optional): Columns to join on (if blending).
-            **kwargs: Additional keyword arguments for pivot charts (index, columns, values, selectedColumns).
+            **kwargs: Additional keyword arguments for few charts (index, columns, values, selectedColumns, mapType, isFilterApplied, filters).
 
         Returns:
             dict: Chart-ready data structure suitable for frontend rendering.
         """
-        if isinstance(tablesUsed, list):
-            allTables = [fetch_data(projectId, x) for x in tablesUsed]
-            result = allTables[0]
-            for i in range(len(joinTypes)):
-                result = pd.merge(left = result, right = allTables[i+1], on = blendOn[i], how = joinTypes[i], suffixes = ['_left', '_right'])
+        if (not chartType == "geoMap") and (not kwargs.get("isFilterApplied")):
+            if isinstance(tablesUsed, list):
+                allTables = [fetch_data(projectId, x) for x in tablesUsed]
+                result = allTables[0]
+                for i in range(len(joinTypes)):
+                    result = pd.merge(left = result, right = allTables[i+1], on = blendOn[i], how = joinTypes[i], suffixes = ['_left', '_right'])
+            else:
+                result = fetch_data(projectId, tablesUsed)
         else:
-            result = fetch_data(projectId, tablesUsed)
+            if isinstance(tablesUsed, list):
+                allTables = [fetch_data(projectId = projectId, tableName = x, baseFilters = kwargs.get("filters")) for x in tablesUsed]
+                result = allTables[0]
+                for i in range(len(joinTypes)):
+                    result = pd.merge(left = result, right = allTables[i+1], on = blendOn[i], how = joinTypes[i], suffixes = ['_left', '_right'])
+            else:
+                result = fetch_data(projectId = projectId, tableName = tablesUsed, baseFilters = kwargs.get("filters"))
         if chartType != "pivot":
             if aggregationMetric == "sum":
                 finalResult = result.groupby(xAxis)[yAxis].sum().reset_index()
@@ -181,6 +191,16 @@ class ReportingService:
                 "title": f"Pivot for {dataSourceName}",
                 "data": orjson.loads(pivotData)
             }
+        elif chartType == "geoMap":
+            response = {
+                "chartType": "geoMap",
+                "map": {
+                    "mapType": "scatterMap",
+                    "data": {
+                        "points": [{"id": "".join(random.choice(string.ascii_letters + string.digits) for i in range(16)), "lat": lat, "long": long} for lat, long in zip(finalResult[xAxis].tolist(), finalResult[yAxis].tolist())]
+                    }
+                }
+            }
         return response
     
     def generateChart(self, chartDetails: GenerateChartInput) -> dict:
@@ -257,8 +277,10 @@ class ReportingService:
         """
         try:
             # Generating charts in parallel
-            fileUrl = os.environ["FILE_URL"].format(projectId=details.projectId, fileName="metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
-            metadata = json.loads(urlopen(fileUrl).read())
+            metadataUrl = os.environ["FILE_URL"].format(projectId=details.projectId, fileName="metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            insightsUrl = os.environ["FILE_URL"].format(projectId=details.projectId, fileName="insights.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            metadata = json.loads(urlopen(metadataUrl).read())
+            insights = json.loads(urlopen(insightsUrl).read())
             with ProcessPoolExecutor(max_workers=4, initializer=initWorkflow) as executor:
                 futures = [
                     executor.submit(self._generateSingleChartForParallel, metadata, details.projectId, query)
@@ -277,26 +299,62 @@ class ReportingService:
 
             # Export to dashboard
             pageDict = dashboardConfig.get(pageId)
+            cards, otherWidgets = list(), list()
+            cardsWidth, otherWidgetsWidth = 0, 0
             for widget in responses:
                 widgetId = str(uuid.uuid4())
-                newWidget = {
-                    "id": widgetId,
-                    "chartType": widget.get("finalOutput").get("chartType"),
-                    "title": widget.get("finalOutput").get("title"),
-                    "label": widget.get("finalOutput").get("label"),
-                    "xLabels": widget.get("finalOutput").get("xLabels"),
-                    "yLabels": widget.get("finalOutput").get("yLabels"),
-                    "data": widget.get("finalOutput").get("data"),
-                    "layout": {"x": 0, "y": 0, "width": 10, "height": 10},
-                    "generatedCode": widget.get("generatedCode")
-                }
-                pageDict["widgets"].append(newWidget)
+                if widget.get("finalOutput").get("chartType") == "card":
+                    data = widget.get("finalOutput").get("data")
+                    if (isinstance(data, int) | isinstance(data, float)): data = float(f"{data:.2f}")
+                    else: pass
+                    newWidget = {
+                        "id": widgetId,
+                        "chartType": widget.get("finalOutput").get("chartType"),
+                        "title": widget.get("finalOutput").get("title"),
+                        "label": widget.get("finalOutput").get("label"),
+                        "xLabels": widget.get("finalOutput").get("xLabels"),
+                        "yLabels": widget.get("finalOutput").get("yLabels"),
+                        "data": data,
+                        "layout": {"x": cardsWidth, "y": 0, "w": 4, "h": 6},
+                        "generatedCode": widget.get("generatedCode")
+                    }
+                    if cardsWidth == 12: cardsWidth = 0
+                    else: cardsWidth += 4
+                    cards.append(newWidget)
+                else:
+                    newWidget = {
+                        "id": widgetId,
+                        "chartType": widget.get("finalOutput").get("chartType"),
+                        "title": widget.get("finalOutput").get("title"),
+                        "label": widget.get("finalOutput").get("label"),
+                        "xLabels": widget.get("finalOutput").get("xLabels"),
+                        "yLabels": widget.get("finalOutput").get("yLabels"),
+                        "data": widget.get("finalOutput").get("data"),
+                        "layout": {"x": otherWidgetsWidth, "y": 0, "w": 6, "h": 10},
+                        "generatedCode": widget.get("generatedCode")
+                    }
+                    if otherWidgetsWidth == 12: otherWidgetsWidth = 0
+                    else: otherWidgetsWidth += 6
+                    otherWidgets.append(newWidget)
+            pageDict["widgets"].extend(cards)
+            pageDict["widgets"].extend(otherWidgets)
             dashboardConfig[pageId] = pageDict
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(dashboardConfig, indent=4).encode("utf-8"))
                 buffer.seek(0)
                 _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/dashboardConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"}) 
-            return dashboardConfig.get(pageId)
+            
+            # Updating insights.json
+            for insight in insights.get("insights"):
+                if insight.get("query") in details.inputQueries:
+                    insight["isCharted"] = True
+                else:
+                    continue
+            with io.BytesIO() as buffer:
+                buffer.write(json.dumps(insights, indent=4).encode("utf-8"))
+                buffer.seek(0)
+                self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/insights.json", file = buffer.getvalue(), file_options = {"upsert": "true"})  
+            return dashboardConfig.get(pageId) 
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
@@ -331,9 +389,12 @@ class ReportingService:
                     index=panelChartDetails.index,
                     columns=panelChartDetails.columns,
                     values=panelChartDetails.values,
-                    selectedColumns=panelChartDetails.selectedColumns
+                    selectedColumns=panelChartDetails.selectedColumns,
+                    mapType=panelChartDetails.mapType,
+                    isFilterApplied=panelChartDetails.isFilterApplied,
+                    filters=panelChartDetails.filters
                 )
-                generatedCodeTemplate = Template(self.codeTemplates.get("panelChartWithoutBlend"))
+                generatedCodeTemplate = string.Template(self.codeTemplates.get("panelChartWithoutBlend"))
                 generatedCode = generatedCodeTemplate.substitute(
                     projectId = panelChartDetails.projectId,
                     chartType = panelChartDetails.chartType,
@@ -345,7 +406,10 @@ class ReportingService:
                     index=panelChartDetails.index,
                     columns=panelChartDetails.columns,
                     values=panelChartDetails.values,
-                    selectedColumns=panelChartDetails.selectedColumns
+                    selectedColumns=panelChartDetails.selectedColumns,
+                    mapType=panelChartDetails.mapType,
+                    isFilterApplied=panelChartDetails.isFilterApplied,
+                    filters=panelChartDetails.filters
                 )
             elif "blendConfig.json" in allFiles:
                 blendConfigUrl = os.environ["FILE_URL"].format(projectId = panelChartDetails.projectId, fileName = "blendConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
@@ -366,9 +430,12 @@ class ReportingService:
                     index=panelChartDetails.index,
                     columns=panelChartDetails.columns,
                     values=panelChartDetails.values,
-                    selectedColumns=panelChartDetails.selectedColumns
+                    selectedColumns=panelChartDetails.selectedColumns,
+                    mapType=panelChartDetails.mapType,
+                    isFilterApplied=panelChartDetails.isFilterApplied,
+                    filters=panelChartDetails.filters
                 )
-                generatedCodeTemplate = Template(self.codeTemplates.get("panelChartWithBlend"))
+                generatedCodeTemplate = string.Template(self.codeTemplates.get("panelChartWithBlend"))
                 generatedCode = generatedCodeTemplate.substitute(
                     projectId = panelChartDetails.projectId,
                     chartType = panelChartDetails.chartType,
@@ -382,7 +449,10 @@ class ReportingService:
                     index=panelChartDetails.index,
                     columns=panelChartDetails.columns,
                     values=panelChartDetails.values,
-                    selectedColumns=panelChartDetails.selectedColumns
+                    selectedColumns=panelChartDetails.selectedColumns,
+                    mapType=panelChartDetails.mapType,
+                    isFilterApplied=panelChartDetails.isFilterApplied,
+                    filters=panelChartDetails.filters
                 )
             else:
                 pass

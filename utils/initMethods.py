@@ -47,18 +47,13 @@ def serializer(obj):
     elif isinstance(obj, complex):
         return {"real": obj.real, "imag": obj.imag}
 
-def fetch_data(projectId: str, tableName: str, baseFilters: list = list()):
+def fetch_data(projectId: str, tableName: str, baseFilters: list = list(), *args):
     """
     Fetches a DataFrame from Redis cache or parquet file, with optional filtering.
-
-    Args:
-        projectId (str): The project ID.
-        tableName (str): The table name.
-        baseFilters (list, optional): List of filter conditions to apply.
-
-    Returns:
-        pd.DataFrame: The resulting DataFrame after applying filters.
     """
+    for arg in args:
+        if isinstance(arg, list):
+            baseFilters.extend(arg)
     r = redis.Redis(host=os.environ["REDIS_HOST"], port=int(os.environ["REDIS_PORT"]), password=os.environ["REDIS_PASSWORD"])
     key = f"{projectId}::{tableName}"
     df = r.get(key)
@@ -77,7 +72,6 @@ def fetch_data(projectId: str, tableName: str, baseFilters: list = list()):
                 if columnTable == tableName: 
                     if column not in df.columns:
                         continue
-
                     if isinstance(condition, dict):
                         if df[column].dtype == "object":
                             if "contains" in condition:

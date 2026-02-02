@@ -9,13 +9,13 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["router"]
 
 
+from utils.exceptionHandler import CustomException, raiseHttpException
 from fastapi import status, APIRouter, Depends, WebSocket, WebSocketDisconnect
+from api.models import SpeechToTextModel, ImageToInsightsModel
 from fastapi.security import HTTPAuthorizationCredentials
 from api.services.utilityService import utilityService
 from analyticsHub.triggers.celery import celeryApp
 from fastapi.responses import ORJSONResponse
-from fastapi.exceptions import HTTPException
-from api.models import SpeechToTextModel
 from api.commons import verifyToken
 import asyncio
 
@@ -39,9 +39,27 @@ async def getSpeechTranscript(speechToText: SpeechToTextModel, token = Depends(v
     try:
         transcriptText = utilityService.getSpeechTranscript(speechToText = speechToText)
         return ORJSONResponse(status_code = 200, content = {"transcriptionText": transcriptText})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
     
+@router.post("/getInsightsFromImage")
+async def getInsightsFromImage(imageToInsights: ImageToInsightsModel, token = Depends(verifyToken)):
+    """
+    Extract strategic business insights from a base64-encoded image of a dashboard.
+
+    Args:
+        imageToInsights (ImageToInsightsModel): Input model containing the base64-encoded image string.
+        token: Authorization token dependency (for access control).
+
+    Returns:
+        ORJSONResponse: A JSON response containing the extracted insight text or an error message.
+    """
+    try:
+        insightText = utilityService.getInsightsFromImage(imageToInsights=imageToInsights)
+        return ORJSONResponse(status_code=200, content={"insightText": insightText})
+    except CustomException as e:
+        raiseHttpException(e)
+
 @router.get("/sendForecasts")
 async def sendForecasts(token = Depends(verifyToken)):
     """
@@ -56,8 +74,8 @@ async def sendForecasts(token = Depends(verifyToken)):
     try:
         r = utilityService.sendForecasts()
         return ORJSONResponse(status_code = 200, content = {"taskId": r.task_id, "triggerName": "forecast", "taskStatus": r.status}) 
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
 
 @router.get("/temp/{num}")
 async def tempFunc(num: int, token = Depends(verifyToken)):
@@ -74,8 +92,8 @@ async def tempFunc(num: int, token = Depends(verifyToken)):
     try:
         result = utilityService.tempFunc(num = num)
         return ORJSONResponse(status_code = 200, content = result)
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
     
 @router.websocket("/ws/getTaskStatus")
 async def getTaskStatus(websocket: WebSocket):

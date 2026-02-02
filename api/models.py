@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+from enum import Enum
 
 class SignUp(BaseModel):
     email: str
@@ -38,7 +39,8 @@ class UpdateProjectState(BaseModel):
 class CreateProject(BaseModel):
     projectName: str
     projectDescription: str | None = None
-    domain: str | None = None
+    workspaceId: str
+    domainExpert: str
 
 class GenerateChartInput(BaseModel):
     inputQuery: str
@@ -49,6 +51,9 @@ class GenerateChartsInParallel(BaseModel):
     inputQueries: list[str]
 
 class SpeechToTextModel(BaseModel):
+    b64String: str
+
+class ImageToInsightsModel(BaseModel):
     b64String: str
 
 class DeleteTable(BaseModel):
@@ -73,6 +78,9 @@ class PanelChartDetails(BaseModel):
     columns: list[str] | None = None
     values: list[str] | None = None
     selectedColumns: list[str] | None = None
+    mapType: str | None = None
+    isFilterApplied: bool | None = None
+    filters: list[dict] | None = None
 
 class CreateDataBlend(BaseModel):
     projectId: str
@@ -112,7 +120,8 @@ class ExportToDashboard(BaseModel):
     label: str | None = None
     xLabels: list[str] | None = None
     yLabels: list[str] | None = None
-    data: dict[str, list | dict] | list[dict] | str
+    data: dict[str, list | dict] | list[dict] | str | None = None
+    map: dict | None = None
     layout: dict[str, int]
     generatedCode: str
 
@@ -126,8 +135,22 @@ class GetData(BaseModel):
     projectId: str
     page: str
     filters: list[dict] | None = None
+    refresh: bool = False
 
 class DeleteDashboardElement(BaseModel):
     projectId: str
     deletionObject: str
     id: str
+
+class VerifySubscriptionRequest(BaseModel):
+    subscribedExperts: list[str]
+    razorpaySubscriptionId: str
+    razorpayPaymentId: str 
+    razorpaySignature: str 
+    userId: str 
+
+class SubscriptionPlan(str, Enum):
+    MONTHLY_20 = "MONTHLY_20"
+    MONTHLY_40 = "MONTHLY_40"
+    MONTHLY_60 = "MONTHLY_60"
+    MONTHLY_80 = "MONTHLY_80"

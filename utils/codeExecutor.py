@@ -31,6 +31,13 @@ class REPLManager:
         self.timeoutSeconds = timeoutSeconds
 
     @staticmethod
+    def _removeCodeFences(code: str):
+        """
+        Remove code fences from a string.
+        """
+        return "\n".join(code.split("```")[-2].split("\n")[1:])
+
+    @staticmethod
     def _executeCode(codeString, globalContext, stdout, stderr):
         """
         Executes the provided code string in the given global context, redirecting stdout and stderr.
@@ -43,6 +50,10 @@ class REPLManager:
         """
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             try:
+                if "```" in codeString:
+                    codeString = REPLManager._removeCodeFences(codeString)
+                else:
+                    pass
                 exec(codeString, globalContext)
             except Exception:
                 traceback.print_exc(file=stderr)

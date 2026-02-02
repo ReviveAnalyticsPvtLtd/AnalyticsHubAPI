@@ -12,8 +12,9 @@ __all__ = ["dashboardService"]
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from utils.exceptionHandler import CustomException
 from utils.codeExecutor import replManager
-from utils.logger import logger
+from sqlalchemy import create_engine
 from urllib.request import urlopen
+from utils.logger import logger
 from api.commons import client
 from api.models import (
     DeleteDashboardElement,
@@ -23,12 +24,24 @@ from api.models import (
     GetData
 )
 import pandas as pd
+import tempfile
 import uuid
 import json
 import time
+import ast
 import os
 import io
 import re
+
+class _FetchDataFilterTransformer(ast.NodeTransformer):
+    def __init__(self, filters: list):
+        self.filters = filters
+
+    def visit_Call(self, node):
+        if isinstance(node.func, ast.Name) and node.func.id == "fetch_data":
+            filters_node = ast.parse(repr(self.filters)).body[0].value
+            node.args.append(filters_node)
+        return self.generic_visit(node)
 
 class DashboardService:
     """
@@ -45,6 +58,20 @@ class DashboardService:
         self.client = client
 
     @staticmethod
+    def _removeCodeFences(code: str):
+        """
+        Remove code fences from a string.
+        """
+        return "\n".join(code.split("```")[-2].split("\n")[1:])
+
+    @staticmethod
+    def _addCodeFences(code: str):
+        """
+        Add code fences to a string.
+        """
+        return "```python\n" + code.strip() + "\n```"
+
+    @staticmethod
     def _applyFilterToAWidget(widget: dict, filters: list, codeExecutor: callable) -> dict:
         """
         Apply filters to a widget's generated code and update its data accordingly.
@@ -59,13 +86,16 @@ class DashboardService:
         """
         widget = widget.copy()
         code = widget.get("generatedCode")
-        _ = widget.pop("generatedCode")
-        if "```" in code:
-            code = "\n".join(code.split("```")[-2].split("\n")[1:])
-        else:
-            pass
-        code = re.sub(r'fetch_data\(([^)]+)\)', r'fetch_data(\1, {filters})'.format(filters = filters), code)
+        if "```" in code: code = DashboardService._removeCodeFences(code)
+        else: pass
+        tree = ast.parse(code)
+        transformer = _FetchDataFilterTransformer(filters)
+        tree = transformer.visit(tree)
+        ast.fix_missing_locations(tree)
+        code = ast.unparse(tree)
+        code = DashboardService._addCodeFences(code)
         result = codeExecutor.run(code)
+        widget["generatedCode"] = code
         try:
             resultDict = json.loads(result)
             widget.update(resultDict)
@@ -111,14 +141,14 @@ class DashboardService:
                 columnInfo = dict()
                 columnInfo["columnName"] = column
                 columnInfo["type"] = dtype.name
-                columnInfo["min"] = df[column].min()
-                columnInfo["max"] = df[column].max()
+                columnInfo["min"] = str(df[column].min())
+                columnInfo["max"] = str(df[column].max())
                 allColumns.append(columnInfo)
             else:
                 columnInfo = dict()
                 columnInfo["columnName"] = column
                 columnInfo["type"] = dtype.name
-                columnInfo["uniqueValues"] = df[column].unique().tolist()
+                columnInfo["uniqueValues"] = [str(x) for x in df[column].unique().tolist()]
                 allColumns.append(columnInfo)
         return allColumns
 
@@ -205,6 +235,7 @@ class DashboardService:
                 "xLabels": details.xLabels,
                 "yLabels": details.yLabels,
                 "data": details.data,
+                "map": details.map,
                 "layout": details.layout,
                 "generatedCode": details.generatedCode
             }
@@ -238,17 +269,34 @@ class DashboardService:
             dashboardConfig = json.loads(urlopen(fileUrl).read())
             pageInfo = dashboardConfig.get(details.page)
             pageInfo["id"] = details.page
-            if not details.filters:
-                for widget in pageInfo["widgets"]: widget.pop("generatedCode")
-            else:
+            if (not details.filters) and (not details.refresh):
+                pass
+            elif (details.filters) and (not details.refresh):
                 widgets = pageInfo.get("widgets")
-                # results = list()
-                # for widget in widgets:
-                #     results.append(self._applyFilterToAWidget(widget = widget, filters = details.filters, codeExecutor = replManager))
                 numWidgets = len(widgets)
                 with ProcessPoolExecutor(max_workers = 4) as executor:
                     results = executor.map(self._applyFilterToAWidget, widgets, [details.filters] * numWidgets, [replManager] * numWidgets)
                 pageInfo["widgets"] = [x for x in results]
+            elif (not details.filters) and (details.refresh):
+                widgets = pageInfo.get("widgets")
+                numWidgets = len(widgets)
+                with ProcessPoolExecutor(max_workers = 4) as executor:
+                    results = executor.map(self._applyFilterToAWidget, widgets, [details.filters] * numWidgets, [replManager] * numWidgets)
+                pageInfo["widgets"] = [x for x in results] 
+                prevPageInfo = dashboardConfig.get(details.page)
+                for prevWidget in prevPageInfo.get("widgets"):
+                    for newWidget in pageInfo.get("widgets"):
+                        if newWidget.get("id") == prevWidget.get("id"):
+                            prevWidget.update(newWidget)
+                        else:
+                            continue
+                dashboardConfig[details.page] = prevPageInfo
+                with io.BytesIO() as buffer:
+                    buffer.write(json.dumps(dashboardConfig, indent=4).encode("utf-8"))
+                    buffer.seek(0)
+                    _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/dashboardConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"})    
+            else:
+                raise ValueError("Filters and Refresh cannot be implemented simultaneously.")
             return pageInfo
         except Exception as e:
             exception = CustomException(e)
@@ -351,5 +399,68 @@ class DashboardService:
             exception  = CustomException(e)
             logger.error(exception)
             raise exception
+        
+    @staticmethod   
+    def _pullData(connection: dict):
+        """
+        Retrieve data from a database connection as a pandas DataFrame.
+
+        Args:
+            connection (dict): Dictionary containing database connection details,
+                including type, user, password, host, port, db, and table.
+
+        Returns:
+            pandas.DataFrame: DataFrame containing the contents of the specified table.
+
+        Raises:
+            CustomException: For any errors during data retrieval or connection issues.
+        """
+        if connection.get("type") == "MySQL/PostgreSQL":
+            connStr = f'mysql+pymysql://{connection.get("user")}:{connection.get("password")}@{connection.get("host")}:{connection.get("port")}/{connection.get("db")}'
+            engine = create_engine(connStr)
+            dataFrame = pd.read_sql(f"SELECT * FROM {connection.get('table')}", engine, parse_dates = True)
+            return dataFrame
+        else:
+            ...
+        
+    def pullDataInParallel(self, projectId: str) -> dict:
+        """
+        Retrieve data from multiple databases in parallel and upload results to the AnalyticsHub storage bucket.
+
+        Args:
+            projectId (str): The project identifier used to locate the connections.json file.
+
+        Returns:
+            dict: Dictionary containing the operation status, e.g., {"status": "SUCCESS"}.
+
+        Raises:
+            CustomException: For any errors encountered during data extraction or upload.
+        """
+        try:
+            if "connections.json" in [x.get("name") for x in client.storage.from_("AnalyticsHub").list(path = projectId)]:
+                databaseConnectionsUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "connections.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+                databaseConnections = json.loads(urlopen(databaseConnectionsUrl).read())
+            else:
+                pass
+            connections = databaseConnections.values()
+            with ThreadPoolExecutor(max_workers = 4) as executor:
+                futures = [executor.submit(self._pullData, connection) for connection in connections]
+                results = [x.result() for x in futures]
+                results = {connection.get("table"): result for connection, result in zip(connections, results)}
+            for result in results:
+                with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
+                    results[result].to_parquet(temp.name, compression = "snappy")
+                    _ = self.client.storage.from_("AnalyticsHub").upload(
+                        file = temp.name,
+                        path = f"{projectId}/{result + '.parquet'}",
+                        file_options = {"upsert": "true"}
+                    )
+                temp.close()
+            return {"status": "SUCCESS"}
+        except Exception as e:
+            exception  = CustomException(e)
+            logger.error(exception)
+            raise exception
+    
 
 dashboardService = DashboardService()

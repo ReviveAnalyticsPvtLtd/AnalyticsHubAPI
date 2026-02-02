@@ -11,6 +11,7 @@ __all__ = ["managementService"]
 from analyticsHub.components.metadataGenerator import MetadataGenerator
 from analyticsHub.components.insightGenerator import InsightGenerator
 from analyticsHub.components.reportGenerator import ReportGenerator
+from analyticsHub.components.domainKpiMapper import DomainKpiMapper
 from utils.exceptionHandler import CustomException
 from concurrent.futures import ProcessPoolExecutor
 from utils.logger import logger
@@ -45,47 +46,131 @@ class ManagementService:
         self.metadataGenerator = MetadataGenerator()
         self.insightGenerator = InsightGenerator()
         self.reportGenerator = ReportGenerator()
+        self.domainKpiMapper = DomainKpiMapper()
         self.client = client
 
     def createProject(self, projectDetails: CreateProject, token: str) -> str:
         """
-        Create a new project for a user.
-
-        Args:
-            projectDetails (CreateProject): Details of the project to create.
-            token (str): JWT token for user authentication.
-
-        Returns:
-            str: The unique project ID of the newly created project.
-
+        Create a new project.
         Raises:
-            CustomException: For any errors during project creation.
+            CustomException:
+                401 - User not authenticated
+                409 - Project already exists in workspace
+                422 - Invalid project details
+                500 - Project creation failure
         """
         try:
-            projectId = str(uuid.uuid4())
+            if not projectDetails.projectName or not projectDetails.workspaceId or not projectDetails.domainExpert:
+                raise CustomException(
+                    ValueError("Invalid project details"),
+                    statusCode=422,
+                    uiMessage="Invalid project details."
+                )
             decodedToken = jwt.decode(
                 token,
                 os.environ["SECRET_KEY"],
-                algorithms = ["HS256"]
+                algorithms=["HS256"]
             )
-            _ = self.client.table("Projects").insert({
+            existingProjects = self.client.table("Projects") \
+                .select("projectName") \
+                .eq("workspaceId", projectDetails.workspaceId) \
+                .neq("isTrash", 1) \
+                .execute().data
+            if projectDetails.projectName in [x.get("projectName") for x in existingProjects]:
+                raise CustomException(
+                    ValueError("Duplicate project"),
+                    statusCode=409,
+                    uiMessage="A project with this name already exists in the workspace."
+                )
+            projectId = str(uuid.uuid4())
+            self.client.table("Projects").insert({
                 "projectId": projectId,
                 "projectName": projectDetails.projectName,
                 "projectDescription": projectDetails.projectDescription,
                 "ownerUserId": decodedToken["userId"],
-                "ownerUserMail": decodedToken["email"]
+                "ownerUserMail": decodedToken["email"],
+                "workspaceId": projectDetails.workspaceId,
+                "domainExpert": projectDetails.domainExpert
             }).execute()
             return projectId
+        except jwt.ExpiredSignatureError:
+            raise CustomException(
+                ValueError("Unauthenticated"),
+                statusCode=401,
+                uiMessage="Please login to create a project."
+            )
+        except CustomException:
+            raise
         except Exception as e:
-            exception = CustomException(e)
+            exception = CustomException(
+                e,
+                uiMessage="Failed to create project. Try again later."
+            )
             logger.error(exception)
             raise exception
         
-    def listProjects(self, token: str) -> pd.DataFrame:
+    def createWorkspace(self, workspaceName: str, token: str) -> str:
+        """
+        Create a new workspace.
+        Raises:
+            CustomException:
+                401 - User not authenticated
+                409 - Workspace already exists
+                422 - Invalid workspace name
+                500 - Workspace creation failure
+        """
+        try:
+            if not workspaceName:
+                raise CustomException(
+                    ValueError("Invalid workspace name"),
+                    statusCode=422,
+                    uiMessage="Invalid workspace name."
+                )
+            decodedToken = jwt.decode(
+                token,
+                os.environ["SECRET_KEY"],
+                algorithms=["HS256"]
+            )
+            existingWorkspaces = self.client.table("Workspaces") \
+                .select("workspaceName") \
+                .eq("ownerId", decodedToken["userId"]) \
+                .execute().data
+            if workspaceName in [x.get("workspaceName") for x in existingWorkspaces]:
+                raise CustomException(
+                    ValueError("Duplicate workspace"),
+                    statusCode=409,
+                    uiMessage="Workspace with this name already exists."
+                )
+            workspaceId = str(uuid.uuid4())
+            self.client.table("Workspaces").insert({
+                "id": workspaceId,
+                "ownerId": decodedToken["userId"],
+                "ownerEmail": decodedToken["email"],
+                "workspaceName": workspaceName
+            }).execute()
+            return workspaceId
+        except jwt.ExpiredSignatureError:
+            raise CustomException(
+                ValueError("Unauthenticated"),
+                statusCode=401,
+                uiMessage="Please login to create a workspace."
+            )
+        except CustomException:
+            raise
+        except Exception as e:
+            exception = CustomException(
+                e,
+                uiMessage="Unable to create workspace. Try again later."
+            )
+            logger.error(exception)
+            raise exception
+        
+    def listProjects(self, workspaceId: str, token: str) -> pd.DataFrame:
         """
         List all projects owned by the user associated with the provided token.
 
         Args:
+            workspaceId (str): workspaceId for which the projects needs to be listed.
             token (str): JWT token for user authentication.
 
         Returns:
@@ -101,10 +186,179 @@ class ManagementService:
                 algorithms = ["HS256"]
             )
             data = pd.DataFrame(self.client.table("Projects").select("*").execute().data)
-            data = data[data["ownerUserId"] == decodedToken["userId"]]
-            return data
+            if len(data) == 0:
+                return data
+            else:
+                data = data[(data["ownerUserId"] == decodedToken["userId"]) & (data["workspaceId"] == workspaceId)]
+                return data
         except Exception as e:
             exception = CustomException(e)
+            logger.error(exception)
+            raise exception
+        
+    def listWokspaces(self, token: str) -> pd.DataFrame:
+        """
+        List all workspaces owned by the user associated with the provided token.
+
+        Args:
+            token (str): JWT token for user authentication.
+
+        Returns:
+            pd.DataFrame: DataFrame containing the user's workspaces.
+
+        Raises:
+            CustomException: For any errors during retrieval.
+        """
+        try:
+            decodedToken = jwt.decode(
+                token,
+                os.environ["SECRET_KEY"],
+                algorithms = ["HS256"]
+            )
+            data = pd.DataFrame(self.client.table("Workspaces").select("*").execute().data)
+            data = data[data["ownerId"] == decodedToken["userId"]]
+            subscribedExperts = [x.strip() for x in self.client.table("Users").select("subscribedExperts").eq("userId", decodedToken["userId"]).execute().data[0]["subscribedExperts"].split(",")]
+            response = {
+                "workspaces": data.to_dict(orient = "records"),
+                "aiExperts": {
+                    "subscribedExperts": subscribedExperts,
+                    "allExperts": ["banking", "manufacturing", "supplychain", "telecom"]
+                }
+            }
+            return response
+        except Exception as e:
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception
+    
+    def updateCurrentWorkspace(self, updatedWorkspaceId: str, token: str) -> None:
+        """
+        Update the current Workspace ID of a user.
+
+        Args:
+            updatedWorkspaceId (str): Details specifying the updated workspace id.
+            token (str): Token for extracting the user id.
+
+        Raises:
+            CustomException: For any errors during update.        
+        """
+        try:
+            decodedToken = jwt.decode(
+                token,
+                os.environ["SECRET_KEY"],
+                algorithms = ["HS256"]
+            )
+            _ = self.client.table("Users").update({"currentWorkspaceId": updatedWorkspaceId}).eq("userId", decodedToken["userId"]).execute()   
+            return
+        except Exception as e:
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception
+        
+    def updateWorkspaceName(self, workspaceId: str, newWorkspaceName: str, token: str) -> None:
+        """
+        Update the name of a workspace.
+
+        Args:
+            workspaceId (str): The ID of the workspace to rename.
+            newWorkspaceName (str): The new name for the workspace.
+            token (str): JWT token for user authentication.
+
+        Raises:
+            CustomException:
+                401 - User not authenticated
+                404 - Workspace not found
+                409 - Workspace with new name already exists
+                422 - Invalid workspace name
+                500 - Workspace update failure
+        """
+        try:
+            if not newWorkspaceName:
+                raise CustomException(
+                    ValueError("Invalid workspace name"),
+                    statusCode=422,
+                    uiMessage="Invalid workspace name."
+                )
+            decodedToken = jwt.decode(
+                token,
+                os.environ["SECRET_KEY"],
+                algorithms=["HS256"]
+            )
+            existingWorkspace = self.client.table("Workspaces") \
+                .select("*") \
+                .eq("id", workspaceId) \
+                .eq("ownerId", decodedToken["userId"]) \
+                .execute().data
+            if not existingWorkspace:
+                raise CustomException(
+                    ValueError("Workspace not found"),
+                    statusCode=404,
+                    uiMessage="Workspace not found."
+                )
+            existingWorkspaces = self.client.table("Workspaces") \
+                .select("workspaceName") \
+                .eq("ownerId", decodedToken["userId"]) \
+                .execute().data
+            if newWorkspaceName in [x.get("workspaceName") for x in existingWorkspaces]:
+                raise CustomException(
+                    ValueError("Duplicate workspace name"),
+                    statusCode=409,
+                    uiMessage="A workspace with this name already exists."
+                )
+            _ = self.client.table("Workspaces").update({"workspaceName": newWorkspaceName}).eq("id", workspaceId).execute()
+            return
+        except Exception as e:
+            exception = CustomException(
+                e,
+                uiMessage="Failed to update workspace name. Try again later."
+            )
+            logger.error(exception)
+            raise exception
+        
+    def deleteWorkspace(self, workspaceId: str, token: str) -> None:
+        """
+        Delete a workspace and all associated projects and files.
+
+        Args:
+            workspaceId (str): The ID of the workspace to delete.
+            token (str): JWT token for user authentication.
+
+        Raises:
+            CustomException:
+                401 - User not authenticated
+                404 - Workspace not found
+                500 - Workspace deletion failure
+        """
+        try:
+            decodedToken = jwt.decode(
+                token,
+                os.environ["SECRET_KEY"],
+                algorithms=["HS256"]
+            )
+            existingWorkspace = self.client.table("Workspaces") \
+                .select("*") \
+                .eq("id", workspaceId) \
+                .eq("ownerId", decodedToken["userId"]) \
+                .execute().data
+            if not existingWorkspace:
+                raise CustomException(
+                    ValueError("Workspace not found"),
+                    statusCode=404,
+                    uiMessage="Workspace not found."
+                )
+            projects = self.client.table("Projects") \
+                .select("projectId") \
+                .eq("workspaceId", workspaceId) \
+                .execute().data
+            for project in projects:
+                self.deleteProject(projectId=project.get("projectId"))
+            _ = self.client.table("Workspaces").delete().eq("id", workspaceId).execute()
+            return
+        except Exception as e:
+            exception = CustomException(
+                e,
+                uiMessage="Failed to delete workspace. Try again later."
+            )
             logger.error(exception)
             raise exception
         
@@ -218,28 +472,77 @@ class ManagementService:
             logger.error(CustomException(e))
             raise CustomException(e)
         
-    def _generateInsightsFromMetadata(self, metadata: dict) -> dict:
+    def generateInsightsForProject(self, projectId: str) -> dict:
         """
-        Generate insights from the provided metadata.
+        Generate insights for the project from its metadata and also determine the most important KPIs that can be derived from it.
 
         Args:
-            metadata (dict): The metadata dictionary containing information about dataframes.
+            projectId (str): The project identifier.
 
         Returns:
             dict: A dictionary containing generated insights.
         """
         try:
+            fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            domainFile = self.client.table("Projects").select("domainExpert").eq("projectId", projectId).execute().data[0].get("domainExpert") + ".json"
+            metadata = json.loads(urlopen(fileUrl).read())
+            if domainFile in [x.get("name") for x in self.client.storage.from_("DomainSpecificKpis").list()]:
+                domainFileUrl = os.environ["DOMAIN_FILE_URL"].format(fileName = domainFile) + f"?cb={int(time.time())}"
+                domainData = json.loads(urlopen(domainFileUrl).read())
+                domainKpiMapperChain = self.domainKpiMapper.getDomainKpiMapperChain()
+                domainKpiInsights = domainKpiMapperChain.invoke({"domainProfile": domainData, "metadata": metadata})
+                domainKpiInsightParts = domainKpiInsights.split("```")
+                domainKpiInsights = domainKpiInsightParts[-2]
+                domainKpiInsights = orjson.loads("\n".join(domainKpiInsights.split("\n")[1:]).encode("utf-8"))
+                overlapKpis = list(domainKpiInsights.values())
+            else:
+                overlapKpis = list()
             insightGeneratorChain = self.insightGenerator.getInsightGeneratorChain()
             insights = insightGeneratorChain.invoke({"metadata": metadata})
             insightsParts = insights.split("```")
             insights = insightsParts[-2]
-            insights = orjson.loads("\n".join(insights.split("\n")[1:]).encode())
+            insights = orjson.loads("\n".join(insights.split("\n")[1:]).encode("utf-8"))
+            allInsights, counterValue = list(), 1
+            for kpi in overlapKpis:
+                insightDict = {"id": counterValue, "query": kpi, "isCharted": False}
+                allInsights.append(insightDict)
+                counterValue += 1
+            for insightKey in insights.keys():
+                insightDict = {"id": counterValue, "query": insights.get(insightKey), "isCharted": False}
+                allInsights.append(insightDict)
+                counterValue += 1
+            insights = {"insights": allInsights}
+            with io.BytesIO() as buffer:
+                buffer.write(json.dumps(insights, indent=4).encode("utf-8"))
+                buffer.seek(0)
+                self.client.storage.from_("AnalyticsHub").upload(path = f"{projectId}/insights.json", file = buffer.getvalue(), file_options = {"upsert": "true"})    
             return insights
         except Exception as e:
             logger.error(CustomException(e))
             raise CustomException(e)
+        
+    def getInsights(self, projectId: str) -> dict:
+        """
+        Retrieve insights for a project.
 
-    def generateMetadataAndInsights(self, projectId: str) -> dict:
+        Args:
+            projectId (str): The project identifier.
+
+        Returns:
+            dict: Dictionary containing insights for in the project.
+
+        Raises:
+            CustomException: For any errors during retrieval.
+        """
+        try:
+            fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "insights.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            jsonData = json.loads(urlopen(fileUrl).read())
+            return jsonData
+        except Exception as e:
+            logger.error(CustomException(e))
+            raise CustomException(e)
+
+    def generateMetadata(self, projectId: str) -> dict:
         """
         Generate or update metadata for a project, uploading it to storage, and generating insights.
 
@@ -275,12 +578,11 @@ class ManagementService:
                     pass
             else:
                 jsonData = self._generateMetadata(projectId = projectId)
-            insights = self._generateInsightsFromMetadata(metadata = jsonData)
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(jsonData, indent=4).encode("utf-8"))
                 buffer.seek(0)
                 self.client.storage.from_("AnalyticsHub").upload(path = f"{projectId}/metadata.json", file = buffer.getvalue(), file_options = {"upsert": "true"})     
-            return {"metadata": jsonData, "insights": insights}
+            return jsonData
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
@@ -300,18 +602,23 @@ class ManagementService:
             CustomException: For any errors during retrieval.
         """
         try:
-            fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
-            jsonData = json.loads(urlopen(fileUrl).read())
-            newJson = {"tables": []}
-            for key in jsonData:
-                tableJson = {
-                    "tableName": key,
-                    "tableDesc": jsonData.get(key).get("description"),
-                    "shape": jsonData.get(key).get("shape"),
-                    "columns": jsonData.get(key).get("columns")
-                }
-                newJson.get("tables").append(tableJson)
-            return newJson
+            files = self.client.storage.from_("AnalyticsHub").list(projectId)
+            filenames = [x.get("name") for x in files]
+            if "metadata.json" not in filenames:
+                return dict()
+            else:
+                fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+                jsonData = json.loads(urlopen(fileUrl).read())
+                newJson = {"tables": []}
+                for key in jsonData:
+                    tableJson = {
+                        "tableName": key,
+                        "tableDesc": jsonData.get(key).get("description"),
+                        "shape": jsonData.get(key).get("shape"),
+                        "columns": jsonData.get(key).get("columns")
+                    }
+                    newJson.get("tables").append(tableJson)
+                return newJson
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
@@ -479,5 +786,183 @@ class ManagementService:
             exception = CustomException(e)
             logger.error(exception)
             raise exception   
+        
+    def getUserProfile(self, token: str) -> dict:
+        """
+        Retrieve user profile details from the Users table.
+
+        Args:
+            token (str): JWT token for user authentication.
+
+        Returns:
+            dict: Dictionary containing user profile fields.
+
+        Raises:
+            CustomException:
+                401 - User not authenticated
+                404 - User not found
+                500 - Failed to retrieve user profile
+        """
+        try:
+            decodedToken = jwt.decode(
+                token,
+                os.environ["SECRET_KEY"],
+                algorithms=["HS256"]
+            )
+            userId = decodedToken["userId"]
+            userRecord = self.client.table("Users") \
+                .select(
+                    "userId",
+                    "fullName",
+                    "email",
+                    "profileImage",
+                    "companyName",
+                    "role",
+                    "profileBio",
+                    "subscriptionPlan",
+                    "subscribedExperts"
+                ) \
+                .eq("userId", userId) \
+                .execute().data
+            if not userRecord:
+                raise CustomException(
+                    ValueError("User not found"),
+                    statusCode=404,
+                    uiMessage="User profile not found."
+                )
+            record = userRecord[0]
+            subscribedExperts = record.get("subscribedExperts")
+            if subscribedExperts:
+                aiExpertsList = [x.strip() for x in subscribedExperts.split(",") if x.strip()]
+            else:
+                aiExpertsList = []
+            profileResponse = {
+                "userId": record.get("userId"),
+                "userName": record.get("fullName"),
+                "email": record.get("email"),
+                "profileImg": record.get("profileImage"),
+                "company": record.get("companyName"),
+                "position": record.get("role"),
+                "bio": record.get("profileBio"),
+                "plan": record.get("subscriptionPlan"),
+                "aiExperts": aiExpertsList
+            }
+            return profileResponse
+        except Exception as e:
+            exception = CustomException(
+                e,
+                uiMessage="Failed to retrieve user profile. Try again later."
+            )
+            logger.error(exception)
+            raise exception
+        
+    def editUserProfile(
+        self,
+        userName: str | None,
+        company: str | None,
+        position: str | None,
+        bio: str | None,
+        profileImage: bytes | None,
+        profileImageFilename: str | None,
+        token: str
+    ) -> dict:
+        """
+        Update user profile details in the Users table. Optionally upload profile image to Supabase storage.
+
+        Args:
+            userName (str | None): User's display name.
+            company (str | None): User's company name.
+            position (str | None): User's position/role.
+            bio (str | None): User's profile bio.
+            profileImage (bytes | None): Raw bytes of the profile image file, or None if not uploading.
+            profileImageFilename (str | None): Original filename of the uploaded image, or None.
+            token (str): JWT token for user authentication.
+
+        Returns:
+            dict: Dictionary containing the updated user profile fields.
+
+        Raises:
+            CustomException:
+                401 - User not authenticated
+                404 - User not found
+                500 - Failed to update user profile
+        """
+        try:
+            decodedToken = jwt.decode(
+                token,
+                os.environ["SECRET_KEY"],
+                algorithms=["HS256"]
+            )
+            userId = decodedToken["userId"]
+            existingUser = self.client.table("Users") \
+                .select("userId") \
+                .eq("userId", userId) \
+                .execute().data
+            if not existingUser:
+                raise CustomException(
+                    ValueError("User not found"),
+                    statusCode=404,
+                    uiMessage="User profile not found."
+                )
+            updateData = {}
+            if userName is not None:
+                updateData["fullName"] = userName
+            if company is not None:
+                updateData["companyName"] = company
+            if position is not None:
+                updateData["role"] = position
+            if bio is not None:
+                updateData["profileBio"] = bio
+            if profileImage and profileImageFilename:
+                fileExtension = os.path.splitext(profileImageFilename)[-1]
+                storagePath = f"{userId}{fileExtension}"
+                self.client.storage.from_("userProfileImages").upload(
+                    path=storagePath,
+                    file=profileImage,
+                    file_options={"upsert": "true"}
+                )
+                profileImageUrl = f"{os.environ['SUPABASE_URL']}/storage/v1/object/public/userProfileImages/{storagePath}"
+                updateData["profileImage"] = profileImageUrl
+            if updateData:
+                self.client.table("Users").update(updateData).eq("userId", userId).execute()
+            updatedUserRecord = self.client.table("Users") \
+                .select(
+                    "userId",
+                    "fullName",
+                    "email",
+                    "profileImage",
+                    "companyName",
+                    "role",
+                    "profileBio",
+                    "subscriptionPlan",
+                    "subscribedExperts"
+                ) \
+                .eq("userId", userId) \
+                .execute().data
+            record = updatedUserRecord[0]
+            subscribedExperts = record.get("subscribedExperts")
+            if subscribedExperts:
+                aiExpertsList = [x.strip() for x in subscribedExperts.split(",") if x.strip()]
+            else:
+                aiExpertsList = []
+            profileResponse = {
+                "userId": record.get("userId"),
+                "userName": record.get("fullName"),
+                "email": record.get("email"),
+                "profileImg": record.get("profileImage"),
+                "company": record.get("companyName"),
+                "position": record.get("role"),
+                "bio": record.get("profileBio"),
+                "plan": record.get("subscriptionPlan"),
+                "aiExperts": aiExpertsList
+            }
+            return profileResponse
+        except Exception as e:
+            exception = CustomException(
+                e,
+                uiMessage="Failed to update user profile. Try again later."
+            )
+            logger.error(exception)
+            raise exception
 
 managementService = ManagementService()

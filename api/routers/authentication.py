@@ -9,8 +9,9 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["router"]
 
 
+from utils.exceptionHandler import CustomException, raiseHttpException
 from api.services.authenticationService import authenticationService
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends
 from fastapi.responses import ORJSONResponse
 from api.commons import verifyToken
 from api.models import (
@@ -35,10 +36,10 @@ async def signup(signupDetails: SignUp):
         ORJSONResponse: Success status and user ID, or error message.
     """
     try:
-        userId = authenticationService.signup(signupDetails = signupDetails)
-        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "userId": userId})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+        userId = authenticationService.signup(signupDetails=signupDetails)
+        return ORJSONResponse(status_code=200, content={"status": "SUCCESS", "userId": userId})
+    except CustomException as e:
+        raiseHttpException(e)
     
 @router.get("/confirmMail/{userId}")
 async def confirmMail(userId: str):
@@ -54,8 +55,8 @@ async def confirmMail(userId: str):
     try:
         authenticationService.confirmMail(userId = userId)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS"}) 
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
     
 @router.post("/login")
 async def login(loginDetails: Login):
@@ -69,10 +70,10 @@ async def login(loginDetails: Login):
         ORJSONResponse: Authentication status, user info, and access token, or error message.
     """
     try:
-            response = authenticationService.login(loginDetails = loginDetails)
-            return ORJSONResponse(status_code = 200, content = response)
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+        response = authenticationService.login(loginDetails=loginDetails)
+        return ORJSONResponse(status_code=200, content=response)
+    except CustomException as e:
+        raiseHttpException(e)
     
 @router.post("/loginWithProvider")
 async def loginWithProvider(loginDetails: LoginWithProvider):
@@ -86,10 +87,11 @@ async def loginWithProvider(loginDetails: LoginWithProvider):
         ORJSONResponse: Authentication status, user info, and access token, or error message.
     """
     try:
-        response = authenticationService.loginWithProvider(loginDetails = loginDetails)
-        return ORJSONResponse(status_code = 200, content = response)
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+        response = authenticationService.loginWithProvider(loginDetails=loginDetails)
+        return ORJSONResponse(status_code=200, content=response)
+    except CustomException as e:
+        raiseHttpException(e)
+
     
 @router.post("/onboarding")
 async def onboarding(onboardingDetails: OnboardingDetails, credentials = Depends(verifyToken)):
@@ -106,8 +108,8 @@ async def onboarding(onboardingDetails: OnboardingDetails, credentials = Depends
     try:
         authenticationService.onboarding(onboardingDetails = onboardingDetails)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "User onboarded successfully."})        
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
 
 @router.get("/initiatePasswordReset")
 async def initiatePasswordReset(emailId: str):
@@ -123,8 +125,8 @@ async def initiatePasswordReset(emailId: str):
     try:
         authenticationService.initiatePasswordReset(emailId = emailId)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Password reset initiated successfully."})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))    
+    except CustomException as e:
+        raiseHttpException(e)    
 
 @router.patch("/resetPassword")
 async def resetPassword(newCredentials: NewCredentials):
@@ -140,8 +142,8 @@ async def resetPassword(newCredentials: NewCredentials):
     try:
         authenticationService.resetPassword(newCredentials = newCredentials)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Password updated successfully!"})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
 
 @router.get("/logout")
 async def logout(token = Depends(verifyToken)):
@@ -155,7 +157,7 @@ async def logout(token = Depends(verifyToken)):
         ORJSONResponse: Success status and message, or error message.
     """
     try:
-        authenticationService.logout(token = token)
-        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Session logged out successfully"})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+        authenticationService.logout(token=token)
+        return ORJSONResponse(status_code=200, content={"status": "SUCCESS"})
+    except CustomException as e:
+        raiseHttpException(e)

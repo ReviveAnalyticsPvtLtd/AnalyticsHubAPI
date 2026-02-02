@@ -52,7 +52,6 @@ class BlendService:
                 "blendOn": blendDetails.blendOn,
                 "joinTypes": blendDetails.joinTypes
             }
-            project = self.client.table("Projects").select("projectId", "projectName", "dataTables").eq("projectId", blendDetails.projectId).execute().data[0]
             if "blendConfig.json" in [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = blendDetails.projectId)]:
                 fileUrl = os.environ["FILE_URL"].format(projectId = blendDetails.projectId, fileName = "blendConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
                 blendConfig = json.loads(urlopen(fileUrl).read())
@@ -63,14 +62,6 @@ class BlendService:
                 buffer.write(json.dumps(blendConfig, indent=4).encode("utf-8"))
                 buffer.seek(0)
                 _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{blendDetails.projectId}/blendConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
-            if blendDetails.blendName in project["dataTables"].split(", "):
-                pass
-            elif project["dataTables"]:
-                projectData = project["dataTables"] + f", {blendDetails.blendName}"
-                _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", blendDetails.projectId).execute()
-            else:
-                projectData = blendDetails.blendName
-                _ = self.client.table("Projects").update({"dataTables": projectData}).eq("projectId", blendDetails.projectId).execute()
             return
         except Exception as e:
             exception = CustomException(e)
