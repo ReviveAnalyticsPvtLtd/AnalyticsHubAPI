@@ -786,5 +786,183 @@ class ManagementService:
             exception = CustomException(e)
             logger.error(exception)
             raise exception   
+        
+    def getUserProfile(self, token: str) -> dict:
+        """
+        Retrieve user profile details from the Users table.
+
+        Args:
+            token (str): JWT token for user authentication.
+
+        Returns:
+            dict: Dictionary containing user profile fields.
+
+        Raises:
+            CustomException:
+                401 - User not authenticated
+                404 - User not found
+                500 - Failed to retrieve user profile
+        """
+        try:
+            decodedToken = jwt.decode(
+                token,
+                os.environ["SECRET_KEY"],
+                algorithms=["HS256"]
+            )
+            userId = decodedToken["userId"]
+            userRecord = self.client.table("Users") \
+                .select(
+                    "userId",
+                    "fullName",
+                    "email",
+                    "profileImage",
+                    "companyName",
+                    "role",
+                    "profileBio",
+                    "subscriptionPlan",
+                    "subscribedExperts"
+                ) \
+                .eq("userId", userId) \
+                .execute().data
+            if not userRecord:
+                raise CustomException(
+                    ValueError("User not found"),
+                    statusCode=404,
+                    uiMessage="User profile not found."
+                )
+            record = userRecord[0]
+            subscribedExperts = record.get("subscribedExperts")
+            if subscribedExperts:
+                aiExpertsList = [x.strip() for x in subscribedExperts.split(",") if x.strip()]
+            else:
+                aiExpertsList = []
+            profileResponse = {
+                "userId": record.get("userId"),
+                "userName": record.get("fullName"),
+                "email": record.get("email"),
+                "profileImg": record.get("profileImage"),
+                "company": record.get("companyName"),
+                "position": record.get("role"),
+                "bio": record.get("profileBio"),
+                "plan": record.get("subscriptionPlan"),
+                "aiExperts": aiExpertsList
+            }
+            return profileResponse
+        except Exception as e:
+            exception = CustomException(
+                e,
+                uiMessage="Failed to retrieve user profile. Try again later."
+            )
+            logger.error(exception)
+            raise exception
+        
+    def editUserProfile(
+        self,
+        userName: str | None,
+        company: str | None,
+        position: str | None,
+        bio: str | None,
+        profileImage: bytes | None,
+        profileImageFilename: str | None,
+        token: str
+    ) -> dict:
+        """
+        Update user profile details in the Users table. Optionally upload profile image to Supabase storage.
+
+        Args:
+            userName (str | None): User's display name.
+            company (str | None): User's company name.
+            position (str | None): User's position/role.
+            bio (str | None): User's profile bio.
+            profileImage (bytes | None): Raw bytes of the profile image file, or None if not uploading.
+            profileImageFilename (str | None): Original filename of the uploaded image, or None.
+            token (str): JWT token for user authentication.
+
+        Returns:
+            dict: Dictionary containing the updated user profile fields.
+
+        Raises:
+            CustomException:
+                401 - User not authenticated
+                404 - User not found
+                500 - Failed to update user profile
+        """
+        try:
+            decodedToken = jwt.decode(
+                token,
+                os.environ["SECRET_KEY"],
+                algorithms=["HS256"]
+            )
+            userId = decodedToken["userId"]
+            existingUser = self.client.table("Users") \
+                .select("userId") \
+                .eq("userId", userId) \
+                .execute().data
+            if not existingUser:
+                raise CustomException(
+                    ValueError("User not found"),
+                    statusCode=404,
+                    uiMessage="User profile not found."
+                )
+            updateData = {}
+            if userName is not None:
+                updateData["fullName"] = userName
+            if company is not None:
+                updateData["companyName"] = company
+            if position is not None:
+                updateData["role"] = position
+            if bio is not None:
+                updateData["profileBio"] = bio
+            if profileImage and profileImageFilename:
+                fileExtension = os.path.splitext(profileImageFilename)[-1]
+                storagePath = f"{userId}{fileExtension}"
+                self.client.storage.from_("userProfileImages").upload(
+                    path=storagePath,
+                    file=profileImage,
+                    file_options={"upsert": "true"}
+                )
+                profileImageUrl = f"{os.environ['SUPABASE_URL']}/storage/v1/object/public/userProfileImages/{storagePath}"
+                updateData["profileImage"] = profileImageUrl
+            if updateData:
+                self.client.table("Users").update(updateData).eq("userId", userId).execute()
+            updatedUserRecord = self.client.table("Users") \
+                .select(
+                    "userId",
+                    "fullName",
+                    "email",
+                    "profileImage",
+                    "companyName",
+                    "role",
+                    "profileBio",
+                    "subscriptionPlan",
+                    "subscribedExperts"
+                ) \
+                .eq("userId", userId) \
+                .execute().data
+            record = updatedUserRecord[0]
+            subscribedExperts = record.get("subscribedExperts")
+            if subscribedExperts:
+                aiExpertsList = [x.strip() for x in subscribedExperts.split(",") if x.strip()]
+            else:
+                aiExpertsList = []
+            profileResponse = {
+                "userId": record.get("userId"),
+                "userName": record.get("fullName"),
+                "email": record.get("email"),
+                "profileImg": record.get("profileImage"),
+                "company": record.get("companyName"),
+                "position": record.get("role"),
+                "bio": record.get("profileBio"),
+                "plan": record.get("subscriptionPlan"),
+                "aiExperts": aiExpertsList
+            }
+            return profileResponse
+        except Exception as e:
+            exception = CustomException(
+                e,
+                uiMessage="Failed to update user profile. Try again later."
+            )
+            logger.error(exception)
+            raise exception
 
 managementService = ManagementService()

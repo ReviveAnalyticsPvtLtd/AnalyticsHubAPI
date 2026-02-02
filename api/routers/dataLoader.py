@@ -17,7 +17,6 @@ from api.models import (
 from utils.exceptionHandler import CustomException, raiseHttpException
 from fastapi import APIRouter, Depends, UploadFile, File, Form
 from api.services.dataLoadService import dataLoadService
-from fastapi.exceptions import HTTPException
 from fastapi.responses import ORJSONResponse
 from api.commons import verifyToken
 from typing import Annotated
@@ -134,5 +133,5 @@ async def deleteTable(tableDetails: DeleteTable, token = Depends(verifyToken)):
     try:
         dataLoadService.deleteTable(tableDetails = tableDetails)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Table deleted successfully"})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)

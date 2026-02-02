@@ -10,10 +10,9 @@ __all__ = ["router"]
 
 
 from utils.exceptionHandler import CustomException, raiseHttpException
+from fastapi import APIRouter, Depends, File, UploadFile, Form
 from api.services.managementService import managementService
 from fastapi.responses import ORJSONResponse, HTMLResponse
-from fastapi.exceptions import HTTPException
-from fastapi import APIRouter, Depends
 from api.models import (
     UpdateProjectState,
     CreateProject,
@@ -90,8 +89,8 @@ async def listProjects(workspaceId: str, token = Depends(verifyToken)):
     try:
         data = managementService.listProjects(workspaceId = workspaceId, token = token)
         return ORJSONResponse(status_code = 200, content = {"projects": data.to_dict(orient = "records")})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
     
 @router.get("/listWorkspaces")
 async def listWorkspaces(token = Depends(verifyToken)):
@@ -107,8 +106,8 @@ async def listWorkspaces(token = Depends(verifyToken)):
     try:
         response = managementService.listWokspaces(token = token)
         return ORJSONResponse(status_code = 200, content = response)
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
 
 @router.patch("/updateCurrentWorkspace/{updatedWorkspaceId}")
 async def updateCurrentWorkspace(updatedWorkspaceId: str, token = Depends(verifyToken)):
@@ -125,8 +124,8 @@ async def updateCurrentWorkspace(updatedWorkspaceId: str, token = Depends(verify
     try:
         managementService.updateCurrentWorkspace(updatedWorkspaceId = updatedWorkspaceId, token = token)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Current workspace updated successfully"})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
 
 @router.patch("/updateWorkspaceName/{workspaceId}/{newWorkspaceName}")
 async def updateWorkspaceName(workspaceId: str, newWorkspaceName: str, token = Depends(verifyToken)):
@@ -191,8 +190,8 @@ async def updateBookmark(updateBookmarkDetails: UpdateProjectState, token = Depe
     try:
         managementService.updateBookmark(updateBookmarkDetails = updateBookmarkDetails)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Project bookmark status updated successfully"})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
     
 @router.patch("/updateArchive")
 async def updateArchive(updateArchiveDetails: UpdateProjectState, token = Depends(verifyToken)):
@@ -209,8 +208,8 @@ async def updateArchive(updateArchiveDetails: UpdateProjectState, token = Depend
     try:
         managementService.updateArchive(updateArchiveDetails = updateArchiveDetails)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Project archive status updated successfully"})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
     
 @router.patch("/updateTrash")
 async def updateTrash(updateTrashDetails: UpdateProjectState, token = Depends(verifyToken)):
@@ -225,10 +224,10 @@ async def updateTrash(updateTrashDetails: UpdateProjectState, token = Depends(ve
         ORJSONResponse: Success or error message.
     """
     try:
-            managementService.updateTrash(updateTrashDetails = updateTrashDetails)
-            return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Project trash status updated successfully"})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+        managementService.updateTrash(updateTrashDetails = updateTrashDetails)
+        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Project trash status updated successfully"})
+    except CustomException as e:
+        raiseHttpException(e)
     
 @router.post("/generateMetadata/{projectId}")
 async def generateMetadata(projectId: str, token = Depends(verifyToken)):
@@ -245,8 +244,8 @@ async def generateMetadata(projectId: str, token = Depends(verifyToken)):
     try:
         jsonData = managementService.generateMetadata(projectId = projectId)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "metadata": jsonData})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
     
 @router.post("/generateKpis/{projectId}")
 async def generateKpis(projectId: str, token = Depends(verifyToken)):
@@ -265,8 +264,8 @@ async def generateKpis(projectId: str, token = Depends(verifyToken)):
         response = {"status": "SUCCESS"}
         response.update(jsonData)
         return ORJSONResponse(status_code = 200, content = response)
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
     
 @router.get("/getInsights/{projectId}")
 async def getInsights(projectId: str, token = Depends(verifyToken)):
@@ -283,8 +282,8 @@ async def getInsights(projectId: str, token = Depends(verifyToken)):
     try:
         newJson = managementService.getInsights(projectId = projectId)
         return ORJSONResponse(status_code = 200, content = newJson) 
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
 
 @router.get("/getMetadata/{projectId}")
 async def getMetadata(projectId: str, token = Depends(verifyToken)):
@@ -301,8 +300,8 @@ async def getMetadata(projectId: str, token = Depends(verifyToken)):
     try:
         newJson = managementService.getMetadata(projectId = projectId)
         return ORJSONResponse(status_code = 200, content = newJson) 
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
 
 @router.put("/editMetadata")
 async def editMetadata(modifiedMetadata: EditMetadata, token = Depends(verifyToken)):
@@ -319,8 +318,8 @@ async def editMetadata(modifiedMetadata: EditMetadata, token = Depends(verifyTok
     try:
         jsonData = managementService.editMetadata(modifiedMetadata = modifiedMetadata)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "metadata": jsonData})   
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
 
 @router.delete("/deleteProject")
 async def deleteProject(projectId: str, token = Depends(verifyToken)):
@@ -337,8 +336,8 @@ async def deleteProject(projectId: str, token = Depends(verifyToken)):
     try:
         managementService.deleteProject(projectId = projectId)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Project deleted successfully"})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
     
 @router.get("/listTriggers/{projectId}")
 async def listTriggers(projectId: str, token = Depends(verifyToken)):
@@ -355,8 +354,8 @@ async def listTriggers(projectId: str, token = Depends(verifyToken)):
     try:
         triggers = managementService.listTriggers(projectId = projectId)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "triggers": triggers})  
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
     
 @router.get("/listTriggersUnderUserId")
 async def listTriggers(token = Depends(verifyToken)):
@@ -372,8 +371,8 @@ async def listTriggers(token = Depends(verifyToken)):
     try:
         allTriggers = managementService.listTriggersUnderUserId(token = token)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "triggersAssignedToUser": allTriggers})   
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
     
 @router.post("/generateReport/{projectId}")
 async def generateReport(projectId: str, token = Depends(verifyToken)):
@@ -390,8 +389,8 @@ async def generateReport(projectId: str, token = Depends(verifyToken)):
     try:
         reports = managementService.generateReport(projectId = projectId)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "reportHtmlContent": reports})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
     
 @router.get("/getReport/{projectId}/{tableName}")
 async def getReport(projectId: str, tableName: str, token = Depends(verifyToken)):
@@ -409,5 +408,75 @@ async def getReport(projectId: str, tableName: str, token = Depends(verifyToken)
     try:
         htmlContent = managementService.getReport(projectId = projectId, tableName = tableName)
         return HTMLResponse(status_code = 200, content = htmlContent)  
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+    except CustomException as e:
+        raiseHttpException(e)
+    
+@router.get("/getUserProfile")
+async def getUserProfile(token = Depends(verifyToken)):
+    """
+    Retrieve user profile details.
+
+    Status Codes:
+        200 - Success
+        401 - Please login to view profile.
+        404 - User profile not found.
+        500 - Failed to retrieve user profile. Try again later.
+    """
+    try:
+        userProfile = managementService.getUserProfile(token=token)
+        return ORJSONResponse(
+            status_code=200,
+            content={
+                "status": "SUCCESS",
+                "profile": userProfile
+            }
+        )
+    except CustomException as e:
+        raiseHttpException(e)
+
+@router.put("/editUserProfile")
+async def editUserProfile(
+    userName: str | None = Form(default=None),
+    company: str | None = Form(default=None),
+    position: str | None = Form(default=None),
+    bio: str | None = Form(default=None),
+    profileImg: UploadFile | None = File(default=None),
+    token = Depends(verifyToken)
+):
+    """
+    Update user profile details.
+
+    Accepts form data with optional file upload for profile image.
+    Profile image is stored in Supabase 'userProfileImages' bucket.
+
+    Status Codes:
+        200 - Success
+        401 - Please login to edit profile.
+        404 - User profile not found.
+        500 - Failed to update user profile. Try again later.
+    """
+    try:
+        imageBytes = None
+        imageFilename = None
+        if profileImg:
+            imageBytes = await profileImg.read()
+            imageFilename = profileImg.filename
+        updatedProfile = managementService.editUserProfile(
+            userName=userName,
+            company=company,
+            position=position,
+            bio=bio,
+            profileImage=imageBytes,
+            profileImageFilename=imageFilename,
+            token=token
+        )
+        return ORJSONResponse(
+            status_code=200,
+            content={
+                "status": "SUCCESS",
+                "message": "Profile updated successfully",
+                "profile": updatedProfile
+            }
+        )
+    except CustomException as e:
+        raiseHttpException(e)

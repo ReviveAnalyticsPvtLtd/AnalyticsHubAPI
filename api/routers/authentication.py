@@ -11,7 +11,7 @@ __all__ = ["router"]
 
 from utils.exceptionHandler import CustomException, raiseHttpException
 from api.services.authenticationService import authenticationService
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends
 from fastapi.responses import ORJSONResponse
 from api.commons import verifyToken
 from api.models import (
@@ -55,8 +55,8 @@ async def confirmMail(userId: str):
     try:
         authenticationService.confirmMail(userId = userId)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS"}) 
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
     
 @router.post("/login")
 async def login(loginDetails: Login):
@@ -108,8 +108,8 @@ async def onboarding(onboardingDetails: OnboardingDetails, credentials = Depends
     try:
         authenticationService.onboarding(onboardingDetails = onboardingDetails)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "User onboarded successfully."})        
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
 
 @router.get("/initiatePasswordReset")
 async def initiatePasswordReset(emailId: str):
@@ -125,8 +125,8 @@ async def initiatePasswordReset(emailId: str):
     try:
         authenticationService.initiatePasswordReset(emailId = emailId)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Password reset initiated successfully."})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))    
+    except CustomException as e:
+        raiseHttpException(e)    
 
 @router.patch("/resetPassword")
 async def resetPassword(newCredentials: NewCredentials):
@@ -142,8 +142,8 @@ async def resetPassword(newCredentials: NewCredentials):
     try:
         authenticationService.resetPassword(newCredentials = newCredentials)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Password updated successfully!"})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
 
 @router.get("/logout")
 async def logout(token = Depends(verifyToken)):

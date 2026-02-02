@@ -9,9 +9,9 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["router"]
 
 
+from utils.exceptionHandler import CustomException, raiseHttpException
 from api.models import VerifySubscriptionRequest, SubscriptionPlan
 from api.services.subscriptionService import subscriptionService
-from fastapi.exceptions import HTTPException
 from fastapi.responses import ORJSONResponse
 from fastapi import APIRouter, Depends
 from api.commons import verifyToken
@@ -42,8 +42,8 @@ async def activateFreeTrial(token=Depends(verifyToken)):
                 "message": "Free trial activated successfully."
             }
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except CustomException as e:
+        raiseHttpException(e)
 
 
 @router.post("/createSubscription")
@@ -61,8 +61,8 @@ async def createSubscription(planId: SubscriptionPlan, token=Depends(verifyToken
     try:
         result = subscriptionService.createSubscription(planId=planId.value, token=token)
         return ORJSONResponse(status_code=200, content=result)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except CustomException as e:
+        raiseHttpException(e)
 
 
 @router.post("/verifySubscription")
@@ -89,5 +89,5 @@ async def verifySubscription(
                 "message": "Subscription verified successfully."
             }
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except CustomException as e:
+        raiseHttpException(e)

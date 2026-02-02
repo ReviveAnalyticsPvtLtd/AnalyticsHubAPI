@@ -9,8 +9,8 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["router"]
 
 
+from utils.exceptionHandler import CustomException, raiseHttpException
 from api.services.dashboardService import dashboardService
-from fastapi.exceptions import HTTPException
 from fastapi.responses import ORJSONResponse
 from fastapi import APIRouter, Depends
 from api.commons import verifyToken
@@ -42,8 +42,8 @@ async def createPage(details: CreatePage, token = Depends(verifyToken)):
     try:
         pageId = dashboardService.createPage(details = details)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "pageId": pageId})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
     
 @router.get("/getAllPages")
 async def getAllPages(projectId: str, token = Depends(verifyToken)):
@@ -60,8 +60,8 @@ async def getAllPages(projectId: str, token = Depends(verifyToken)):
     try:
         pages = dashboardService.getAllPages(projectId = projectId)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "pages": pages})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
     
 @router.post("/exportToDashboard")
 async def exportToDashboard(details: ExportToDashboard, token = Depends(verifyToken)):
@@ -78,8 +78,8 @@ async def exportToDashboard(details: ExportToDashboard, token = Depends(verifyTo
     try:
         widgetId = dashboardService.exportToDashboard(details = details)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "widgetId": widgetId})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
     
 @router.post("/getData")
 async def getData(details: GetData, token = Depends(verifyToken)):
@@ -96,8 +96,8 @@ async def getData(details: GetData, token = Depends(verifyToken)):
     try:
         pageInfo = dashboardService.getData(details = details)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "pageData": pageInfo})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
     
 @router.put("/editWidgetPosition")
 async def editWidgetPosition(details: EditWidgetPosition, token = Depends(verifyToken)):
@@ -114,8 +114,8 @@ async def editWidgetPosition(details: EditWidgetPosition, token = Depends(verify
     try:
         pageInfo = dashboardService.editWidgetPosition(details = details)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "pageData": pageInfo})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
 
 @router.delete("/deleteDashboardElement")
 async def deleteDashboardElement(details: DeleteDashboardElement, token = Depends(verifyToken)):
@@ -132,8 +132,8 @@ async def deleteDashboardElement(details: DeleteDashboardElement, token = Depend
     try:
         dashboardService.deleteDashboardElement(details = details)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "element deleted successfully."})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+    except CustomException as e:
+        raiseHttpException(e)
 
 @router.get("/getAllColumns/{projectId}")
 async def getAllColumns(projectId: str, token = Depends(verifyToken)):
@@ -150,8 +150,8 @@ async def getAllColumns(projectId: str, token = Depends(verifyToken)):
     try:
         results = dashboardService.getAllColumns(projectId = projectId)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "details": results})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+    except CustomException as e:
+        raiseHttpException(e)
     
 @router.get("/dashboardRefresh/{projectId}")
 async def dashboardRefresh(projectId: str, token = Depends(verifyToken)):
@@ -159,5 +159,5 @@ async def dashboardRefresh(projectId: str, token = Depends(verifyToken)):
         result = dashboardService.pullDataInParallel(projectId = projectId)
         result.update({"message": "Data refreshed successfully."})
         return ORJSONResponse(status_code = 200, content = result)
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = f"Endpoint says: {e}")
+    except CustomException as e:
+        raiseHttpException(e)

@@ -13,9 +13,9 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["router"]
 
 
+from utils.exceptionHandler import CustomException, raiseHttpException
 from api.models import GenerateChartInput, PanelChartDetails, GenerateChartsInParallel
 from api.services.reportingService import reportingService
-from fastapi.exceptions import HTTPException
 from fastapi.responses import ORJSONResponse
 from fastapi import APIRouter, Depends
 from api.commons import verifyToken
@@ -43,8 +43,8 @@ async def generateChart(chartDetails: GenerateChartInput, token = Depends(verify
     try:
         response = reportingService.generateChart(chartDetails = chartDetails)
         return ORJSONResponse(status_code = 200, content = response)
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
     
 @router.post("/generatePanelChart")
 async def generatePanelChart(panelChartDetails: PanelChartDetails, token = Depends(verifyToken)):
@@ -64,8 +64,8 @@ async def generatePanelChart(panelChartDetails: PanelChartDetails, token = Depen
     try:
         response = reportingService.generatePanelChart(panelChartDetails = panelChartDetails)
         return ORJSONResponse(status_code = 200, content = response)
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
     
 @router.post("/generateAndExportChartsInParallel")
 async def generateAndExportChartsInParallel(details: GenerateChartsInParallel, token = Depends(verifyToken)):
@@ -85,5 +85,5 @@ async def generateAndExportChartsInParallel(details: GenerateChartsInParallel, t
     try:
         response = reportingService.generateChartsInParallel(details = details)
         return ORJSONResponse(status_code = 200, content = {"message": "Charts generated successfully", "pageData": response})
-    except Exception as e:
-        raise HTTPException(status_code = 500, detail = str(e))
+    except CustomException as e:
+        raiseHttpException(e)
