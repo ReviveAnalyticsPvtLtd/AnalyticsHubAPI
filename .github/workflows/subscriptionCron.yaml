@@ -24,7 +24,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install supabase requests python-dateutil
+          pip install supabase requests python-dateutil loguru
 
       - name: Run subscription manager
         env:
