@@ -10,10 +10,10 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["recalculateSubscriptionDays"]
 
 
-from utils.commons import client
-from utils.logger import logger
+from supabase import create_client
 from datetime import datetime
 from dateutil import parser
+from loguru import logger
 import requests
 import os
 
@@ -32,7 +32,7 @@ def recalculateSubscriptionDays() -> None:
     """
     supabaseUrl = os.environ["SUPABASE_URL"]
     supabaseKey = os.environ["SUPABASE_KEY"]
-    edgeFunctionUrl = os.environ["FREE_TRIAL_EXPIRY_WARNING_EMAIL_URL"]
+    edgeFunctionUrl = os.environ["EDGE_FUNCTION_URL"]
     client = create_client(supabaseUrl, supabaseKey)
     now = datetime.now()
     users = client.table("Users") \
