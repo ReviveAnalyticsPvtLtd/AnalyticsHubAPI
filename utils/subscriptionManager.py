@@ -32,7 +32,7 @@ def recalculateSubscriptionDays() -> None:
     """
     supabaseUrl = os.environ["SUPABASE_URL"]
     supabaseKey = os.environ["SUPABASE_KEY"]
-    edgeFunctionUrl = os.environ["EDGE_FUNCTION_URL"]
+    edgeFunctionUrl = os.environ["FREE_TRIAL_EXPIRY_WARNING_EMAIL_URL"]
     client = create_client(supabaseUrl, supabaseKey)
     now = datetime.now()
     users = client.table("Users") \
