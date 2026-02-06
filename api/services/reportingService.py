@@ -12,7 +12,7 @@ __all__ = ["reportingService"]
 from api.models import GenerateChartInput, PanelChartDetails, GenerateChartsInParallel
 from analyticsHub.workflows.reportingToolWorkflow import buildReportingWorkflow
 from utils.exceptionHandler import CustomException
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from utils.initMethods import fetch_data
 from analyticsHub.utils import readYaml
 from urllib.request import urlopen
@@ -281,7 +281,7 @@ class ReportingService:
             insightsUrl = os.environ["FILE_URL"].format(projectId=details.projectId, fileName="insights.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             metadata = json.loads(urlopen(metadataUrl).read())
             insights = json.loads(urlopen(insightsUrl).read())
-            with ProcessPoolExecutor(max_workers=4, initializer=initWorkflow) as executor:
+            with ThreadPoolExecutor(max_workers=4, initializer=initWorkflow) as executor:
                 futures = [
                     executor.submit(self._generateSingleChartForParallel, metadata, details.projectId, query)
                     for query in details.inputQueries
