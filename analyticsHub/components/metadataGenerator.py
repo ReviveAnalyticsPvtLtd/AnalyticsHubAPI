@@ -19,7 +19,7 @@ from langchain_core.runnables import RunnableLambda
 from utils.exceptionHandler import CustomException
 from analyticsHub.utils import readYaml, getConfig
 from langchain_core.messages import AIMessage
-from langchain_cerebras import ChatCerebras
+from langchain_openai import ChatOpenAI
 from dataclasses import dataclass
 from utils.logger import logger
 import os
@@ -53,7 +53,7 @@ class MetadataGenerator:
         """Constructs and returns a LangChain runnable for metadata generation.
 
         This method reads the configuration and prompt template, then builds a chain
-        consisting of a prompt, a ChatCerebras model, and an output parser.
+        consisting of a prompt, a ChatOpenAI model, and an output parser.
         The chain is designed to take a metadata dictionary as input.
 
         Returns:
@@ -67,7 +67,8 @@ class MetadataGenerator:
             self.config = getConfig(self.metadataGeneratorConfig.configPath)
             promptTemplate = readYaml(self.metadataGeneratorConfig.yamlPath).get("metadataGeneratorPrompt")
             prompt = ChatPromptTemplate.from_template(promptTemplate)
-            llm = ChatCerebras(
+            llm = ChatOpenAI(
+                base_url=os.environ.get("OPENROUTER_BASE_URL"),
                 model = self.config.get("METADATAGENERATOR", "model"),
                 temperature = self.config.getfloat("METADATAGENERATOR", "temperature")
             )

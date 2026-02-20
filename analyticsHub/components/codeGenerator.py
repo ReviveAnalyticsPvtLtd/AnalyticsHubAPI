@@ -15,7 +15,7 @@ from analyticsHub.utils import readYaml, getConfig
 from utils.exceptionHandler import CustomException
 from langchain_core.prompts import PromptTemplate
 from langchain_core.messages import AIMessage
-from langchain_cerebras import ChatCerebras
+from langchain_openai import ChatOpenAI
 from dataclasses import dataclass
 from utils.logger import logger
 import os
@@ -69,7 +69,8 @@ class CodeGenerator:
             self.config = getConfig(self.codeGeneratorConfig.configPath)
             promptTemplate = readYaml(self.codeGeneratorConfig.yamlPath).get("codeGeneratorAgentPrompt")
             codeGeneratorPrompt = PromptTemplate.from_template(promptTemplate)
-            llm = ChatCerebras(
+            llm = ChatOpenAI(
+                base_url = os.environ.get("OPENROUTER_BASE_URL"),
                 model = self.config.get("CODEGENERATOR", "model"),
                 temperature = self.config.getfloat("CODEGENERATOR", "temperature")
             )
