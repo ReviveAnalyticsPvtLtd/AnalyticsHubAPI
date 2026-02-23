@@ -9,7 +9,7 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["reportingService"] 
 
 
-from api.models import GenerateChartInput, PanelChartDetails, GenerateChartsInParallel
+from api.models import GenerateChartInput, PanelChartDetails, GenerateChartsInParallel, SaveQuery, DeleteQuery
 from analyticsHub.workflows.reportingToolWorkflow import buildReportingWorkflow
 from utils.exceptionHandler import CustomException
 from concurrent.futures import ThreadPoolExecutor
@@ -458,6 +458,88 @@ class ReportingService:
                 pass
             response.update({"generatedCode": generatedCode})
             return response
+        except Exception as e:
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception
+
+    def saveQuery(self, details: SaveQuery) -> str:
+        """
+        Save a user-marked favourite query to a queryConfig.json file in the project's Supabase storage folder.
+
+        Generates a unique ID for the query. If a queryConfig.json file already exists for the project, the new query is appended to it. Otherwise, a new queryConfig.json file is created.
+
+        Args:
+            details (SaveQuery): The details containing the project ID and the favourite query string.
+
+        Returns:
+            str: The unique query ID assigned to the saved query.
+
+        Raises:
+            CustomException: If saving the query configuration fails for any reason.
+        """
+        try:
+            queryId = str(uuid.uuid4())
+            allFiles = [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = details.projectId)]
+            if "queryConfig.json" in allFiles:
+                fileUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "queryConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+                queryConfig = json.loads(urlopen(fileUrl).read())
+                queryConfig[queryId] = details.query
+            else:
+                queryConfig = {queryId: details.query}
+            with io.BytesIO() as buffer:
+                buffer.write(json.dumps(queryConfig, indent=4).encode("utf-8"))
+                buffer.seek(0)
+                _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/queryConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
+            return queryId
+        except Exception as e:
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception
+
+    def getQueries(self, projectId: str) -> dict:
+        """
+        Retrieve all saved favourite queries for a project from the queryConfig.json file.
+
+        Args:
+            projectId (str): The project identifier.
+
+        Returns:
+            dict: A dictionary of saved queries (query IDs as keys, query strings as values). Returns an empty dict if no queries have been saved.
+
+        Raises:
+            CustomException: If retrieval fails for any reason.
+        """
+        try:
+            if "queryConfig.json" in [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = projectId)]:
+                fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "queryConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+                queryConfig = json.loads(urlopen(fileUrl).read())
+            else:
+                queryConfig = dict()
+            return queryConfig
+        except Exception as e:
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception
+
+    def deleteQuery(self, details: DeleteQuery) -> None:
+        """
+        Delete a saved favourite query from the queryConfig.json file by its query ID.
+
+        Args:
+            details (DeleteQuery): The details containing the project ID and the query ID to delete.
+
+        Raises:
+            CustomException: If deletion fails for any reason.
+        """
+        try:
+            fileUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "queryConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            queryConfig = json.loads(urlopen(fileUrl).read())
+            queryConfig.pop(details.queryId)
+            with io.BytesIO() as buffer:
+                buffer.write(json.dumps(queryConfig, indent=4).encode("utf-8"))
+                buffer.seek(0)
+                _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/queryConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)

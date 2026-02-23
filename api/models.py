@@ -154,3 +154,11 @@ class SubscriptionPlan(str, Enum):
     MONTHLY_40 = "MONTHLY_40"
     MONTHLY_60 = "MONTHLY_60"
     MONTHLY_80 = "MONTHLY_80"
+
+class SaveQuery(BaseModel):
+    projectId: str
+    query: str
+
+class DeleteQuery(BaseModel):
+    projectId: str
+    queryId: str
