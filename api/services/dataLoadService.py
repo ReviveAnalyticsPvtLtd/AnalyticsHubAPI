@@ -135,8 +135,8 @@ class DataLoadService:
         """
         Load PDF files into project storage. Extracts tables and text content.
         Tables are stored as individual parquet files ({filename}_table{N}.parquet).
-        Non-tabular text is stored as a structured DataFrame ({filename}_text.parquet)
-        with columns: page_number, content.
+        Non-tabular text (excluding content already captured in tables) is stored as
+        a structured DataFrame ({filename}_text.parquet) with columns: page_number, content.
         Raises:
             CustomException:
                 400 - Missing projectId or files
@@ -165,21 +165,35 @@ class DataLoadService:
 
                 with pdfplumber.open(io.BytesIO(fileBytes)) as pdf:
                     for pageNum, page in enumerate(pdf.pages, start=1):
-                        # Extract tables from the page
-                        tables = page.extract_tables()
+                        # Extract tables and their bounding boxes from the page
+                        detectedTables = page.find_tables()
+                        tableBboxes = [t.bbox for t in detectedTables]
+                        tables = [t.extract() for t in detectedTables]
+
                         for table in tables:
                             if not table or len(table) < 2:
                                 continue
-                            headers = table[0]
-                            # Clean headers: replace None/empty with placeholder
+                            # Clean headers: replace None/empty/whitespace-only with placeholder
                             headers = [
-                                str(h).strip() if h else f"column_{i}"
-                                for i, h in enumerate(headers)
+                                str(h).strip() if h and str(h).strip() else f"column_{i}"
+                                for i, h in enumerate(table[0])
                             ]
+                            # Ensure unique column names
+                            seen = {}
+                            uniqueHeaders = []
+                            for h in headers:
+                                if h in seen:
+                                    seen[h] += 1
+                                    uniqueHeaders.append(f"{h}_{seen[h]}")
+                                else:
+                                    seen[h] = 0
+                                    uniqueHeaders.append(h)
+
                             rows = table[1:]
-                            df = pd.DataFrame(rows, columns=headers)
-                            # Drop completely empty rows
+                            df = pd.DataFrame(rows, columns=uniqueHeaders)
+                            # Drop completely empty rows and reset index
                             df.dropna(how="all", inplace=True)
+                            df.reset_index(drop=True, inplace=True)
                             if df.empty:
                                 continue
                             tableIndex += 1
@@ -192,8 +206,14 @@ class DataLoadService:
                                     file_options={"upsert": "true"}
                                 )
 
-                        # Extract text content from the page
-                        text = page.extract_text()
+                        # Extract non-tabular text by filtering out table regions
+                        if tableBboxes:
+                            filteredPage = page
+                            for bbox in tableBboxes:
+                                filteredPage = filteredPage.outside_bbox(bbox)
+                            text = filteredPage.extract_text()
+                        else:
+                            text = page.extract_text()
                         if text and text.strip():
                             textRows.append({
                                 "page_number": pageNum,
