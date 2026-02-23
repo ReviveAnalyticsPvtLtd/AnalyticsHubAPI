@@ -441,7 +441,7 @@ class DashboardService:
                 databaseConnectionsUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "connections.json").replace(".parquet", "") + f"?cb={int(time.time())}"
                 databaseConnections = json.loads(urlopen(databaseConnectionsUrl).read())
             else:
-                pass
+                return {"status": "SUCCESS"}
             connections = databaseConnections.values()
             with ThreadPoolExecutor(max_workers = 4) as executor:
                 futures = [executor.submit(self._pullData, connection) for connection in connections]
