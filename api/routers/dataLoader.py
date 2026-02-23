@@ -1,7 +1,7 @@
 """
 API router for data loading operations.
 
-This module provides endpoints for loading data from various sources (CSV, Excel, MySQL, PostgreSQL, MongoDB) and deleting tables.
+This module provides endpoints for loading data from various sources (CSV, Excel, PDF, MySQL, PostgreSQL, MongoDB) and deleting tables.
 """
 
 __version__ = "1.0.0"
@@ -60,6 +60,26 @@ async def loadExcelData(projectId: Annotated[str, Form()], files: list[UploadFil
     """
     try:
         await dataLoadService.loadExcelData(projectId=projectId, files=files)
+        return ORJSONResponse(status_code=200, content={"status": "SUCCESS"})
+    except CustomException as e:
+        raiseHttpException(e)
+
+@router.post("/loadPdfData")
+async def loadPdfData(projectId: Annotated[str, Form()], files: list[UploadFile], token = Depends(verifyToken)):
+    """
+    Load data from PDF files into the specified project.
+    Extracts tables and text content from the PDF.
+
+    Args:
+        projectId (str): The ID of the project to load data into.
+        files (list[UploadFile]): The PDF files to upload.
+        token: Authorization token dependency.
+
+    Returns:
+        ORJSONResponse: Success or error message.
+    """
+    try:
+        await dataLoadService.loadPdfData(projectId=projectId, files=files)
         return ORJSONResponse(status_code=200, content={"status": "SUCCESS"})
     except CustomException as e:
         raiseHttpException(e)

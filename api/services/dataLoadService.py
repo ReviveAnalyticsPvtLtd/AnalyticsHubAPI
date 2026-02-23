@@ -1,7 +1,7 @@
 """
 dataLoadService.py
 
-dataLoadService module provides services for loading and managing data from various sources (CSV, Excel, MySQL, PostgreSQL, MongoDB) and deleting tables for AnalyticsHub projects.
+dataLoadService module provides services for loading and managing data from various sources (CSV, Excel, PDF, MySQL, PostgreSQL, MongoDB) and deleting tables for AnalyticsHub projects.
 """
 
 __version__ = "1.0.0"
@@ -23,6 +23,7 @@ from api.models import (
     LoadMongoDB,
     DeleteTable
 )
+import pdfplumber
 import pandas as pd
 import tempfile
 import json
@@ -130,6 +131,104 @@ class DataLoadService:
             logger.error(exception)
             raise exception
         
+    async def loadPdfData(self, projectId: Annotated[str, Form()], files: list[UploadFile]) -> None:
+        """
+        Load PDF files into project storage. Extracts tables and text content.
+        Tables are stored as individual parquet files ({filename}_table{N}.parquet).
+        Non-tabular text is stored as a structured DataFrame ({filename}_text.parquet)
+        with columns: page_number, content.
+        Raises:
+            CustomException:
+                400 - Missing projectId or files
+                415 - Unsupported file type
+                422 - No extractable content found
+                500 - PDF upload failed
+        """
+        try:
+            if not projectId or not files:
+                raise CustomException(
+                    ValueError("Missing projectId or files"),
+                    statusCode=400,
+                    uiMessage="Missing projectId or files."
+                )
+            for file in files:
+                if not file.filename.lower().endswith(".pdf"):
+                    raise CustomException(
+                        ValueError("Invalid file type"),
+                        statusCode=415,
+                        uiMessage="Unsupported file type. Upload PDF files only."
+                    )
+                fileBytes = await file.read()
+                baseName = os.path.splitext(file.filename)[0]
+                tableIndex = 0
+                textRows = []
+
+                with pdfplumber.open(io.BytesIO(fileBytes)) as pdf:
+                    for pageNum, page in enumerate(pdf.pages, start=1):
+                        # Extract tables from the page
+                        tables = page.extract_tables()
+                        for table in tables:
+                            if not table or len(table) < 2:
+                                continue
+                            headers = table[0]
+                            # Clean headers: replace None/empty with placeholder
+                            headers = [
+                                str(h).strip() if h else f"column_{i}"
+                                for i, h in enumerate(headers)
+                            ]
+                            rows = table[1:]
+                            df = pd.DataFrame(rows, columns=headers)
+                            # Drop completely empty rows
+                            df.dropna(how="all", inplace=True)
+                            if df.empty:
+                                continue
+                            tableIndex += 1
+                            with tempfile.NamedTemporaryFile(delete=True, suffix=".parquet") as temp:
+                                df.to_parquet(temp.name, compression="snappy")
+                                fileName = f"{baseName}_table{tableIndex}.parquet"
+                                self.client.storage.from_("AnalyticsHub").upload(
+                                    file=temp.name,
+                                    path=f"{projectId}/{fileName}",
+                                    file_options={"upsert": "true"}
+                                )
+
+                        # Extract text content from the page
+                        text = page.extract_text()
+                        if text and text.strip():
+                            textRows.append({
+                                "page_number": pageNum,
+                                "content": text.strip()
+                            })
+
+                if tableIndex == 0 and not textRows:
+                    raise CustomException(
+                        ValueError("No extractable content in PDF"),
+                        statusCode=422,
+                        uiMessage="No extractable content found in the PDF. Ensure the PDF contains selectable text or tables."
+                    )
+
+                # Store extracted text as a structured DataFrame
+                if textRows:
+                    textDf = pd.DataFrame(textRows)
+                    with tempfile.NamedTemporaryFile(delete=True, suffix=".parquet") as temp:
+                        textDf.to_parquet(temp.name, compression="snappy")
+                        fileName = f"{baseName}_text.parquet"
+                        self.client.storage.from_("AnalyticsHub").upload(
+                            file=temp.name,
+                            path=f"{projectId}/{fileName}",
+                            file_options={"upsert": "true"}
+                        )
+            return
+        except CustomException:
+            raise
+        except Exception as e:
+            exception = CustomException(
+                e,
+                uiMessage="PDF upload failed. Try again later."
+            )
+            logger.error(exception)
+            raise exception
+
     def loadMySql(self, connection: LoadMySQLorPostgreSQL) -> None:
         """
         Load data from MySQL database.
