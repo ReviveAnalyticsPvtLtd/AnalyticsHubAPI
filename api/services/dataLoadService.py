@@ -29,6 +29,7 @@ import json
 import time
 import io
 import os
+import re
 
 class DataLoadService:
     """
@@ -40,6 +41,22 @@ class DataLoadService:
         """
         logger.info("Initializing Data Load Service.")
         self.client = client
+
+    def _sanitizeFileName(self, fileName: str) -> str:
+        """
+        Sanitize a file name by removing the extension and replacing spaces and special characters with underscores.
+
+        Args:
+            fileName (str): The original file name (with or without extension).
+
+        Returns:
+            str: A sanitized, storage-safe file name without the extension.
+        """
+        baseName = os.path.splitext(fileName)[0]
+        sanitized = re.sub(r"[^\w-]", "_", baseName)
+        sanitized = re.sub(r"_+", "_", sanitized)
+        sanitized = sanitized.strip("_")
+        return sanitized
 
     async def loadCsvData(self, projectId: Annotated[str, Form()], files: list[UploadFile]) -> None:
         """
@@ -69,9 +86,10 @@ class DataLoadService:
                     pd.read_csv(io.BytesIO(await file.read()), parse_dates=True).to_parquet(
                         temp.name, compression="snappy"
                     )
+                    sanitizedName = self._sanitizeFileName(file.filename)
                     self.client.storage.from_("AnalyticsHub").upload(
                         file=temp.name,
-                        path=f"{projectId}/{os.path.splitext(file.filename)[0]}.parquet",
+                        path=f"{projectId}/{sanitizedName}.parquet",
                         file_options={"upsert": "true"}
                     )
             return
@@ -110,10 +128,12 @@ class DataLoadService:
                         uiMessage="Unsupported file type. Upload Excel files only."
                     )
                 allSheetData = pd.read_excel(io.BytesIO(await file.read()), sheet_name=None, parse_dates=True)
+                sanitizedBase = self._sanitizeFileName(file.filename)
                 for sheetName, sheetData in allSheetData.items():
+                    sanitizedSheet = re.sub(r"[^\w-]", "_", str(sheetName)).strip("_")
                     with tempfile.NamedTemporaryFile(delete=True, suffix=".parquet") as temp:
                         sheetData.to_parquet(temp.name, compression="snappy")
-                        fileName = f"{os.path.splitext(file.filename)[0]}_{sheetName}.parquet"
+                        fileName = f"{sanitizedBase}_{sanitizedSheet}.parquet"
                         self.client.storage.from_("AnalyticsHub").upload(
                             file=temp.name,
                             path=f"{projectId}/{fileName}",
@@ -151,13 +171,14 @@ class DataLoadService:
                 )
             connStr = f"mysql+pymysql://{connection.user}:{connection.password}@{connection.host}:{connection.port}/{connection.db}"
             engine = create_engine(connStr)
+            sanitizedTable = self._sanitizeFileName(connection.table)
             with tempfile.NamedTemporaryFile(delete=True, suffix=".parquet") as temp:
                 pd.read_sql(f"SELECT * FROM {connection.table}", engine).to_parquet(
                     temp.name, compression="snappy"
                 )
                 self.client.storage.from_("AnalyticsHub").upload(
                     file=temp.name,
-                    path=f"{connection.projectId}/{connection.table}.parquet",
+                    path=f"{connection.projectId}/{sanitizedTable}.parquet",
                     file_options={"upsert": "true"}
                 )
             return
@@ -194,13 +215,14 @@ class DataLoadService:
                 )
             connStr = f"postgresql+psycopg2://{connection.user}:{connection.password}@{connection.host}:{connection.port}/{connection.db}"
             engine = create_engine(connStr)
+            sanitizedTable = self._sanitizeFileName(connection.table)
             with tempfile.NamedTemporaryFile(delete=True, suffix=".parquet") as temp:
                 pd.read_sql(f"SELECT * FROM {connection.table}", engine).to_parquet(
                     temp.name, compression="snappy"
                 )
                 self.client.storage.from_("AnalyticsHub").upload(
                     file=temp.name,
-                    path=f"{connection.projectId}/{connection.table}.parquet",
+                    path=f"{connection.projectId}/{sanitizedTable}.parquet",
                     file_options={"upsert": "true"}
                 )
             return
@@ -238,10 +260,10 @@ class DataLoadService:
                 for record in records:
                     record.pop("_id", None)
                 pd.DataFrame(records).to_parquet(temp.name, compression="snappy")
-
+                sanitizedCollection = self._sanitizeFileName(connection.collection)
                 self.client.storage.from_("AnalyticsHub").upload(
                     file=temp.name,
-                    path=f"{connection.projectId}/{connection.collection}.parquet",
+                    path=f"{connection.projectId}/{sanitizedCollection}.parquet",
                     file_options={"upsert": "true"}
                 )
             return
