@@ -16,7 +16,8 @@ from fastapi.responses import ORJSONResponse, HTMLResponse
 from api.models import (
     UpdateProjectState,
     CreateProject,
-    EditMetadata
+    EditMetadata,
+    RenameProject
 )
 from api.commons import verifyToken
 
@@ -336,6 +337,31 @@ async def deleteProject(projectId: str, token = Depends(verifyToken)):
     try:
         managementService.deleteProject(projectId = projectId)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Project deleted successfully"})
+    except CustomException as e:
+        raiseHttpException(e)
+
+@router.patch("/renameProject")
+async def renameProject(renameDetails: RenameProject, token = Depends(verifyToken)):
+    """
+    Rename an existing project.
+
+    Status Codes:
+        200 - Success
+        401 - Please login to rename the project.
+        404 - Project not found.
+        409 - A project with this name already exists in the workspace.
+        422 - Invalid project name.
+        500 - Failed to rename project. Try again later.
+    """
+    try:
+        managementService.renameProject(renameDetails=renameDetails, token=token)
+        return ORJSONResponse(
+            status_code=200,
+            content={
+                "status": "SUCCESS",
+                "message": "Project renamed successfully"
+            }
+        )
     except CustomException as e:
         raiseHttpException(e)
     

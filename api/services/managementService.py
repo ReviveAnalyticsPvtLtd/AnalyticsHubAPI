@@ -20,7 +20,8 @@ from api.commons import client
 from api.models import (
     UpdateProjectState,
     CreateProject,
-    EditMetadata
+    EditMetadata,
+    RenameProject
 )
 from jose import jwt
 import pandas as pd
@@ -786,6 +787,75 @@ class ManagementService:
             exception = CustomException(e)
             logger.error(exception)
             raise exception   
+        
+    def renameProject(self, renameDetails: RenameProject, token: str) -> None:
+        """
+        Rename an existing project.
+
+        Args:
+            renameDetails (RenameProject): Details containing the project ID and new project name.
+            token (str): JWT token for user authentication.
+
+        Raises:
+            CustomException:
+                401 - User not authenticated
+                404 - Project not found
+                409 - A project with the new name already exists in the workspace
+                422 - Invalid project name
+                500 - Project rename failure
+        """
+        try:
+            if not renameDetails.newProjectName:
+                raise CustomException(
+                    ValueError("Invalid project name"),
+                    statusCode=422,
+                    uiMessage="Invalid project name."
+                )
+            decodedToken = jwt.decode(
+                token,
+                os.environ["SECRET_KEY"],
+                algorithms=["HS256"]
+            )
+            existingProject = self.client.table("Projects") \
+                .select("*") \
+                .eq("projectId", renameDetails.projectId) \
+                .eq("ownerUserId", decodedToken["userId"]) \
+                .execute().data
+            if not existingProject:
+                raise CustomException(
+                    ValueError("Project not found"),
+                    statusCode=404,
+                    uiMessage="Project not found."
+                )
+            workspaceId = existingProject[0].get("workspaceId")
+            existingProjects = self.client.table("Projects") \
+                .select("projectName") \
+                .eq("workspaceId", workspaceId) \
+                .neq("isTrash", 1) \
+                .execute().data
+            if renameDetails.newProjectName in [x.get("projectName") for x in existingProjects]:
+                raise CustomException(
+                    ValueError("Duplicate project name"),
+                    statusCode=409,
+                    uiMessage="A project with this name already exists in the workspace."
+                )
+            _ = self.client.table("Projects").update({"projectName": renameDetails.newProjectName}).eq("projectId", renameDetails.projectId).execute()
+            return
+        except jwt.ExpiredSignatureError:
+            raise CustomException(
+                ValueError("Unauthenticated"),
+                statusCode=401,
+                uiMessage="Please login to rename the project."
+            )
+        except CustomException:
+            raise
+        except Exception as e:
+            exception = CustomException(
+                e,
+                uiMessage="Failed to rename project. Try again later."
+            )
+            logger.error(exception)
+            raise exception
         
     def getUserProfile(self, token: str) -> dict:
         """
