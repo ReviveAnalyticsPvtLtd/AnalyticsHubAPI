@@ -281,7 +281,7 @@ class ReportingService:
             insightsUrl = os.environ["FILE_URL"].format(projectId=details.projectId, fileName="insights.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             metadata = json.loads(urlopen(metadataUrl).read())
             insights = json.loads(urlopen(insightsUrl).read())
-            with ThreadPoolExecutor(max_workers=4, initializer=initWorkflow) as executor:
+            with ThreadPoolExecutor(max_workers=6, initializer=initWorkflow) as executor:
                 futures = [
                     executor.submit(self._generateSingleChartForParallel, metadata, details.projectId, query)
                     for query in details.inputQueries

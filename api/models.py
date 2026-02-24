@@ -162,3 +162,7 @@ class SaveQuery(BaseModel):
 class DeleteQuery(BaseModel):
     projectId: str
     queryId: str
+
+class RenameProject(BaseModel):
+    projectId: str
+    newProjectName: str
