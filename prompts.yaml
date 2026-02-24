@@ -1176,6 +1176,29 @@ imageToInsightGeneratorPrompt: |
     * Delivers output that is immediately usable by executives.
 
 
+pdfOcrExtractionPrompt: |
+    You are a document OCR extraction engine. You receive a scanned PDF page as an image.
+    Your task is to extract ALL text content and ALL tables visible on this page.
+
+    ## Rules
+    - Extract every piece of readable text from the image.
+    - Identify tabular regions by looking for aligned columns, headers, borders, or grid-like structures.
+    - For each table found, return it as a JSON array of arrays where the first sub-array contains the column headers and subsequent sub-arrays contain the data rows.
+    - Return all non-table text as a single string in the "narrative" field, preserving paragraph structure and reading order.
+    - If no tables are found, return an empty list for "tables".
+    - If no narrative text is found, return an empty string for "narrative".
+    - Do NOT invent or hallucinate data. Only extract what is clearly visible.
+    - Clean column headers: trim whitespace; replace empty/unreadable headers with "column_0", "column_1", etc.
+    - Each table row must have the same number of cells as the header row. Pad with empty strings if needed.
+
+    ## Output Format (strict JSON only — no markdown fences, no explanation text)
+    {{
+        "tables": [
+            [["Header1", "Header2"], ["row1col1", "row1col2"], ["row2col1", "row2col2"]]
+        ],
+        "narrative": "The remaining non-table text from the page..."
+    }}
+
 domainAwareKpiMappingAgentPrompt: |
     # Domain-Aware KPI Mapping Agent Prompt
 

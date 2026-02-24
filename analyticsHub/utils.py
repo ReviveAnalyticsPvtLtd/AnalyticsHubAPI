@@ -23,7 +23,7 @@ def readYaml(filePath: str) -> dict:
     Returns:
         dict: Parsed contents of the YAML file.
     """
-    with open(filePath, "r") as f:
+    with open(filePath, "r", encoding="utf-8") as f:
         content = yaml.safe_load(f)
     return content 
 

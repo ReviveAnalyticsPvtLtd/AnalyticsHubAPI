@@ -23,10 +23,12 @@ from api.models import (
     LoadMongoDB,
     DeleteTable
 )
+from analyticsHub.components.pdfOcrExtractor import PdfOcrExtractor
 import pdfplumber
 import pandas as pd
 import tempfile
 import json
+import fitz  
 import time
 import io
 import os
@@ -167,13 +169,16 @@ class DataLoadService:
                 fileBytes = await file.read()
                 baseName = os.path.splitext(file.filename)[0]
                 contextRows = []
-                # Accumulate tables for continuation merging:
-                # Each entry: {"signature": str, "headers": list, "df": DataFrame, "lastPage": int}
                 pendingTables = []
+
+                ocrExtractor = None
+                fitzDoc = fitz.open(stream=fileBytes, filetype="pdf")
 
                 with pdfplumber.open(io.BytesIO(fileBytes)) as pdf:
                     for pageNum, page in enumerate(pdf.pages, start=1):
-                        # Extract tables sorted by vertical position for reading order
+                        contextRowsBefore = len(contextRows)
+                        pendingTablesBefore = len(pendingTables)
+
                         detectedTables = page.find_tables()
                         sortedTableEntries = sorted(
                             [(t.bbox, t.extract()) for t in detectedTables],
@@ -188,7 +193,6 @@ class DataLoadService:
                             tableTop = float(bbox[1])
                             tableBottom = float(bbox[3])
 
-                            # Extract narrative text above this table
                             if tableTop - currentY > 1:
                                 try:
                                     cropped = page.crop((0, currentY, pageWidth, tableTop))
@@ -204,16 +208,13 @@ class DataLoadService:
                                 except Exception:
                                     pass
 
-                            # Process table data
                             if not tableData or len(tableData) < 2:
                                 currentY = tableBottom
                                 continue
-                            # Clean headers: replace None/empty/whitespace-only with placeholder
                             headers = [
                                 str(h).strip() if h and str(h).strip() else f"column_{i}"
                                 for i, h in enumerate(tableData[0])
                             ]
-                            # Ensure unique column names
                             seen = {}
                             uniqueHeaders = []
                             for h in headers:
@@ -224,25 +225,21 @@ class DataLoadService:
                                     seen[h] = 0
                                     uniqueHeaders.append(h)
 
-                            # Build a normalized signature for continuation detection
                             signature = "|".join(
                                 col.lower().strip() for col in uniqueHeaders
                             )
 
-                            # Filter out rows that are accidental repeated headers
                             dataRows = [
                                 row for row in tableData[1:]
                                 if [str(c).strip().lower() if c else "" for c in row] != [col.lower().strip() for col in uniqueHeaders]
                             ]
                             df = pd.DataFrame(dataRows, columns=uniqueHeaders)
-                            # Drop completely empty rows and reset index
                             df.dropna(how="all", inplace=True)
                             df.reset_index(drop=True, inplace=True)
                             if df.empty:
                                 currentY = tableBottom
                                 continue
 
-                            # Check if this table is a continuation of a previous one
                             merged = False
                             pendingIdx = None
                             for i, pending in enumerate(pendingTables):
@@ -264,7 +261,6 @@ class DataLoadService:
                                 })
                                 pendingIdx = len(pendingTables) - 1
 
-                            # Add table reference to context timeline
                             contextType = "table_continuation" if merged else "table_anchor"
                             anchorContent = (
                                 f"[Table continued: {', '.join(uniqueHeaders)}]"
@@ -281,7 +277,6 @@ class DataLoadService:
 
                             currentY = tableBottom
 
-                        # Extract narrative text below last table or full page if no tables
                         remainingHeight = pageHeight - currentY
                         if remainingHeight > 1:
                             try:
@@ -301,12 +296,118 @@ class DataLoadService:
                             except Exception:
                                 pass
 
-                # Resolve table_ref from pending list index to final table name
+                        pageProducedContent = (
+                            len(contextRows) > contextRowsBefore
+                            or len(pendingTables) > pendingTablesBefore
+                        )
+                        if not pageProducedContent:
+                            logger.info(
+                                f"Page {pageNum}: native extraction empty – "
+                                f"attempting Groq vision OCR."
+                            )
+                            if ocrExtractor is None:
+                                ocrExtractor = PdfOcrExtractor()
+
+                            fitzPage = fitzDoc.load_page(pageNum - 1)
+                            b64Img = PdfOcrExtractor.renderPageToBase64(
+                                fitzPage, dpi=ocrExtractor.cfg.dpi
+                            )
+                            ocrResult = ocrExtractor.extractPage(b64Img)
+
+                            ocrNarrative = (ocrResult.get("narrative") or "").strip()
+                            if ocrNarrative:
+                                contextRows.append({
+                                    "page_number": pageNum,
+                                    "row_order": len(contextRows) + 1,
+                                    "context_type": "narrative",
+                                    "content": ocrNarrative,
+                                    "table_ref": None
+                                })
+
+                            for ocrTable in ocrResult.get("tables", []):
+                                if not ocrTable or len(ocrTable) < 2:
+                                    continue
+                                ocrHeaders = [
+                                    str(h).strip() if h and str(h).strip() else f"column_{i}"
+                                    for i, h in enumerate(ocrTable[0])
+                                ]
+                                seen = {}
+                                uniqueOcrHeaders = []
+                                for h in ocrHeaders:
+                                    if h in seen:
+                                        seen[h] += 1
+                                        uniqueOcrHeaders.append(f"{h}_{seen[h]}")
+                                    else:
+                                        seen[h] = 0
+                                        uniqueOcrHeaders.append(h)
+
+                                ocrSignature = "|".join(
+                                    col.lower().strip() for col in uniqueOcrHeaders
+                                )
+
+                                ocrDataRows = [
+                                    row for row in ocrTable[1:]
+                                    if isinstance(row, list)
+                                    and [str(c).strip().lower() if c else "" for c in row]
+                                    != [col.lower().strip() for col in uniqueOcrHeaders]
+                                ]
+                                numCols = len(uniqueOcrHeaders)
+                                ocrDataRows = [
+                                    (row + [""] * numCols)[:numCols]
+                                    for row in ocrDataRows
+                                ]
+                                ocrDf = pd.DataFrame(ocrDataRows, columns=uniqueOcrHeaders)
+                                ocrDf.dropna(how="all", inplace=True)
+                                ocrDf.reset_index(drop=True, inplace=True)
+                                if ocrDf.empty:
+                                    continue
+
+                                ocrMerged = False
+                                ocrPendingIdx = None
+                                for i, pending in enumerate(pendingTables):
+                                    if (
+                                        pending["signature"] == ocrSignature
+                                        and pending["lastPage"] == pageNum - 1
+                                    ):
+                                        pending["df"] = pd.concat(
+                                            [pending["df"], ocrDf], ignore_index=True
+                                        )
+                                        pending["lastPage"] = pageNum
+                                        ocrMerged = True
+                                        ocrPendingIdx = i
+                                        break
+
+                                if not ocrMerged:
+                                    pendingTables.append({
+                                        "signature": ocrSignature,
+                                        "headers": uniqueOcrHeaders,
+                                        "df": ocrDf,
+                                        "lastPage": pageNum,
+                                    })
+                                    ocrPendingIdx = len(pendingTables) - 1
+
+                                ocrCtxType = (
+                                    "table_continuation" if ocrMerged else "table_anchor"
+                                )
+                                ocrAnchor = (
+                                    f"[Table continued: {', '.join(uniqueOcrHeaders)}]"
+                                    if ocrMerged
+                                    else f"[Table: {', '.join(uniqueOcrHeaders)}]"
+                                )
+                                contextRows.append({
+                                    "page_number": pageNum,
+                                    "row_order": len(contextRows) + 1,
+                                    "context_type": ocrCtxType,
+                                    "content": ocrAnchor,
+                                    "table_ref": ocrPendingIdx,
+                                })
+
+                fitzDoc.close()
+
                 for row in contextRows:
                     if row["table_ref"] is not None:
                         row["table_ref"] = f"{baseName}_table{row['table_ref'] + 1}"
 
-                # Upload all consolidated tables
                 if not pendingTables and not contextRows:
                     raise CustomException(
                         ValueError("No extractable content in PDF"),
@@ -324,7 +425,6 @@ class DataLoadService:
                             file_options={"upsert": "true"}
                         )
 
-                # Store enriched context timeline as a structured DataFrame
                 if contextRows:
                     textDf = pd.DataFrame(contextRows)
                     with tempfile.NamedTemporaryFile(delete=True, suffix=".parquet") as temp:
