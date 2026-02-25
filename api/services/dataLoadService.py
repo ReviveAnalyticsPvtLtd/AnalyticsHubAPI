@@ -187,14 +187,14 @@ class DataLoadService:
                         uiMessage="Unsupported file type. Upload PDF files only."
                     )
                 fileBytes = await file.read()
-                baseName = os.path.splitext(file.filename)[0]
+                baseName = self._sanitizeFileName(file.filename)
                 contextRows = []
                 pendingTables = []
 
                 ocrExtractor = None
-                fitzDoc = fitz.open(stream=fileBytes, filetype="pdf")
 
-                with pdfplumber.open(io.BytesIO(fileBytes)) as pdf:
+                with fitz.open(stream=fileBytes, filetype="pdf") as fitzDoc, \
+                     pdfplumber.open(io.BytesIO(fileBytes)) as pdf:
                     for pageNum, page in enumerate(pdf.pages, start=1):
                         contextRowsBefore = len(contextRows)
                         pendingTablesBefore = len(pendingTables)
@@ -421,8 +421,6 @@ class DataLoadService:
                                     "content": ocrAnchor,
                                     "table_ref": ocrPendingIdx,
                                 })
-
-                fitzDoc.close()
 
                 for row in contextRows:
                     if row["table_ref"] is not None:

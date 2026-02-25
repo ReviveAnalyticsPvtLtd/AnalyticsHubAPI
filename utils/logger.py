@@ -20,11 +20,7 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["logger"]
 
 
-try:
-    from logtail import LogtailHandler
-    _HAS_LOGTAIL = True
-except (ImportError, AttributeError):
-    _HAS_LOGTAIL = False
+from logtail import LogtailHandler
 from loguru import logger
 import sys
 import os
@@ -33,15 +29,14 @@ os.makedirs("logs", exist_ok=True)
 
 logger.remove()
 
-if _HAS_LOGTAIL and os.environ.get("LOGTAIL_TOKEN") and os.environ.get("LOGTAIL_HOST"):
-    logtailHandler = LogtailHandler(
-        source_token = os.environ.get("LOGTAIL_TOKEN"),
-        host = os.environ.get("LOGTAIL_HOST")
-    )
-    logger.add(
-        logtailHandler,
-        level="INFO"
-    )
+logtailHandler = LogtailHandler(
+    source_token = os.environ.get("LOGTAIL_TOKEN"),
+    host = os.environ.get("LOGTAIL_HOST")
+)
+logger.add(
+    logtailHandler,
+    level="INFO"
+)
 logger.add(
     sys.stdout,
     colorize=True,
