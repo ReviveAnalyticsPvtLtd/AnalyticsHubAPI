@@ -12,6 +12,7 @@ from analyticsHub.components.metadataGenerator import MetadataGenerator
 from analyticsHub.components.insightGenerator import InsightGenerator
 from analyticsHub.components.reportGenerator import ReportGenerator
 from analyticsHub.components.domainKpiMapper import DomainKpiMapper
+from api.commons import updateProjectModifiedAt
 from utils.exceptionHandler import CustomException
 from concurrent.futures import ProcessPoolExecutor
 from utils.logger import logger
@@ -84,6 +85,7 @@ class ManagementService:
                     uiMessage="A project with this name already exists in the workspace."
                 )
             projectId = str(uuid.uuid4())
+            now = datetime.datetime.now(datetime.timezone.utc).isoformat()
             self.client.table("Projects").insert({
                 "projectId": projectId,
                 "projectName": projectDetails.projectName,
@@ -91,7 +93,8 @@ class ManagementService:
                 "ownerUserId": decodedToken["userId"],
                 "ownerUserMail": decodedToken["email"],
                 "workspaceId": projectDetails.workspaceId,
-                "domainExpert": projectDetails.domainExpert
+                "domainExpert": projectDetails.domainExpert,
+                "modifiedAt": now
             }).execute()
             return projectId
         except jwt.ExpiredSignatureError:
@@ -378,6 +381,7 @@ class ManagementService:
                 _ = self.client.table("Projects").update({"isBookmarked": 1}).eq("projectId", updateBookmarkDetails.projectId).execute()
             else:
                 _ = self.client.table("Projects").update({"isBookmarked": 0}).eq("projectId", updateBookmarkDetails.projectId).execute()   
+            updateProjectModifiedAt(updateBookmarkDetails.projectId)
             return
         except Exception as e:
             exception = CustomException(e)
@@ -399,6 +403,7 @@ class ManagementService:
                 _ = self.client.table("Projects").update({"isArchived": 1}).eq("projectId", updateArchiveDetails.projectId).execute()
             else:
                 _ = self.client.table("Projects").update({"isArchived": 0}).eq("projectId", updateArchiveDetails.projectId).execute()    
+            updateProjectModifiedAt(updateArchiveDetails.projectId)
             return
         except Exception as e:
             exception = CustomException(e)
@@ -420,6 +425,7 @@ class ManagementService:
                 _ = self.client.table("Projects").update({"isTrash": 1}).eq("projectId", updateTrashDetails.projectId).execute()
             else:
                 _ = self.client.table("Projects").update({"isTrash": 0}).eq("projectId", updateTrashDetails.projectId).execute()    
+            updateProjectModifiedAt(updateTrashDetails.projectId)
             return
         except Exception as e:
             exception = CustomException(e)
@@ -517,6 +523,7 @@ class ManagementService:
                 buffer.write(json.dumps(insights, indent=4).encode("utf-8"))
                 buffer.seek(0)
                 self.client.storage.from_("AnalyticsHub").upload(path = f"{projectId}/insights.json", file = buffer.getvalue(), file_options = {"upsert": "true"})    
+            updateProjectModifiedAt(projectId)
             return insights
         except Exception as e:
             logger.error(CustomException(e))
@@ -583,6 +590,7 @@ class ManagementService:
                 buffer.write(json.dumps(jsonData, indent=4).encode("utf-8"))
                 buffer.seek(0)
                 self.client.storage.from_("AnalyticsHub").upload(path = f"{projectId}/metadata.json", file = buffer.getvalue(), file_options = {"upsert": "true"})     
+            updateProjectModifiedAt(projectId)
             return jsonData
         except Exception as e:
             exception = CustomException(e)
@@ -656,6 +664,7 @@ class ManagementService:
                 buffer.write(json.dumps(jsonData, indent=4).encode("utf-8"))
                 buffer.seek(0)
                 self.client.storage.from_("AnalyticsHub").upload(path = f"{modifiedMetadata.projectId}/metadata.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
+            updateProjectModifiedAt(modifiedMetadata.projectId)
             return jsonData
         except Exception as e:
             exception = CustomException(e)
@@ -674,9 +683,10 @@ class ManagementService:
         """
         try:
             _ = self.client.table("Projects").delete().eq("projectId", projectId).execute()
-            allFiles = client.storage.from_("AnalyticsHub").list(projectId)
+            allFiles = self.client.storage.from_("AnalyticsHub").list(projectId)
             fileNames = [os.path.join(projectId, x.get("name")) for x in allFiles]
-            _ = self.client.storage.from_("AnalyticsHub").remove(fileNames)
+            if fileNames:
+                _ = self.client.storage.from_("AnalyticsHub").remove(fileNames)
             return
         except Exception as e:
             exception = CustomException(e)
@@ -724,7 +734,7 @@ class ManagementService:
         """
         try:
             userId = jwt.decode(token = token, key = os.environ["SECRET_KEY"], algorithms = ["HS256"]).get("userId")
-            allProjects = pd.DataFrame(client.table("Projects").select("*").execute().data)
+            allProjects = pd.DataFrame(self.client.table("Projects").select("*").execute().data)
             allProjects = allProjects[allProjects["ownerUserId"] == userId]
             allTriggers = list()
             if allProjects["triggers"].isna().all():
@@ -759,6 +769,7 @@ class ManagementService:
                 buffer.write(output)
                 buffer.seek(0)
                 _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{projectId}/generatedReport.json", file = buffer.getvalue(), file_options = {"upsert": "true"})  
+            updateProjectModifiedAt(projectId)
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
@@ -840,6 +851,7 @@ class ManagementService:
                     uiMessage="A project with this name already exists in the workspace."
                 )
             _ = self.client.table("Projects").update({"projectName": renameDetails.newProjectName}).eq("projectId", renameDetails.projectId).execute()
+            updateProjectModifiedAt(renameDetails.projectId)
             return
         except jwt.ExpiredSignatureError:
             raise CustomException(

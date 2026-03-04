@@ -10,6 +10,7 @@ __all__ = ["dashboardService"]
 
 
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from api.commons import updateProjectModifiedAt
 from utils.exceptionHandler import CustomException
 from utils.codeExecutor import replManager
 from sqlalchemy import create_engine
@@ -177,6 +178,7 @@ class DashboardService:
                 buffer.write(json.dumps(dashboardConfig, indent=4).encode("utf-8"))
                 buffer.seek(0)
                 _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/dashboardConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"})   
+            updateProjectModifiedAt(details.projectId)
             return pageId
         except Exception as e:
             exception = CustomException(e)
@@ -245,6 +247,7 @@ class DashboardService:
                 buffer.write(json.dumps(dashboardConfig, indent=4).encode("utf-8"))
                 buffer.seek(0)
                 _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/dashboardConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"}) 
+            updateProjectModifiedAt(details.projectId)
             return widgetId     
         except Exception as e:
             exception = CustomException(e)
@@ -335,6 +338,7 @@ class DashboardService:
                 buffer.write(json.dumps(dashboardConfig, indent = 4).encode("utf-8"))
                 buffer.seek(0)
                 self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/dashboardConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
+            updateProjectModifiedAt(details.projectId)
             return pageInfo
         except Exception as e:
             exception  = CustomException(e)
@@ -369,6 +373,7 @@ class DashboardService:
                 buffer.write(json.dumps(dashboardConfig, indent=4).encode("utf-8"))
                 buffer.seek(0)
                 _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/dashboardConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"}) 
+            updateProjectModifiedAt(details.projectId)
             return 
         except Exception as e:
             exception = CustomException(e)
@@ -456,6 +461,7 @@ class DashboardService:
                         file_options = {"upsert": "true"}
                     )
                 temp.close()
+            updateProjectModifiedAt(projectId)
             return {"status": "SUCCESS"}
         except Exception as e:
             exception  = CustomException(e)

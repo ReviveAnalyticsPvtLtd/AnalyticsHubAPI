@@ -11,6 +11,7 @@ __all__ = ["reportingService"]
 
 from api.models import GenerateChartInput, PanelChartDetails, GenerateChartsInParallel, SaveQuery, DeleteQuery
 from analyticsHub.workflows.reportingToolWorkflow import buildReportingWorkflow
+from api.commons import updateProjectModifiedAt
 from utils.exceptionHandler import CustomException
 from concurrent.futures import ThreadPoolExecutor
 from utils.initMethods import fetch_data
@@ -223,6 +224,7 @@ class ReportingService:
                 "inputQuery": chartDetails.inputQuery,
                 "projectId": chartDetails.projectId
             })
+            updateProjectModifiedAt(chartDetails.projectId)
             return response
         except Exception as e:
             exception  = CustomException(e)
@@ -354,6 +356,7 @@ class ReportingService:
                 buffer.write(json.dumps(insights, indent=4).encode("utf-8"))
                 buffer.seek(0)
                 self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/insights.json", file = buffer.getvalue(), file_options = {"upsert": "true"})  
+            updateProjectModifiedAt(details.projectId)
             return dashboardConfig.get(pageId) 
         except Exception as e:
             exception = CustomException(e)
@@ -457,6 +460,7 @@ class ReportingService:
             else:
                 pass
             response.update({"generatedCode": generatedCode})
+            updateProjectModifiedAt(panelChartDetails.projectId)
             return response
         except Exception as e:
             exception = CustomException(e)
@@ -491,6 +495,7 @@ class ReportingService:
                 buffer.write(json.dumps(queryConfig, indent=4).encode("utf-8"))
                 buffer.seek(0)
                 _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/queryConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
+            updateProjectModifiedAt(details.projectId)
             return queryId
         except Exception as e:
             exception = CustomException(e)
@@ -540,6 +545,7 @@ class ReportingService:
                 buffer.write(json.dumps(queryConfig, indent=4).encode("utf-8"))
                 buffer.seek(0)
                 _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/queryConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
+            updateProjectModifiedAt(details.projectId)
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)

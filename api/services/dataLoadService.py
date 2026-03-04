@@ -9,6 +9,7 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["dataLoadService"] 
 
 
+from api.commons import updateProjectModifiedAt
 from utils.exceptionHandler import CustomException
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
@@ -95,6 +96,7 @@ class DataLoadService:
                         path=f"{projectId}/{sanitizedName}.parquet",
                         file_options={"upsert": "true"}
                     )
+            updateProjectModifiedAt(projectId)
             return
         except CustomException:
             raise
@@ -142,6 +144,7 @@ class DataLoadService:
                             path=f"{projectId}/{fileName}",
                             file_options={"upsert": "true"}
                         )
+            updateProjectModifiedAt(projectId)
             return
         except CustomException:
             raise
@@ -453,6 +456,7 @@ class DataLoadService:
                             path=f"{projectId}/{fileName}",
                             file_options={"upsert": "true"}
                         )
+            updateProjectModifiedAt(projectId)
             return
         except CustomException:
             raise
@@ -495,6 +499,7 @@ class DataLoadService:
                     path=f"{connection.projectId}/{sanitizedTable}.parquet",
                     file_options={"upsert": "true"}
                 )
+            updateProjectModifiedAt(connection.projectId)
             return
         except CustomException:
             raise
@@ -539,6 +544,7 @@ class DataLoadService:
                     path=f"{connection.projectId}/{sanitizedTable}.parquet",
                     file_options={"upsert": "true"}
                 )
+            updateProjectModifiedAt(connection.projectId)
             return
         except CustomException:
             raise
@@ -580,6 +586,7 @@ class DataLoadService:
                     path=f"{connection.projectId}/{sanitizedCollection}.parquet",
                     file_options={"upsert": "true"}
                 )
+            updateProjectModifiedAt(connection.projectId)
             return
         except CustomException:
             raise
@@ -612,6 +619,7 @@ class DataLoadService:
                 buffer.write(json.dumps(jsonData, indent=4).encode("utf-8"))
                 buffer.seek(0)
                 self.client.storage.from_("AnalyticsHub").upload(path = f"{tableDetails.projectId}/metadata.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
+            updateProjectModifiedAt(tableDetails.projectId)
             return
         except Exception as e:
             exception  = CustomException(e)

@@ -9,6 +9,7 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["blendService"] 
 
 
+from api.commons import updateProjectModifiedAt
 from utils.exceptionHandler import CustomException
 from urllib.request import urlopen
 from utils.logger import logger
@@ -62,6 +63,7 @@ class BlendService:
                 buffer.write(json.dumps(blendConfig, indent=4).encode("utf-8"))
                 buffer.seek(0)
                 _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{blendDetails.projectId}/blendConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
+            updateProjectModifiedAt(blendDetails.projectId)
             return
         except Exception as e:
             exception = CustomException(e)
