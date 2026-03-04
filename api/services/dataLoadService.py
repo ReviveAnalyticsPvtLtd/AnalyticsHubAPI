@@ -62,6 +62,26 @@ class DataLoadService:
         sanitized = sanitized.strip("_")
         return sanitized
 
+    def _columnsMatchFuzzy(self, sigA: str, sigB: str) -> bool:
+        """
+        Check if two table signatures match fuzzily.
+        Signatures are composed of lowercased column names separated by '|'.
+        Allows for minor variations in column names across pages.
+        """
+        colsA = [re.sub(r'[^a-z0-9]', '', c) for c in sigA.split('|')]
+        colsB = [re.sub(r'[^a-z0-9]', '', c) for c in sigB.split('|')]
+        
+        if not colsA or not colsB:
+            return False
+            
+        if len(colsA) != len(colsB):
+            return False
+            
+        matches = sum(1 for a, b in zip(colsA, colsB) if a == b)
+        matchRatio = matches / len(colsA)
+        
+        return matchRatio >= 0.8
+
     async def loadCsvData(self, projectId: Annotated[str, Form()], files: list[UploadFile]) -> None:
         """
         Load CSV files into project storage.
@@ -203,10 +223,36 @@ class DataLoadService:
                         pendingTablesBefore = len(pendingTables)
 
                         detectedTables = page.find_tables()
-                        sortedTableEntries = sorted(
-                            [(t.bbox, t.extract()) for t in detectedTables],
-                            key=lambda x: x[0][1]
-                        )
+                        
+                        sortedTableEntries = []
+                        if detectedTables:
+                            sortedTableEntries = sorted(
+                                [(t.bbox, t.extract()) for t in detectedTables],
+                                key=lambda x: x[0][1]
+                            )
+                        else:
+                            # Pass 2: Fallback for borderless tables using explicit x_tolerance words grouping
+                            words = page.extract_words(x_tolerance=2, y_tolerance=3, keep_blank_chars=False)
+                            if words:
+                                words.sort(key=lambda w: (round(w['top'], 1), w['x0']))
+                                lines = {}
+                                for w in words:
+                                    y = round(w['top'], 1)
+                                    if y not in lines:
+                                        lines[y] = []
+                                    lines[y].append(w['text'])
+                                
+                                # Convert lines dictionary to table data
+                                fallbackTableData = [line for line in lines.values() if len(line) > 1]
+                                if len(fallbackTableData) >= 2:
+                                    # bbox estimate (x0, top, x1, bottom)
+                                    min_x = min(w['x0'] for w in words)
+                                    min_y = min(w['top'] for w in words)
+                                    max_x = max(w['x1'] for w in words)
+                                    max_y = max(w['bottom'] for w in words)
+                                    
+                                    sortedTableEntries = [((min_x, min_y, max_x, max_y), fallbackTableData)]
+
                         tableBboxes = [entry[0] for entry in sortedTableEntries]
                         pageWidth = float(page.width)
                         pageHeight = float(page.height)
@@ -252,33 +298,58 @@ class DataLoadService:
                                 col.lower().strip() for col in uniqueHeaders
                             )
 
+                            merged = False
+                            pendingIdx = None
+                            isContinuationWithoutHeaders = False
+                            
+                            for i, pending in enumerate(pendingTables):
+                                if pending["lastPage"] == pageNum - 1:
+                                    if self._columnsMatchFuzzy(pending["signature"], signature):
+                                        merged = True
+                                        pendingIdx = i
+                                        break
+                                    elif len(pending["headers"]) == len(uniqueHeaders):
+                                        merged = True
+                                        pendingIdx = i
+                                        isContinuationWithoutHeaders = True
+                                        break
+
+                            if isContinuationWithoutHeaders:
+                                rawDataRows = tableData
+                                effectiveHeaders = pendingTables[pendingIdx]["headers"]
+                            elif merged:
+                                rawDataRows = tableData[1:]
+                                effectiveHeaders = pendingTables[pendingIdx]["headers"]
+                            else:
+                                rawDataRows = tableData[1:]
+                                effectiveHeaders = uniqueHeaders
+
                             dataRows = [
-                                row for row in tableData[1:]
-                                if [str(c).strip().lower() if c else "" for c in row] != [col.lower().strip() for col in uniqueHeaders]
+                                row for row in rawDataRows
+                                if isinstance(row, list) and [str(c).strip().lower() if c else "" for c in row] != [col.lower().strip() for col in effectiveHeaders]
                             ]
-                            df = pd.DataFrame(dataRows, columns=uniqueHeaders)
+                            
+                            # Ensure the dataRows have exactly the same length as effectiveHeaders before building df
+                            numCols = len(effectiveHeaders)
+                            dataRows = [(row + [""] * numCols)[:numCols] for row in dataRows]
+                            
+                            df = pd.DataFrame(dataRows, columns=effectiveHeaders)
                             df.dropna(how="all", inplace=True)
                             df.reset_index(drop=True, inplace=True)
                             if df.empty:
                                 currentY = tableBottom
                                 continue
 
-                            merged = False
-                            pendingIdx = None
-                            for i, pending in enumerate(pendingTables):
-                                if pending["signature"] == signature and pending["lastPage"] == pageNum - 1:
-                                    pending["df"] = pd.concat(
-                                        [pending["df"], df], ignore_index=True
-                                    )
-                                    pending["lastPage"] = pageNum
-                                    merged = True
-                                    pendingIdx = i
-                                    break
-
-                            if not merged:
+                            if merged:
+                                pending = pendingTables[pendingIdx]
+                                pending["df"] = pd.concat(
+                                    [pending["df"], df], ignore_index=True
+                                )
+                                pending["lastPage"] = pageNum
+                            else:
                                 pendingTables.append({
                                     "signature": signature,
-                                    "headers": uniqueHeaders,
+                                    "headers": effectiveHeaders,
                                     "df": df,
                                     "lastPage": pageNum
                                 })
@@ -368,42 +439,60 @@ class DataLoadService:
                                     col.lower().strip() for col in uniqueOcrHeaders
                                 )
 
+                                ocrMerged = False
+                                ocrPendingIdx = None
+                                ocrIsContinuationWithoutHeaders = False
+                                
+                                for i, pending in enumerate(pendingTables):
+                                    if pending["lastPage"] == pageNum - 1:
+                                        if self._columnsMatchFuzzy(pending["signature"], ocrSignature):
+                                            ocrMerged = True
+                                            ocrPendingIdx = i
+                                            break
+                                        elif len(pending["headers"]) == len(uniqueOcrHeaders):
+                                            ocrMerged = True
+                                            ocrPendingIdx = i
+                                            ocrIsContinuationWithoutHeaders = True
+                                            break
+
+                                if ocrIsContinuationWithoutHeaders:
+                                    ocrRawDataRows = ocrTable
+                                    ocrEffectiveHeaders = pendingTables[ocrPendingIdx]["headers"]
+                                elif ocrMerged:
+                                    ocrRawDataRows = ocrTable[1:]
+                                    ocrEffectiveHeaders = pendingTables[ocrPendingIdx]["headers"]
+                                else:
+                                    ocrRawDataRows = ocrTable[1:]
+                                    ocrEffectiveHeaders = uniqueOcrHeaders
+
                                 ocrDataRows = [
-                                    row for row in ocrTable[1:]
+                                    row for row in ocrRawDataRows
                                     if isinstance(row, list)
                                     and [str(c).strip().lower() if c else "" for c in row]
-                                    != [col.lower().strip() for col in uniqueOcrHeaders]
+                                    != [col.lower().strip() for col in ocrEffectiveHeaders]
                                 ]
-                                numCols = len(uniqueOcrHeaders)
+                                
+                                numCols = len(ocrEffectiveHeaders)
                                 ocrDataRows = [
                                     (row + [""] * numCols)[:numCols]
                                     for row in ocrDataRows
                                 ]
-                                ocrDf = pd.DataFrame(ocrDataRows, columns=uniqueOcrHeaders)
+                                ocrDf = pd.DataFrame(ocrDataRows, columns=ocrEffectiveHeaders)
                                 ocrDf.dropna(how="all", inplace=True)
                                 ocrDf.reset_index(drop=True, inplace=True)
                                 if ocrDf.empty:
                                     continue
 
-                                ocrMerged = False
-                                ocrPendingIdx = None
-                                for i, pending in enumerate(pendingTables):
-                                    if (
-                                        pending["signature"] == ocrSignature
-                                        and pending["lastPage"] == pageNum - 1
-                                    ):
-                                        pending["df"] = pd.concat(
-                                            [pending["df"], ocrDf], ignore_index=True
-                                        )
-                                        pending["lastPage"] = pageNum
-                                        ocrMerged = True
-                                        ocrPendingIdx = i
-                                        break
-
-                                if not ocrMerged:
+                                if ocrMerged:
+                                    pending = pendingTables[ocrPendingIdx]
+                                    pending["df"] = pd.concat(
+                                        [pending["df"], ocrDf], ignore_index=True
+                                    )
+                                    pending["lastPage"] = pageNum
+                                else:
                                     pendingTables.append({
                                         "signature": ocrSignature,
-                                        "headers": uniqueOcrHeaders,
+                                        "headers": ocrEffectiveHeaders,
                                         "df": ocrDf,
                                         "lastPage": pageNum,
                                     })
