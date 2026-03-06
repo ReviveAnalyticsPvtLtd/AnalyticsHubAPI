@@ -12,6 +12,7 @@ from analyticsHub.components.metadataGenerator import MetadataGenerator
 from analyticsHub.components.insightGenerator import InsightGenerator
 from analyticsHub.components.reportGenerator import ReportGenerator
 from analyticsHub.components.domainKpiMapper import DomainKpiMapper
+from langchain_experimental.utilities import PythonREPL
 from api.commons import updateProjectModifiedAt
 from utils.exceptionHandler import CustomException
 from concurrent.futures import ProcessPoolExecutor
@@ -471,9 +472,8 @@ class ManagementService:
                 results += self._attributeInfoFunc(projectId = projectId, dataframeName = dataframeName)
             metadataChain = self.metadataGenerator.getMetadataChain()
             metadata = metadataChain.invoke({"metadata": results})
-            metadataParts = metadata.split("```")
-            metadata = metadataParts[-2]
-            metadata = orjson.loads("\n".join(metadata.split("\n")[1:]).encode())
+            metadata = PythonREPL().sanitize_input(query = metadata)
+            metadata = orjson.loads(metadata.encode('utf-8'))
             return metadata
         except Exception as e:
             logger.error(CustomException(e))
