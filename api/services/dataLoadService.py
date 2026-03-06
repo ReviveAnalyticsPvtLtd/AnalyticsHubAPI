@@ -62,6 +62,65 @@ class DataLoadService:
         sanitized = sanitized.strip("_")
         return sanitized
 
+    def _columnsMatchFuzzy(self, sigA: str, sigB: str) -> bool:
+        """
+        Check if two table signatures match fuzzily.
+        Signatures are composed of lowercased column names separated by '|'.
+        Allows for minor variations in column names across pages.
+        """
+        colsA = [re.sub(r'[^a-z0-9]', '', c) for c in sigA.split('|')]
+        colsB = [re.sub(r'[^a-z0-9]', '', c) for c in sigB.split('|')]
+        
+        if not colsA or not colsB:
+            return False
+            
+        if len(colsA) != len(colsB):
+            return False
+            
+        matches = sum(1 for a, b in zip(colsA, colsB) if a == b)
+        matchRatio = matches / len(colsA)
+        
+        return matchRatio >= 0.8
+
+    def _looksLikeHeaders(self, row: list) -> bool:
+        """
+        Heuristic: does this row look like column headers rather than data?
+        Returns True only if the row contains strong signals like snake_case
+        or column_N, and contains NO numeric values.
+        """
+        if not row:
+            return False
+            
+        strongHeaderCount = 0
+        numericCount = 0
+        
+        for cell in row:
+            text = str(cell).strip() if cell else ""
+            if not text:
+                continue
+                
+            # Numeric values are data, not headers
+            try:
+                float(text.replace(",", ""))
+                numericCount += 1
+                continue
+            except ValueError:
+                pass
+                
+            # Strong signal: snake_case pattern (e.g. stock_symbol, stock_name)
+            if re.match(r'^[a-z][a-z0-9]*(_[a-z0-9]+)+$', text):
+                strongHeaderCount += 1
+            # Strong signal: column_N placeholder
+            elif re.match(r'^column_\d+$', text, re.IGNORECASE):
+                strongHeaderCount += 1
+                
+        # If any numeric values exist, it's almost certainly data
+        if numericCount > 0:
+            return False
+            
+        # Consider it headers if we have strong signals for at least half the cells
+        return strongHeaderCount > 0 and strongHeaderCount >= len(row) // 2
+
     async def loadCsvData(self, projectId: Annotated[str, Form()], files: list[UploadFile]) -> None:
         """
         Load CSV files into project storage.
@@ -158,21 +217,16 @@ class DataLoadService:
         
     async def loadPdfData(self, projectId: Annotated[str, Form()], files: list[UploadFile]) -> None:
         """
-        Load PDF files into project storage. Extracts tables and text content.
+        Load PDF files into project storage. Extracts tables from PDFs.
         Tables spanning multiple pages are automatically merged when their header
-        signatures match across consecutive pages.
+        signatures match across consecutive pages, or when a table starts near
+        the top of a page and a pending table exists from the previous page.
         Tables are stored as individual parquet files ({filename}_table{N}.parquet).
-        A context timeline preserving the PDF's reading order is stored as a
-        structured DataFrame ({filename}_text.parquet) with columns:
-        page_number, row_order, context_type, content, table_ref.
-        context_type is 'narrative' for text blocks, 'table_anchor' for new table
-        positions, or 'table_continuation' for tables spanning from a previous page.
-        table_ref links anchor/continuation rows to the corresponding table file name.
         Raises:
             CustomException:
                 400 - Missing projectId or files
                 415 - Unsupported file type
-                422 - No extractable content found
+                422 - No extractable tables found
                 500 - PDF upload failed
         """
         try:
@@ -191,48 +245,58 @@ class DataLoadService:
                     )
                 fileBytes = await file.read()
                 baseName = self._sanitizeFileName(file.filename)
-                contextRows = []
                 pendingTables = []
 
                 ocrExtractor = None
 
+                totalPages = 0
                 with fitz.open(stream=fileBytes, filetype="pdf") as fitzDoc, \
                      pdfplumber.open(io.BytesIO(fileBytes)) as pdf:
+                    totalPages = len(pdf.pages)
+                    logger.info(f"Processing {file.filename}: {totalPages} pages")
                     for pageNum, page in enumerate(pdf.pages, start=1):
-                        contextRowsBefore = len(contextRows)
                         pendingTablesBefore = len(pendingTables)
+                        pageProducedContent = False
 
                         detectedTables = page.find_tables()
-                        sortedTableEntries = sorted(
-                            [(t.bbox, t.extract()) for t in detectedTables],
-                            key=lambda x: x[0][1]
-                        )
-                        tableBboxes = [entry[0] for entry in sortedTableEntries]
-                        pageWidth = float(page.width)
+                        
+                        sortedTableEntries = []
+                        if detectedTables:
+                            pageProducedContent = True
+                            sortedTableEntries = sorted(
+                                [(t.bbox, t.extract()) for t in detectedTables],
+                                key=lambda x: x[0][1]
+                            )
+                        else:
+                            # Fallback for borderless tables using explicit x_tolerance words grouping
+                            words = page.extract_words(x_tolerance=5, y_tolerance=3, keep_blank_chars=False)
+                            if words:
+                                words.sort(key=lambda w: (round(w['top'], 1), w['x0']))
+                                lines = {}
+                                for w in words:
+                                    y = round(w['top'], 1)
+                                    if y not in lines:
+                                        lines[y] = []
+                                    lines[y].append(w['text'])
+                                
+                                # Convert lines dictionary to table data
+                                fallbackTableData = [line for line in lines.values() if len(line) > 1]
+                                if len(fallbackTableData) >= 2:
+                                    pageProducedContent = True
+                                    # bbox estimate (x0, top, x1, bottom)
+                                    min_x = min(w['x0'] for w in words)
+                                    min_y = min(w['top'] for w in words)
+                                    max_x = max(w['x1'] for w in words)
+                                    max_y = max(w['bottom'] for w in words)
+                                    
+                                    sortedTableEntries = [((min_x, min_y, max_x, max_y), fallbackTableData)]
+
                         pageHeight = float(page.height)
-                        currentY = 0.0
 
                         for bbox, tableData in sortedTableEntries:
                             tableTop = float(bbox[1])
-                            tableBottom = float(bbox[3])
-
-                            if tableTop - currentY > 1:
-                                try:
-                                    cropped = page.crop((0, currentY, pageWidth, tableTop))
-                                    text = cropped.extract_text()
-                                    if text and text.strip():
-                                        contextRows.append({
-                                            "page_number": pageNum,
-                                            "row_order": len(contextRows) + 1,
-                                            "context_type": "narrative",
-                                            "content": text.strip(),
-                                            "table_ref": None
-                                        })
-                                except Exception:
-                                    pass
 
                             if not tableData or len(tableData) < 2:
-                                currentY = tableBottom
                                 continue
                             headers = [
                                 str(h).strip() if h and str(h).strip() else f"column_{i}"
@@ -252,188 +316,225 @@ class DataLoadService:
                                 col.lower().strip() for col in uniqueHeaders
                             )
 
-                            dataRows = [
-                                row for row in tableData[1:]
-                                if [str(c).strip().lower() if c else "" for c in row] != [col.lower().strip() for col in uniqueHeaders]
-                            ]
-                            df = pd.DataFrame(dataRows, columns=uniqueHeaders)
+                            merged = False
+                            pendingIdx = None
+                            isContinuationWithoutHeaders = False
+                            isReshapedContinuation = False
+                            firstRowIsHeaders = self._looksLikeHeaders(tableData[0])
+                            
+                            for i, pending in enumerate(pendingTables):
+                                if pending["lastPage"] == pageNum - 1:
+                                    if self._columnsMatchFuzzy(pending["signature"], signature):
+                                        # Signatures match → same table with repeated headers
+                                        merged = True
+                                        pendingIdx = i
+                                        break
+                                    elif len(pending["headers"]) == len(uniqueHeaders) and not firstRowIsHeaders:
+                                        # Same col count but first row is data → continuation without headers
+                                        merged = True
+                                        pendingIdx = i
+                                        isContinuationWithoutHeaders = True
+                                        break
+
+                            # Position-based continuation: only if the first row
+                            # does NOT look like headers (i.e. it's data, not a
+                            # new table starting) and the table starts near the top
+                            if not merged and tableTop < pageHeight * 0.15 and not firstRowIsHeaders:
+                                for i, pending in enumerate(pendingTables):
+                                    if pending["lastPage"] == pageNum - 1:
+                                        merged = True
+                                        pendingIdx = i
+                                        isReshapedContinuation = True
+                                        break
+
+                            if isReshapedContinuation:
+                                # All rows are data (first row is data, not headers)
+                                rawDataRows = tableData
+                                effectiveHeaders = pendingTables[pendingIdx]["headers"]
+                            elif isContinuationWithoutHeaders:
+                                rawDataRows = tableData
+                                effectiveHeaders = pendingTables[pendingIdx]["headers"]
+                            elif merged:
+                                rawDataRows = tableData[1:]
+                                effectiveHeaders = pendingTables[pendingIdx]["headers"]
+                            else:
+                                rawDataRows = tableData[1:]
+                                effectiveHeaders = uniqueHeaders
+
+                            # Reshape rows to match expected column count
+                            numCols = len(effectiveHeaders)
+                            reshapedRows = []
+                            for row in rawDataRows:
+                                if not isinstance(row, list):
+                                    continue
+                                # Filter out repeated header rows
+                                normalized = [str(c).strip().lower() if c else "" for c in row]
+                                if normalized == [col.lower().strip() for col in effectiveHeaders]:
+                                    continue
+                                if len(row) == numCols:
+                                    reshapedRows.append(row)
+                                elif len(row) > numCols:
+                                    # Join excess cells into the last column
+                                    newRow = list(row[:numCols - 1])
+                                    newRow.append(" ".join(str(c) for c in row[numCols - 1:] if c))
+                                    reshapedRows.append(newRow)
+                                else:
+                                    # Pad with empty strings
+                                    reshapedRows.append((row + [""] * numCols)[:numCols])
+                            
+                            df = pd.DataFrame(reshapedRows, columns=effectiveHeaders)
                             df.dropna(how="all", inplace=True)
                             df.reset_index(drop=True, inplace=True)
                             if df.empty:
-                                currentY = tableBottom
                                 continue
 
-                            merged = False
-                            pendingIdx = None
-                            for i, pending in enumerate(pendingTables):
-                                if pending["signature"] == signature and pending["lastPage"] == pageNum - 1:
-                                    pending["df"] = pd.concat(
-                                        [pending["df"], df], ignore_index=True
-                                    )
-                                    pending["lastPage"] = pageNum
-                                    merged = True
-                                    pendingIdx = i
-                                    break
-
-                            if not merged:
+                            if merged:
+                                mergeType = "reshaped" if isReshapedContinuation else ("no-header" if isContinuationWithoutHeaders else "signature")
+                                pending = pendingTables[pendingIdx]
+                                pending["df"] = pd.concat(
+                                    [pending["df"], df], ignore_index=True
+                                )
+                                pending["lastPage"] = pageNum
+                                logger.info(
+                                    f"Page {pageNum}/{totalPages}: merged into table {pendingIdx+1} "
+                                    f"({mergeType}, {len(df)} rows)"
+                                )
+                            else:
                                 pendingTables.append({
                                     "signature": signature,
-                                    "headers": uniqueHeaders,
+                                    "headers": effectiveHeaders,
                                     "df": df,
                                     "lastPage": pageNum
                                 })
-                                pendingIdx = len(pendingTables) - 1
-
-                            contextType = "table_continuation" if merged else "table_anchor"
-                            anchorContent = (
-                                f"[Table continued: {', '.join(uniqueHeaders)}]"
-                                if merged else
-                                f"[Table: {', '.join(uniqueHeaders)}]"
-                            )
-                            contextRows.append({
-                                "page_number": pageNum,
-                                "row_order": len(contextRows) + 1,
-                                "context_type": contextType,
-                                "content": anchorContent,
-                                "table_ref": pendingIdx
-                            })
-
-                            currentY = tableBottom
-
-                        remainingHeight = pageHeight - currentY
-                        if remainingHeight > 1:
-                            try:
-                                if tableBboxes:
-                                    cropped = page.crop((0, currentY, pageWidth, pageHeight))
-                                    text = cropped.extract_text()
-                                else:
-                                    text = page.extract_text()
-                                if text and text.strip():
-                                    contextRows.append({
-                                        "page_number": pageNum,
-                                        "row_order": len(contextRows) + 1,
-                                        "context_type": "narrative",
-                                        "content": text.strip(),
-                                        "table_ref": None
-                                    })
-                            except Exception:
-                                pass
-
-                        pageProducedContent = (
-                            len(contextRows) > contextRowsBefore
-                            or len(pendingTables) > pendingTablesBefore
-                        )
-                        if not pageProducedContent:
-                            logger.info(
-                                f"Page {pageNum}: native extraction empty – "
-                                f"attempting Groq vision OCR."
-                            )
-                            if ocrExtractor is None:
-                                ocrExtractor = PdfOcrExtractor()
-
-                            fitzPage = fitzDoc.load_page(pageNum - 1)
-                            b64Img = PdfOcrExtractor.renderPageToBase64(
-                                fitzPage, dpi=ocrExtractor.cfg.dpi
-                            )
-                            ocrResult = ocrExtractor.extractPage(b64Img)
-
-                            ocrNarrative = (ocrResult.get("narrative") or "").strip()
-                            if ocrNarrative:
-                                contextRows.append({
-                                    "page_number": pageNum,
-                                    "row_order": len(contextRows) + 1,
-                                    "context_type": "narrative",
-                                    "content": ocrNarrative,
-                                    "table_ref": None
-                                })
-
-                            for ocrTable in ocrResult.get("tables", []):
-                                if not ocrTable or len(ocrTable) < 2:
-                                    continue
-                                ocrHeaders = [
-                                    str(h).strip() if h and str(h).strip() else f"column_{i}"
-                                    for i, h in enumerate(ocrTable[0])
-                                ]
-                                seen = {}
-                                uniqueOcrHeaders = []
-                                for h in ocrHeaders:
-                                    if h in seen:
-                                        seen[h] += 1
-                                        uniqueOcrHeaders.append(f"{h}_{seen[h]}")
-                                    else:
-                                        seen[h] = 0
-                                        uniqueOcrHeaders.append(h)
-
-                                ocrSignature = "|".join(
-                                    col.lower().strip() for col in uniqueOcrHeaders
+                                logger.info(
+                                    f"Page {pageNum}/{totalPages}: new table {len(pendingTables)} "
+                                    f"({len(effectiveHeaders)} cols: {effectiveHeaders}, {len(df)} rows)"
                                 )
 
-                                ocrDataRows = [
-                                    row for row in ocrTable[1:]
-                                    if isinstance(row, list)
-                                    and [str(c).strip().lower() if c else "" for c in row]
-                                    != [col.lower().strip() for col in uniqueOcrHeaders]
-                                ]
-                                numCols = len(uniqueOcrHeaders)
-                                ocrDataRows = [
-                                    (row + [""] * numCols)[:numCols]
-                                    for row in ocrDataRows
-                                ]
-                                ocrDf = pd.DataFrame(ocrDataRows, columns=uniqueOcrHeaders)
-                                ocrDf.dropna(how="all", inplace=True)
-                                ocrDf.reset_index(drop=True, inplace=True)
-                                if ocrDf.empty:
-                                    continue
+                        # OCR fallback if no tables were extracted on this page
+                        if not pageProducedContent:
+                            try:
+                                logger.info(
+                                    f"Page {pageNum}: native extraction empty – "
+                                    f"attempting Groq vision OCR."
+                                )
+                                if ocrExtractor is None:
+                                    ocrExtractor = PdfOcrExtractor()
 
-                                ocrMerged = False
-                                ocrPendingIdx = None
-                                for i, pending in enumerate(pendingTables):
-                                    if (
-                                        pending["signature"] == ocrSignature
-                                        and pending["lastPage"] == pageNum - 1
-                                    ):
+                                fitzPage = fitzDoc.load_page(pageNum - 1)
+                                b64Img = PdfOcrExtractor.renderPageToBase64(
+                                    fitzPage, dpi=ocrExtractor.cfg.dpi
+                                )
+                                ocrResult = ocrExtractor.extractPage(b64Img)
+
+                                for ocrTable in ocrResult.get("tables", []):
+                                    if not ocrTable or len(ocrTable) < 2:
+                                        continue
+                                    ocrHeaders = [
+                                        str(h).strip() if h and str(h).strip() else f"column_{i}"
+                                        for i, h in enumerate(ocrTable[0])
+                                    ]
+                                    seen = {}
+                                    uniqueOcrHeaders = []
+                                    for h in ocrHeaders:
+                                        if h in seen:
+                                            seen[h] += 1
+                                            uniqueOcrHeaders.append(f"{h}_{seen[h]}")
+                                        else:
+                                            seen[h] = 0
+                                            uniqueOcrHeaders.append(h)
+
+                                    ocrSignature = "|".join(
+                                        col.lower().strip() for col in uniqueOcrHeaders
+                                    )
+
+                                    ocrMerged = False
+                                    ocrPendingIdx = None
+                                    ocrIsContinuationWithoutHeaders = False
+                                    ocrIsReshapedContinuation = False
+                                    ocrFirstRowIsHeaders = self._looksLikeHeaders(ocrTable[0])
+                                    
+                                    for i, pending in enumerate(pendingTables):
+                                        if pending["lastPage"] == pageNum - 1:
+                                            if self._columnsMatchFuzzy(pending["signature"], ocrSignature):
+                                                ocrMerged = True
+                                                ocrPendingIdx = i
+                                                break
+                                            elif len(pending["headers"]) == len(uniqueOcrHeaders) and not ocrFirstRowIsHeaders:
+                                                ocrMerged = True
+                                                ocrPendingIdx = i
+                                                ocrIsContinuationWithoutHeaders = True
+                                                break
+
+                                    # Position-based continuation for OCR tables
+                                    if not ocrMerged and not ocrFirstRowIsHeaders:
+                                        for i, pending in enumerate(pendingTables):
+                                            if pending["lastPage"] == pageNum - 1:
+                                                ocrMerged = True
+                                                ocrPendingIdx = i
+                                                ocrIsReshapedContinuation = True
+                                                break
+
+                                    if ocrIsReshapedContinuation:
+                                        ocrRawDataRows = ocrTable
+                                        ocrEffectiveHeaders = pendingTables[ocrPendingIdx]["headers"]
+                                    elif ocrIsContinuationWithoutHeaders:
+                                        ocrRawDataRows = ocrTable
+                                        ocrEffectiveHeaders = pendingTables[ocrPendingIdx]["headers"]
+                                    elif ocrMerged:
+                                        ocrRawDataRows = ocrTable[1:]
+                                        ocrEffectiveHeaders = pendingTables[ocrPendingIdx]["headers"]
+                                    else:
+                                        ocrRawDataRows = ocrTable[1:]
+                                        ocrEffectiveHeaders = uniqueOcrHeaders
+
+                                    # Reshape OCR rows to match expected column count
+                                    numCols = len(ocrEffectiveHeaders)
+                                    ocrReshapedRows = []
+                                    for row in ocrRawDataRows:
+                                        if not isinstance(row, list):
+                                            continue
+                                        normalized = [str(c).strip().lower() if c else "" for c in row]
+                                        if normalized == [col.lower().strip() for col in ocrEffectiveHeaders]:
+                                            continue
+                                        if len(row) == numCols:
+                                            ocrReshapedRows.append(row)
+                                        elif len(row) > numCols:
+                                            newRow = list(row[:numCols - 1])
+                                            newRow.append(" ".join(str(c) for c in row[numCols - 1:] if c))
+                                            ocrReshapedRows.append(newRow)
+                                        else:
+                                            ocrReshapedRows.append((row + [""] * numCols)[:numCols])
+
+                                    ocrDf = pd.DataFrame(ocrReshapedRows, columns=ocrEffectiveHeaders)
+                                    ocrDf.dropna(how="all", inplace=True)
+                                    ocrDf.reset_index(drop=True, inplace=True)
+                                    if ocrDf.empty:
+                                        continue
+
+                                    if ocrMerged:
+                                        pending = pendingTables[ocrPendingIdx]
                                         pending["df"] = pd.concat(
                                             [pending["df"], ocrDf], ignore_index=True
                                         )
                                         pending["lastPage"] = pageNum
-                                        ocrMerged = True
-                                        ocrPendingIdx = i
-                                        break
-
-                                if not ocrMerged:
-                                    pendingTables.append({
-                                        "signature": ocrSignature,
-                                        "headers": uniqueOcrHeaders,
-                                        "df": ocrDf,
-                                        "lastPage": pageNum,
-                                    })
-                                    ocrPendingIdx = len(pendingTables) - 1
-
-                                ocrCtxType = (
-                                    "table_continuation" if ocrMerged else "table_anchor"
+                                    else:
+                                        pendingTables.append({
+                                            "signature": ocrSignature,
+                                            "headers": ocrEffectiveHeaders,
+                                            "df": ocrDf,
+                                            "lastPage": pageNum,
+                                        })
+                            except Exception as ocrErr:
+                                logger.warning(
+                                    f"Page {pageNum}: OCR fallback failed – {ocrErr}"
                                 )
-                                ocrAnchor = (
-                                    f"[Table continued: {', '.join(uniqueOcrHeaders)}]"
-                                    if ocrMerged
-                                    else f"[Table: {', '.join(uniqueOcrHeaders)}]"
-                                )
-                                contextRows.append({
-                                    "page_number": pageNum,
-                                    "row_order": len(contextRows) + 1,
-                                    "context_type": ocrCtxType,
-                                    "content": ocrAnchor,
-                                    "table_ref": ocrPendingIdx,
-                                })
 
-                for row in contextRows:
-                    if row["table_ref"] is not None:
-                        row["table_ref"] = f"{baseName}_table{row['table_ref'] + 1}"
-
-                if not pendingTables and not contextRows:
+                if not pendingTables:
                     raise CustomException(
-                        ValueError("No extractable content in PDF"),
+                        ValueError("No extractable tables in PDF"),
                         statusCode=422,
-                        uiMessage="No extractable content found in the PDF. Ensure the PDF contains selectable text or tables."
+                        uiMessage="No extractable tables found in the PDF. Ensure the PDF contains tables."
                     )
 
                 for idx, entry in enumerate(pendingTables, start=1):
@@ -446,16 +547,6 @@ class DataLoadService:
                             file_options={"upsert": "true"}
                         )
 
-                if contextRows:
-                    textDf = pd.DataFrame(contextRows)
-                    with tempfile.NamedTemporaryFile(delete=True, suffix=".parquet") as temp:
-                        textDf.to_parquet(temp.name, compression="snappy")
-                        fileName = f"{baseName}_text.parquet"
-                        self.client.storage.from_("AnalyticsHub").upload(
-                            file=temp.name,
-                            path=f"{projectId}/{fileName}",
-                            file_options={"upsert": "true"}
-                        )
             updateProjectModifiedAt(projectId)
             return
         except CustomException:
