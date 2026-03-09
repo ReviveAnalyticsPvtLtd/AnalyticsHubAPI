@@ -32,6 +32,7 @@ import fitz
 import time
 import io
 import os
+import gc
 import re
 
 class DataLoadService:
@@ -197,6 +198,7 @@ class DataLoadService:
                             page, dpi=extractor.dpi
                         )
                         result = extractor.extractPage(b64)
+                        del b64
                         for table in result.tables:
                             if table.rows:
                                 fragments.append({
@@ -207,6 +209,12 @@ class DataLoadService:
                             f"Page {pageNum}/{totalPages}: "
                             f"{len(result.tables)} table(s) extracted"
                         )
+                        del result
+                        if pageNum % 5 == 0:
+                            gc.collect()
+
+                del fileBytes
+                gc.collect()
 
                 if not fragments:
                     raise CustomException(

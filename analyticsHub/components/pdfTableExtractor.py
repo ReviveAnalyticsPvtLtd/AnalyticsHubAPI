@@ -125,7 +125,11 @@ class PdfTableExtractor:
         zoom = dpi / 72.0
         mat = fitz.Matrix(zoom, zoom)
         pix = page.get_pixmap(matrix=mat, alpha=False)
-        return base64.b64encode(pix.tobytes("jpeg")).decode("utf-8")
+        imgBytes = pix.tobytes("jpeg")
+        pix = None
+        b64 = base64.b64encode(imgBytes).decode("utf-8")
+        del imgBytes
+        return b64
 
     def extractPage(self, b64Image: str) -> PageExtractionResult:
         """
