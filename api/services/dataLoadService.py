@@ -62,6 +62,23 @@ class DataLoadService:
         sanitized = sanitized.strip("_")
         return sanitized
 
+    @staticmethod
+    def _sanitizeDfForParquet(df: pd.DataFrame) -> pd.DataFrame:
+        for col in df.columns:
+            if df[col].dtype == object:
+                originalNulls = df[col].isna()
+                numeric = pd.to_numeric(df[col], errors="coerce")
+                newNulls = numeric.isna() & ~originalNulls
+                if not newNulls.any():
+                    df[col] = numeric
+                else:
+                    df[col] = (
+                        df[col]
+                        .astype(str)
+                        .replace({"None": pd.NA, "nan": pd.NA, "<NA>": pd.NA})
+                    )
+        return df
+
     async def loadCsvData(self, projectId: Annotated[str, Form()], files: list[UploadFile]) -> None:
         """
         Load CSV files into project storage.
@@ -264,7 +281,9 @@ class DataLoadService:
 
                 for idx, entry in enumerate(pendingTables, start=1):
                     with tempfile.NamedTemporaryFile(delete=True, suffix=".parquet") as temp:
-                        entry["df"].to_parquet(temp.name, compression="snappy")
+                        self._sanitizeDfForParquet(entry["df"]).to_parquet(
+                            temp.name, compression="snappy"
+                        )
                         fileName = f"{baseName}_table{idx}.parquet"
                         self.client.storage.from_("AnalyticsHub").upload(
                             file=temp.name,
