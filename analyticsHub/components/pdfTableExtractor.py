@@ -23,8 +23,9 @@ from utils.exceptionHandler import CustomException
 from analyticsHub.utils import readYaml, getConfig
 from pydantic import BaseModel, field_validator
 from utils.logger import logger
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 from typing import Any
+import asyncio
 import base64
 import json
 import time
@@ -112,12 +113,18 @@ class PdfTableExtractor:
         self.maxTokens = config.getint("PDFTABLE", "maxTokens", fallback=8192)
         self.maxRetries = config.getint("PDFTABLE", "maxRetries", fallback=2)
         self.retryDelay = config.getfloat("PDFTABLE", "retryDelay", fallback=2.0)
+        self.maxConcurrency = config.getint("PDFTABLE", "maxConcurrency", fallback=5)
 
         baseUrl = config.get("PDFTABLE", "baseUrl")
         apiKeyEnv = config.get("PDFTABLE", "apiKeyEnv", fallback="GROQ_API_KEY")
+        apiKey = os.environ.get(apiKeyEnv, "")
         self.client = OpenAI(
             base_url=baseUrl,
-            api_key=os.environ.get(apiKeyEnv, ""),
+            api_key=apiKey,
+        )
+        self.asyncClient = AsyncOpenAI(
+            base_url=baseUrl,
+            api_key=apiKey,
         )
 
     @staticmethod
@@ -196,6 +203,112 @@ class PdfTableExtractor:
             lastException,
             uiMessage="PDF table extraction failed after retries. Try again later.",
         )
+
+    async def extractPageAsync(self, b64Image: str) -> PageExtractionResult:
+        """
+        Async variant of extractPage. Sends a page image to the VLM and
+        returns validated extraction results using the AsyncOpenAI client.
+
+        Raises CustomException on rate-limit errors or after exhausting retries.
+        """
+        lastException = None
+
+        for attempt in range(1, self.maxRetries + 2):
+            try:
+                logger.info(
+                    f"PdfTableExtractor: async VLM call attempt {attempt} "
+                    f"(model={self.model})."
+                )
+                completion = await self.asyncClient.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": [{"type": "text", "text": self.prompt}],
+                        },
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/jpeg;base64,{b64Image}"
+                                    },
+                                }
+                            ],
+                        },
+                    ],
+                    temperature=self.temperature,
+                    max_tokens=self.maxTokens,
+                    stream=False,
+                )
+                raw = completion.choices[0].message.content
+                return self._parseAndValidate(raw)
+
+            except Exception as e:
+                lastException = e
+                errMsg = str(e).lower()
+
+                if "429" in errMsg or "rate" in errMsg or "quota" in errMsg:
+                    raise CustomException(
+                        e,
+                        statusCode=429,
+                        uiMessage=(
+                            "VLM API rate limit reached during PDF extraction. "
+                            "Please wait a moment and try again."
+                        ),
+                    )
+
+                if attempt <= self.maxRetries:
+                    logger.warning(
+                        f"PdfTableExtractor: async attempt {attempt} failed – "
+                        f"retrying in {self.retryDelay}s. Error: {e}"
+                    )
+                    await asyncio.sleep(self.retryDelay)
+
+        raise CustomException(
+            lastException,
+            uiMessage="PDF table extraction failed after retries. Try again later.",
+        )
+
+    async def extractPagesParallel(
+        self, pageImages: list[tuple[int, str]], totalPages: int
+    ) -> list[dict]:
+        """
+        Extract tables from multiple page images concurrently.
+
+        Args:
+            pageImages: list of (pageNum, base64Image) tuples.
+            totalPages: total page count (for logging).
+
+        Returns:
+            Sorted list of {"pageNum": int, "table": ExtractedTable} dicts,
+            ordered by pageNum (same ordering the sequential loop produced).
+        """
+        semaphore = asyncio.Semaphore(self.maxConcurrency)
+
+        async def _processOne(pageNum: int, b64: str) -> list[dict]:
+            async with semaphore:
+                result = await self.extractPageAsync(b64)
+                logger.info(
+                    f"Page {pageNum}/{totalPages}: "
+                    f"{len(result.tables)} table(s) extracted"
+                )
+                return [
+                    {"pageNum": pageNum, "table": table}
+                    for table in result.tables
+                    if table.rows
+                ]
+
+        tasks = [_processOne(pn, img) for pn, img in pageImages]
+        results = await asyncio.gather(*tasks)
+
+        fragments: list[dict] = []
+        for pageFragments in results:
+            fragments.extend(pageFragments)
+
+        fragments.sort(key=lambda f: f["pageNum"])
+        return fragments
 
     def planMerge(self, fragments: list[dict]) -> MergePlan:
         """

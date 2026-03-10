@@ -188,7 +188,7 @@ class DataLoadService:
                 baseName = self._sanitizeFileName(file.filename)
                 extractor = PdfTableExtractor()
 
-                fragments: list[dict] = []
+                pageImages: list[tuple[int, str]] = []
                 with fitz.open(stream=fileBytes, filetype="pdf") as doc:
                     totalPages = len(doc)
                     logger.info(f"Processing {file.filename}: {totalPages} pages")
@@ -197,23 +197,15 @@ class DataLoadService:
                         b64 = PdfTableExtractor.renderPageToBase64(
                             page, dpi=extractor.dpi
                         )
-                        result = extractor.extractPage(b64)
-                        del b64
-                        for table in result.tables:
-                            if table.rows:
-                                fragments.append({
-                                    "pageNum": pageNum,
-                                    "table": table,
-                                })
-                        logger.info(
-                            f"Page {pageNum}/{totalPages}: "
-                            f"{len(result.tables)} table(s) extracted"
-                        )
-                        del result
-                        if pageNum % 5 == 0:
-                            gc.collect()
+                        pageImages.append((pageNum, b64))
 
                 del fileBytes
+                gc.collect()
+
+                fragments = await extractor.extractPagesParallel(
+                    pageImages, totalPages
+                )
+                del pageImages
                 gc.collect()
 
                 if not fragments:
