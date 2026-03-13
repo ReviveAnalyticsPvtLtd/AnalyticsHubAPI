@@ -255,9 +255,9 @@ class ReportingService:
                 "inputQuery": query,
                 "projectId": projectId
             })
-            _ = response.pop("metadata")
-            _ = response.pop("rephrasedQuery")
-            _ = response.pop("codeOutput")
+            _ = response.pop("metadata", None)
+            _ = response.pop("rephrasedQuery", None)
+            _ = response.pop("codeOutput", None)
             return response
         except Exception as e:
             exception = CustomException(e)
