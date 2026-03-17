@@ -15,7 +15,8 @@ from utils.exceptionHandler import CustomException
 from analyticsHub.utils import readYaml, getConfig
 from langchain_core.prompts import PromptTemplate
 from langchain_core.messages import AIMessage
-from langchain_openai import ChatOpenAI
+# from langchain_openai import ChatOpenAI
+from langchain_cerebras import ChatCerebras
 from pydantic import Field, BaseModel
 from dataclasses import dataclass
 from utils.logger import logger
@@ -78,8 +79,7 @@ class QueryRephaser:
                 input_variables = ["metadata", "query"],
                 partial_variables = {"format_instructions": queryRephraseParser.get_format_instructions()}
             )
-            llm = ChatOpenAI(
-                base_url=os.environ.get("OPENROUTER_BASE_URL"),
+            llm = ChatCerebras(
                 model=self.config.get("QUERYREPHRASER", "model"),
                 temperature=self.config.getfloat("QUERYREPHRASER", "temperature"),
                 max_tokens=self.config.getint("QUERYREPHRASER", "maxTokens")

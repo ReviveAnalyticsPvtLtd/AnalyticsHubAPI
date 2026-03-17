@@ -17,7 +17,8 @@ from analyticsHub.utils import readYaml, getConfig
 from utils.exceptionHandler import CustomException
 from langchain_core.prompts import PromptTemplate
 from langchain_core.messages import AIMessage
-from langchain_openai import ChatOpenAI
+# from langchain_openai import ChatOpenAI
+from langchain_cerebras import ChatCerebras
 from dataclasses import dataclass
 from utils.logger import logger
 import os
@@ -71,8 +72,7 @@ class DomainKpiMapper:
             self.config = getConfig(self.domaonKpiMapperConfig.configPath)
             promptTemplate = readYaml(self.domaonKpiMapperConfig.yamlPath).get("domainAwareKpiMappingAgentPrompt")
             domainAwareKpiMappingAgentPrompt = PromptTemplate.from_template(promptTemplate)
-            llm = ChatOpenAI(
-                base_url=os.environ.get("OPENROUTER_BASE_URL"),
+            llm = ChatCerebras(
                 model = self.config.get("DOMAINKPIMAPPER", "model"),
                 temperature = self.config.getfloat("DOMAINKPIMAPPER", "temperature")
             )
