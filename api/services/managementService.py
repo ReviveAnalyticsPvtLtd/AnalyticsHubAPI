@@ -450,6 +450,78 @@ class ManagementService:
         attributeInfo += 'SHAPE: ' + str(df.shape) + '\n'
         attributeInfo += 'SAMPLE ROW:\n' + str(df.loc[df.index[:1]].to_string()) + '\n'
         return attributeInfo
+
+    @staticmethod
+    def _extractBetween(text: str, opening: str, closing: str) -> str | None:
+        """Extract substring from first opening to last closing token."""
+        startIdx = text.find(opening)
+        endIdx = text.rfind(closing)
+        if startIdx == -1 or endIdx == -1 or endIdx <= startIdx:
+            return None
+        return text[startIdx : endIdx + 1].strip()
+
+    @staticmethod
+    def _stripFenceLanguage(block: str) -> str:
+        """Remove fence language tags like `json` from fenced blocks."""
+        cleaned = block.strip()
+        lowered = cleaned.lower()
+        if lowered.startswith("json\n"):
+            return cleaned.split("\n", 1)[1].strip()
+        if lowered.startswith("json "):
+            return cleaned[5:].strip()
+        if "\n" in cleaned:
+            firstLine, rest = cleaned.split("\n", 1)
+            if firstLine.strip().lower() in {"json", "python", "javascript", "js"}:
+                return rest.strip()
+        return cleaned
+
+    def _parseModelJsonOutput(self, rawOutput: object, stage: str) -> dict:
+        """
+        Parse potentially messy model output into a JSON object.
+
+        Handles code fences, language tags, and extra prose around JSON.
+        """
+        if isinstance(rawOutput, dict):
+            return rawOutput
+        if rawOutput is None:
+            raise ValueError(f"{stage} model output is empty.")
+
+        rawText = str(rawOutput).strip()
+        if not rawText:
+            raise ValueError(f"{stage} model output is blank.")
+
+        sanitized = PythonREPL().sanitize_input(query=rawText).strip()
+        candidates: list[str] = [rawText, sanitized]
+
+        for baseText in (rawText, sanitized):
+            if "```" in baseText:
+                for block in baseText.split("```"):
+                    block = self._stripFenceLanguage(block)
+                    if block:
+                        candidates.append(block)
+            for opening, closing in (("{", "}"), ("[", "]")):
+                sliced = self._extractBetween(baseText, opening, closing)
+                if sliced:
+                    candidates.append(sliced)
+
+        seen: set[str] = set()
+        for candidate in candidates:
+            candidate = self._stripFenceLanguage(candidate).strip()
+            if not candidate or candidate in seen:
+                continue
+            seen.add(candidate)
+            try:
+                parsed = orjson.loads(candidate.encode("utf-8"))
+                if not isinstance(parsed, dict):
+                    raise ValueError(f"{stage} output must be a JSON object.")
+                return parsed
+            except Exception:
+                continue
+
+        preview = sanitized[:300].replace("\n", "\\n")
+        raise ValueError(
+            f"{stage} returned non-JSON output. Preview: {preview}"
+        )
         
     def _generateMetadata(self, projectId: str) -> dict:
         """
@@ -471,9 +543,11 @@ class ManagementService:
                 dataframeName = fileName.replace(".parquet", "")
                 results += self._attributeInfoFunc(projectId = projectId, dataframeName = dataframeName)
             metadataChain = self.metadataGenerator.getMetadataChain()
-            metadata = metadataChain.invoke({"metadata": results})
-            metadata = PythonREPL().sanitize_input(query = metadata)
-            metadata = orjson.loads(metadata.encode('utf-8'))
+            metadataRaw = metadataChain.invoke({"metadata": results})
+            metadata = self._parseModelJsonOutput(
+                rawOutput=metadataRaw,
+                stage="Metadata generation"
+            )
             return metadata
         except Exception as e:
             logger.error(CustomException(e))
@@ -497,25 +571,32 @@ class ManagementService:
                 domainFileUrl = os.environ["DOMAIN_FILE_URL"].format(fileName = domainFile) + f"?cb={int(time.time())}"
                 domainData = json.loads(urlopen(domainFileUrl).read())
                 domainKpiMapperChain = self.domainKpiMapper.getDomainKpiMapperChain()
-                domainKpiInsights = domainKpiMapperChain.invoke({"domainProfile": domainData, "metadata": metadata})
-                domainKpiInsightParts = domainKpiInsights.split("```")
-                domainKpiInsights = domainKpiInsightParts[-2]
-                domainKpiInsights = orjson.loads("\n".join(domainKpiInsights.split("\n")[1:]).encode("utf-8"))
-                overlapKpis = list(domainKpiInsights.values())
+                domainKpiInsightsRaw = domainKpiMapperChain.invoke(
+                    {"domainProfile": domainData, "metadata": metadata}
+                )
+                domainKpiInsights = self._parseModelJsonOutput(
+                    rawOutput=domainKpiInsightsRaw,
+                    stage="Domain KPI mapping"
+                )
+                overlapKpis = [str(value) for value in domainKpiInsights.values() if value is not None]
             else:
                 overlapKpis = list()
             insightGeneratorChain = self.insightGenerator.getInsightGeneratorChain()
-            insights = insightGeneratorChain.invoke({"metadata": metadata})
-            insightsParts = insights.split("```")
-            insights = insightsParts[-2]
-            insights = orjson.loads("\n".join(insights.split("\n")[1:]).encode("utf-8"))
+            insightsRaw = insightGeneratorChain.invoke({"metadata": metadata})
+            insights = self._parseModelJsonOutput(
+                rawOutput=insightsRaw,
+                stage="Insight generation"
+            )
             allInsights, counterValue = list(), 1
             for kpi in overlapKpis:
                 insightDict = {"id": counterValue, "query": kpi, "isCharted": False}
                 allInsights.append(insightDict)
                 counterValue += 1
             for insightKey in insights.keys():
-                insightDict = {"id": counterValue, "query": insights.get(insightKey), "isCharted": False}
+                insightText = insights.get(insightKey)
+                if insightText is None:
+                    continue
+                insightDict = {"id": counterValue, "query": str(insightText), "isCharted": False}
                 allInsights.append(insightDict)
                 counterValue += 1
             insights = {"insights": allInsights}
