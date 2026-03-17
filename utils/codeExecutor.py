@@ -59,11 +59,13 @@ class REPLManager:
                 file.write(out_str)
 
         class DummySys:
-            stdout = stdout
-            stderr = stderr
+            pass
 
+        dummy_sys = DummySys()
+        dummy_sys.stdout = stdout
+        dummy_sys.stderr = stderr
+        globalContext['sys'] = dummy_sys
         globalContext['print'] = custom_print
-        globalContext['sys'] = DummySys()
 
         try:
             if "```" in codeString:
