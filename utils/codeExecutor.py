@@ -12,8 +12,8 @@ __all__ = ["replManager"]
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from utils.initMethods import serializer, fetch_data
 from utils.logger import logger
-import contextlib
 import traceback
+import sys
 import io
 
 class REPLManager:
@@ -48,15 +48,30 @@ class REPLManager:
             stdout (io.StringIO): Stream to capture standard output.
             stderr (io.StringIO): Stream to capture standard error.
         """
-        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-            try:
-                if "```" in codeString:
-                    codeString = REPLManager._removeCodeFences(codeString)
-                else:
-                    pass
-                exec(codeString, globalContext)
-            except Exception:
-                traceback.print_exc(file=stderr)
+        def custom_print(*args, sep=' ', end='\n', file=None, flush=False):
+            """Thread-safe print function that writes directly to the local StringIO buffers."""
+            out_str = sep.join(map(str, args)) + end
+            if file is None or file is sys.stdout:
+                stdout.write(out_str)
+            elif file is sys.stderr:
+                stderr.write(out_str)
+            else:
+                file.write(out_str)
+
+        class DummySys:
+            stdout = stdout
+            stderr = stderr
+
+        globalContext['print'] = custom_print
+        globalContext['sys'] = DummySys()
+
+        try:
+            if "```" in codeString:
+                codeString = REPLManager._removeCodeFences(codeString)
+            exec(codeString, globalContext)
+        except Exception:
+            # We explicitly write the traceback to our local stderr buffer instead of sys.stderr
+            stderr.write(traceback.format_exc())
 
     def run(self, codeString):
         """

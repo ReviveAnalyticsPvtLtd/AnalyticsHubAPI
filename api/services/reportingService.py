@@ -25,17 +25,18 @@ import string
 import orjson
 import random
 import json
+import threading
 import uuid
 import time
 import os
 import io
 
-WORKFLOW = None
+threadLocal = threading.local()
+
 def initWorkflow():
-    global WORKFLOW
     logger.disable("") 
     try:
-        WORKFLOW = buildReportingWorkflow()
+        threadLocal.workflow = buildReportingWorkflow()
     finally:
         logger.enable("") 
 
@@ -250,8 +251,8 @@ class ReportingService:
             CustomException: If chart generation fails for any reason.
         """
         try:
-            global WORKFLOW
-            response = WORKFLOW.invoke({
+            workflow = threadLocal.workflow
+            response = workflow.invoke({
                 "metadata": metadata,
                 "inputQuery": query,
                 "projectId": projectId
@@ -284,17 +285,21 @@ class ReportingService:
             insightsUrl = os.environ["FILE_URL"].format(projectId=details.projectId, fileName="insights.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             metadata = json.loads(urlopen(metadataUrl).read())
             insights = json.loads(urlopen(insightsUrl).read())
+            
+            # Remove any potential duplicate queries while preserving order
+            uniqueQueries = list(dict.fromkeys(details.inputQueries))
+
             with ThreadPoolExecutor(max_workers=6, initializer=initWorkflow) as executor:
                 futures = [
                     executor.submit(self._generateSingleChartForParallel, metadata, details.projectId, query)
-                    for query in details.inputQueries
+                    for query in uniqueQueries
                 ]
                 responses = [f.result() for f in futures]
 
             # Generate a dynamic dashboard name
             dashboardNameChain = DashboardNameGenerator().getDashboardNameGeneratorChain()
             dashboardName = dashboardNameChain.invoke({
-                "queries": "\n".join(details.inputQueries),
+                "queries": "\n".join(uniqueQueries),
                 "metadata": json.dumps(metadata)
             }).strip()
 
@@ -356,7 +361,7 @@ class ReportingService:
             
             # Updating insights.json
             for insight in insights.get("insights"):
-                if insight.get("query") in details.inputQueries:
+                if insight.get("query") in uniqueQueries:
                     insight["isCharted"] = True
                 else:
                     continue
