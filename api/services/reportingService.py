@@ -10,6 +10,7 @@ __all__ = ["reportingService"]
 
 
 from api.models import GenerateChartInput, PanelChartDetails, GenerateChartsInParallel, SaveQuery, DeleteQuery
+from analyticsHub.components.dashboardNameGenerator import DashboardNameGenerator
 from analyticsHub.workflows.reportingToolWorkflow import buildReportingWorkflow
 from api.commons import updateProjectModifiedAt
 from utils.exceptionHandler import CustomException
@@ -290,14 +291,21 @@ class ReportingService:
                 ]
                 responses = [f.result() for f in futures]
 
+            # Generate a dynamic dashboard name
+            dashboardNameChain = DashboardNameGenerator().getDashboardNameGeneratorChain()
+            dashboardName = dashboardNameChain.invoke({
+                "queries": "\n".join(details.inputQueries),
+                "metadata": json.dumps(metadata)
+            }).strip()
+
             # Create a new dashboard page
             pageId = str(uuid.uuid4())
             if "dashboardConfig.json" in [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = details.projectId)]:
                 fileUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "dashboardConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
                 dashboardConfig = json.loads(urlopen(fileUrl).read())
-                dashboardConfig[pageId] = {"name": "automaticDashboard", "widgets": []}
+                dashboardConfig[pageId] = {"name": dashboardName, "widgets": []}
             else:
-                dashboardConfig = {pageId: {"name": "automaticDashboard", "widgets": []}}
+                dashboardConfig = {pageId: {"name": dashboardName, "widgets": []}}
 
             # Export to dashboard
             pageDict = dashboardConfig.get(pageId)
@@ -320,8 +328,8 @@ class ReportingService:
                         "layout": {"x": cardsWidth, "y": 0, "w": 4, "h": 6},
                         "generatedCode": widget.get("generatedCode")
                     }
-                    if cardsWidth == 12: cardsWidth = 0
-                    else: cardsWidth += 4
+                    cardsWidth += 4
+                    if cardsWidth >= 12: cardsWidth = 0
                     cards.append(newWidget)
                 else:
                     newWidget = {
@@ -335,8 +343,8 @@ class ReportingService:
                         "layout": {"x": otherWidgetsWidth, "y": 0, "w": 6, "h": 10},
                         "generatedCode": widget.get("generatedCode")
                     }
-                    if otherWidgetsWidth == 12: otherWidgetsWidth = 0
-                    else: otherWidgetsWidth += 6
+                    otherWidgetsWidth += 6
+                    if otherWidgetsWidth >= 12: otherWidgetsWidth = 0
                     otherWidgets.append(newWidget)
             pageDict["widgets"].extend(cards)
             pageDict["widgets"].extend(otherWidgets)
