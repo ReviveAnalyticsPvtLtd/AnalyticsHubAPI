@@ -16,8 +16,7 @@ from analyticsHub.utils import readYaml, getConfig
 from utils.exceptionHandler import CustomException
 from langchain_core.prompts import PromptTemplate
 from langchain_core.messages import AIMessage
-# from langchain_openai import ChatOpenAI
-from langchain_cerebras import ChatCerebras
+from langchain_openai import ChatOpenAI
 from dataclasses import dataclass
 from utils.logger import logger
 import os
@@ -66,9 +65,11 @@ class CodeDebugger:
             self.config = getConfig(self.codeDebuggerConfig.configPath)
             promptTemplate = readYaml(self.codeDebuggerConfig.yamlPath).get("codeDebuggerAgentPrompt")
             codeGeneratorPrompt = PromptTemplate.from_template(promptTemplate)
-            llm = ChatCerebras(
+            llm = ChatOpenAI(
+                base_url=os.environ.get("OPENROUTER_BASE_URL"),
                 model=self.config.get("CODEDEBUGGER", "model"),
-                temperature=self.config.getfloat("CODEDEBUGGER", "temperature")
+                temperature=self.config.getfloat("CODEDEBUGGER", "temperature"),
+                max_tokens=self.config.getint("CODEDEBUGGER", "maxTokens", fallback=8192)
             )
             codeGeneratorParser = StrOutputParser()
             codeDebuggerChain = RunnablePassthrough() | codeGeneratorPrompt | llm | RunnableLambda(self._removeThinkTokens) | codeGeneratorParser

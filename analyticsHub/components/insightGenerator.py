@@ -15,8 +15,7 @@ from analyticsHub.utils import readYaml, getConfig
 from utils.exceptionHandler import CustomException
 from langchain_core.prompts import PromptTemplate
 from langchain_core.messages import AIMessage
-# from langchain_openai import ChatOpenAI
-from langchain_cerebras import ChatCerebras
+from langchain_openai import ChatOpenAI
 from dataclasses import dataclass
 from utils.logger import logger
 import os
@@ -70,9 +69,11 @@ class InsightGenerator:
             self.config = getConfig(self.insightGeneratorConfig.configPath)
             promptTemplate = readYaml(self.insightGeneratorConfig.yamlPath).get("insightGeneratorAgentPrompt")
             insightGeneratorPrompt = PromptTemplate.from_template(promptTemplate)
-            llm = ChatCerebras(
-                model = self.config.get("INSIGHTGENERATOR", "model"),
-                temperature = self.config.getfloat("INSIGHTGENERATOR", "temperature")
+            llm = ChatOpenAI(
+                base_url=os.environ.get("OPENROUTER_BASE_URL"),
+                model=self.config.get("INSIGHTGENERATOR", "model"),
+                temperature=self.config.getfloat("INSIGHTGENERATOR", "temperature"),
+                max_tokens=self.config.getint("INSIGHTGENERATOR", "maxTokens", fallback=8192)
             )
             insightGeneratorParser = StrOutputParser()
             insightGeneratorChain = RunnablePassthrough() | insightGeneratorPrompt | llm | RunnableLambda(self._removeThinkTokens) | insightGeneratorParser

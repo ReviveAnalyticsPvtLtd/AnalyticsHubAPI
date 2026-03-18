@@ -17,8 +17,7 @@ from analyticsHub.utils import readYaml, getConfig
 from utils.exceptionHandler import CustomException
 from langchain_core.prompts import PromptTemplate
 from langchain_core.messages import AIMessage
-# from langchain_openai import ChatOpenAI
-from langchain_cerebras import ChatCerebras
+from langchain_openai import ChatOpenAI
 from dataclasses import dataclass
 from utils.logger import logger
 import os
@@ -72,10 +71,11 @@ class DashboardNameGenerator:
             self.config = getConfig(self.dashboardNameGeneratorConfig.configPath)
             promptTemplate = readYaml(self.dashboardNameGeneratorConfig.yamlPath).get("dashboardNameGeneratorPrompt")
             dashboardNamePrompt = PromptTemplate.from_template(promptTemplate)
-            llm = ChatCerebras(
-                model = self.config.get("DASHBOARDNAMEGENERATOR", "model"),
-                temperature = self.config.getfloat("DASHBOARDNAMEGENERATOR", "temperature"),
-                max_tokens = self.config.getint("DASHBOARDNAMEGENERATOR", "maxTokens")
+            llm = ChatOpenAI(
+                base_url=os.environ.get("OPENROUTER_BASE_URL"),
+                model=self.config.get("DASHBOARDNAMEGENERATOR", "model"),
+                temperature=self.config.getfloat("DASHBOARDNAMEGENERATOR", "temperature"),
+                max_tokens=self.config.getint("DASHBOARDNAMEGENERATOR", "maxTokens", fallback=8192)
             )
             dashboardNameParser = StrOutputParser()
             dashboardNameChain = RunnablePassthrough() | dashboardNamePrompt | llm | RunnableLambda(self._removeThinkTokens) | dashboardNameParser

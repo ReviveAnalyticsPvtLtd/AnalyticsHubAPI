@@ -19,8 +19,7 @@ from langchain_core.runnables import RunnableLambda
 from utils.exceptionHandler import CustomException
 from analyticsHub.utils import readYaml, getConfig
 from langchain_core.messages import AIMessage
-# from langchain_openai import ChatOpenAI
-from langchain_cerebras import ChatCerebras
+from langchain_openai import ChatOpenAI
 from dataclasses import dataclass
 from utils.logger import logger
 import os
@@ -68,9 +67,11 @@ class MetadataGenerator:
             self.config = getConfig(self.metadataGeneratorConfig.configPath)
             promptTemplate = readYaml(self.metadataGeneratorConfig.yamlPath).get("metadataGeneratorPrompt")
             prompt = ChatPromptTemplate.from_template(promptTemplate)
-            llm = ChatCerebras(
-                model = self.config.get("METADATAGENERATOR", "model"),
-                temperature = self.config.getfloat("METADATAGENERATOR", "temperature")
+            llm = ChatOpenAI(
+                base_url=os.environ.get("OPENROUTER_BASE_URL"),
+                model=self.config.get("METADATAGENERATOR", "model"),
+                temperature=self.config.getfloat("METADATAGENERATOR", "temperature"),
+                max_tokens=self.config.getint("METADATAGENERATOR", "maxTokens", fallback=8192)
             )
             outputParser = StrOutputParser()
             chain = {
