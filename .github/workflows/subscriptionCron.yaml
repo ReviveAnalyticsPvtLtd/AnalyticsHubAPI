@@ -24,12 +24,15 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install supabase requests python-dateutil loguru
+          pip install supabase requests python-dateutil loguru razorpay
 
       - name: Run subscription manager
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           FREE_TRIAL_EXPIRY_WARNING_EMAIL_URL: ${{ secrets.FREE_TRIAL_EXPIRY_WARNING_EMAIL_URL }}
+          RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
+          RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
+          GRACE_PERIOD_DAYS: "3"
         run: |
           python utils/subscriptionManager.py

@@ -10,7 +10,7 @@ __all__ = ["router"]
 
 
 from utils.exceptionHandler import CustomException, raiseHttpException
-from api.models import VerifySubscriptionRequest, SubscriptionPlan
+from api.models import VerifySubscriptionRequest, SubscriptionPlan, CancelSubscriptionRequest, RefundRequest
 from api.services.subscriptionService import subscriptionService
 from fastapi.responses import ORJSONResponse
 from fastapi import APIRouter, Depends
@@ -87,6 +87,92 @@ async def verifySubscription(
             content={
                 "status": "SUCCESS",
                 "message": "Subscription verified successfully."
+            }
+        )
+    except CustomException as e:
+        raiseHttpException(e)
+
+
+@router.post("/cancelSubscription")
+async def cancelSubscription(
+    payload: CancelSubscriptionRequest,
+    token=Depends(verifyToken)
+):
+    """
+    Cancel the authenticated user's Razorpay subscription.
+
+    Args:
+        payload (CancelSubscriptionRequest): Cancellation options.
+        token: Authorization token dependency.
+
+    Returns:
+        ORJSONResponse: Cancellation result.
+    """
+    try:
+        result = subscriptionService.cancelSubscription(
+            token=token,
+            cancelAtCycleEnd=payload.cancelAtCycleEnd
+        )
+        return ORJSONResponse(
+            status_code=200,
+            content={
+                "status": "SUCCESS",
+                "message": "Subscription cancelled successfully.",
+                "data": result
+            }
+        )
+    except CustomException as e:
+        raiseHttpException(e)
+
+
+@router.post("/refund")
+async def refund(payload: RefundRequest, token=Depends(verifyToken)):
+    """
+    Initiate a refund for a Razorpay payment.
+
+    Args:
+        payload (RefundRequest): Refund details including payment ID and optional amount.
+        token: Authorization token dependency.
+
+    Returns:
+        ORJSONResponse: Refund initiation result.
+    """
+    try:
+        result = subscriptionService.initiateRefund(
+            token=token,
+            paymentId=payload.paymentId,
+            amount=payload.amount
+        )
+        return ORJSONResponse(
+            status_code=200,
+            content={
+                "status": "SUCCESS",
+                "message": "Refund initiated successfully.",
+                "data": result
+            }
+        )
+    except CustomException as e:
+        raiseHttpException(e)
+
+
+@router.get("/invoices")
+async def getInvoices(token=Depends(verifyToken)):
+    """
+    Retrieve all invoices for the authenticated user.
+
+    Args:
+        token: Authorization token dependency.
+
+    Returns:
+        ORJSONResponse: List of invoices.
+    """
+    try:
+        result = subscriptionService.getInvoices(token=token)
+        return ORJSONResponse(
+            status_code=200,
+            content={
+                "status": "SUCCESS",
+                "invoices": result
             }
         )
     except CustomException as e:

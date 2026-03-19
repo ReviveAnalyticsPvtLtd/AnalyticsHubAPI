@@ -155,6 +155,23 @@ class SubscriptionPlan(str, Enum):
     MONTHLY_60 = "MONTHLY_60"
     MONTHLY_80 = "MONTHLY_80"
 
+class SubscriptionStatus(str, Enum):
+    NONE = "none"
+    TRIALING = "trialing"
+    ACTIVE = "active"
+    HALTED = "halted"
+    CANCELLED = "cancelled"
+    PAUSED = "paused"
+    EXPIRED = "expired"
+    PENDING = "pending"
+
+class CancelSubscriptionRequest(BaseModel):
+    cancelAtCycleEnd: bool = True
+
+class RefundRequest(BaseModel):
+    paymentId: str
+    amount: int | None = None
+
 class SaveQuery(BaseModel):
     projectId: str
     query: str
