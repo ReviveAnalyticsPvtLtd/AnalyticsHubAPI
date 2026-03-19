@@ -45,7 +45,8 @@ class SubscriptionService:
                 os.environ["RAZORPAY_KEY_SECRET"]
             )
         )
-        self.BASE_PLAN_ID = os.environ.get("RAZORPAY_BASE_PLAN_ID", "plan_RyCW915DB49WRM")
+        self.BASE_PLAN_ID = os.environ["RAZORPAY_PRO_PLAN_ID"]
+        self.VALID_DOMAINS = {"banking", "manufacturing", "supplychain", "telecom"}
 
     def _auditLog(self, userId: str, action: str, **kwargs) -> None:
         """
@@ -172,6 +173,11 @@ class SubscriptionService:
             dict: Data required to open Razorpay checkout.
         """
         try:
+            invalidDomains = set(domains) - self.VALID_DOMAINS
+            if invalidDomains:
+                raise Exception(f"Invalid domains: {', '.join(invalidDomains)}")
+            if not domains or len(domains) > 4:
+                raise Exception("Domain count must be between 1 and 4")
             decodedToken = jwt.decode(
                 token,
                 os.environ["SECRET_KEY"],
@@ -202,7 +208,9 @@ class SubscriptionService:
                 "razorpayKey": os.environ["RAZORPAY_KEY_ID"],
                 "subscriptionId": subscription["id"],
                 "shortUrl": subscription["short_url"],
-                "status": subscription["status"]
+                "status": subscription["status"],
+                "quantity": quantity,
+                "domains": domains
             }
         except Exception as e:
             exception = CustomException(e)
