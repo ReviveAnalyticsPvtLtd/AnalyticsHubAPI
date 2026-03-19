@@ -10,7 +10,7 @@ __all__ = ["router"]
 
 
 from utils.exceptionHandler import CustomException, raiseHttpException
-from api.models import VerifySubscriptionRequest, SubscriptionPlan, CancelSubscriptionRequest, RefundRequest
+from api.models import VerifySubscriptionRequest, CreateSubscriptionRequest, CancelSubscriptionRequest, RefundRequest
 from api.services.subscriptionService import subscriptionService
 from fastapi.responses import ORJSONResponse
 from fastapi import APIRouter, Depends
@@ -47,19 +47,19 @@ async def activateFreeTrial(token=Depends(verifyToken)):
 
 
 @router.post("/createSubscription")
-async def createSubscription(planId: SubscriptionPlan, token=Depends(verifyToken)):
+async def createSubscription(request: CreateSubscriptionRequest, token=Depends(verifyToken)):
     """
-    Create a Razorpay subscription.
+    Create a Razorpay subscription for the given domains.
 
     Args:
-        planId (str): Razorpay plan ID.
+        request (CreateSubscriptionRequest): Domains to subscribe.
         token: Authorization token dependency.
 
     Returns:
         ORJSONResponse: Subscription details required for checkout.
     """
     try:
-        result = subscriptionService.createSubscription(planId=planId.value, token=token)
+        result = subscriptionService.createSubscription(domains=request.domains, token=token)
         return ORJSONResponse(status_code=200, content=result)
     except CustomException as e:
         raiseHttpException(e)

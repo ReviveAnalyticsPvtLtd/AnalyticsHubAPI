@@ -143,17 +143,21 @@ class DeleteDashboardElement(BaseModel):
     id: str
 
 class VerifySubscriptionRequest(BaseModel):
-    subscribedExperts: list[str]
+    domains: list[str]
+    subscribedExperts: list[str] | None = None
     razorpaySubscriptionId: str
     razorpayPaymentId: str 
     razorpaySignature: str 
     userId: str 
 
-class SubscriptionPlan(str, Enum):
-    MONTHLY_20 = "MONTHLY_20"
-    MONTHLY_40 = "MONTHLY_40"
-    MONTHLY_60 = "MONTHLY_60"
-    MONTHLY_80 = "MONTHLY_80"
+class CreateSubscriptionRequest(BaseModel):
+    domains: list[str]
+
+class AddDomainRequest(BaseModel):
+    domain: str
+
+class RemoveDomainRequest(BaseModel):
+    domain: str
 
 class SubscriptionStatus(str, Enum):
     NONE = "none"

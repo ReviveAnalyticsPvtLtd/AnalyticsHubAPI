@@ -45,12 +45,7 @@ class SubscriptionService:
                 os.environ["RAZORPAY_KEY_SECRET"]
             )
         )
-        self.PLAN_ID_MAP = {
-            "MONTHLY_20": "plan_RyCW915DB49WRM",
-            "MONTHLY_40": "plan_RyCW9rJJqElXWS",
-            "MONTHLY_60": "plan_RyCWAg6yJRfm0I",
-            "MONTHLY_80": "plan_RyCWBUIbiGQwTv",
-        }
+        self.BASE_PLAN_ID = os.environ.get("RAZORPAY_BASE_PLAN_ID", "plan_RyCW915DB49WRM")
 
     def _auditLog(self, userId: str, action: str, **kwargs) -> None:
         """
@@ -165,12 +160,12 @@ class SubscriptionService:
             logger.error(exception)
             raise exception
 
-    def createSubscription(self, planId: str, token: str) -> dict:
+    def createSubscription(self, domains: list[str], token: str) -> dict:
         """
-        Create a Razorpay subscription with an associated Razorpay Customer.
+        Create a Razorpay subscription for the given domains using quantity billing.
 
         Args:
-            planId (str): Internal plan key (e.g. 'MONTHLY_40').
+            domains (list[str]): Domain expert names the user is subscribing to.
             token (str): Authorization token.
 
         Returns:
@@ -187,16 +182,19 @@ class SubscriptionService:
             userRecord = self.client.table("Users").select("fullName").eq("userId", userId).execute()
             fullName = userRecord.data[0]["fullName"] if userRecord.data else userEmail
             customerId = self._getOrCreateRazorpayCustomer(userId, userEmail, fullName)
+            quantity = len(domains)
             subscription = self.razorpayClient.subscription.create({
-                "plan_id": self.PLAN_ID_MAP[planId],
+                "plan_id": self.BASE_PLAN_ID,
                 "customer_notify": 1,
                 "total_count": 12,
+                "quantity": quantity,
                 "customer_id": customerId
             })
             self._auditLog(
                 userId, "subscription.created",
                 subscriptionId=subscription["id"],
-                status=subscription["status"]
+                status=subscription["status"],
+                metadata={"domains": domains, "quantity": quantity}
             )
             return {
                 "userId": userId,
