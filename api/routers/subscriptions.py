@@ -10,7 +10,7 @@ __all__ = ["router"]
 
 
 from utils.exceptionHandler import CustomException, raiseHttpException
-from api.models import VerifySubscriptionRequest, CreateSubscriptionRequest, AddDomainRequest, CancelSubscriptionRequest, RefundRequest
+from api.models import VerifySubscriptionRequest, CreateSubscriptionRequest, AddDomainRequest, RemoveDomainRequest, CancelSubscriptionRequest, RefundRequest
 from api.services.subscriptionService import subscriptionService
 from fastapi.responses import ORJSONResponse
 from fastapi import APIRouter, Depends
@@ -112,6 +112,32 @@ async def addDomain(payload: AddDomainRequest, token=Depends(verifyToken)):
             content={
                 "status": "SUCCESS",
                 "message": f"Domain '{payload.domain}' added successfully.",
+                "data": result
+            }
+        )
+    except CustomException as e:
+        raiseHttpException(e)
+
+
+@router.post("/removeDomain")
+async def removeDomain(payload: RemoveDomainRequest, token=Depends(verifyToken)):
+    """
+    Schedule a domain removal at the end of the current billing cycle.
+
+    Args:
+        payload (RemoveDomainRequest): Domain to remove.
+        token: Authorization token dependency.
+
+    Returns:
+        ORJSONResponse: Current domains, pending removals, and effective timing.
+    """
+    try:
+        result = subscriptionService.removeDomain(domain=payload.domain, token=token)
+        return ORJSONResponse(
+            status_code=200,
+            content={
+                "status": "SUCCESS",
+                "message": f"Domain '{payload.domain}' scheduled for removal at cycle end.",
                 "data": result
             }
         )

@@ -378,6 +378,91 @@ class SubscriptionService:
             logger.error(exception)
             raise exception
 
+    def removeDomain(self, domain: str, token: str) -> dict:
+        """
+        Schedule a domain removal at the end of the current billing cycle.
+
+        The user retains access to the domain until cycle end. Razorpay is
+        told to reduce quantity at cycle_end so no refund is issued.
+
+        Args:
+            domain (str): The domain expert name to remove.
+            token (str): Authorization token.
+
+        Returns:
+            dict: Current domains, pending removals, and effective timing.
+        """
+        try:
+            if domain not in self.VALID_DOMAINS:
+                raise Exception(f"Invalid domain: {domain}")
+            decodedToken = jwt.decode(
+                token,
+                os.environ["SECRET_KEY"],
+                algorithms = ["HS256"]
+            )
+            userId = decodedToken.get("userId")
+            userRecord = self.client.table("Users") \
+                .select("subscribedExperts, domainCount, razorpaySubscriptionId, subscriptionStatus, pendingRemovals") \
+                .eq("userId", userId) \
+                .execute()
+            if not userRecord.data:
+                raise Exception("User not found")
+            user = userRecord.data[0]
+            if user["subscriptionStatus"] != "active":
+                raise Exception("Subscription must be active to remove a domain")
+            currentExperts = [e.strip() for e in user["subscribedExperts"].split(",") if e.strip()]
+            if domain not in currentExperts:
+                raise Exception(f"Domain '{domain}' is not in your active domains")
+            pendingRemovals = user.get("pendingRemovals") or []
+            if domain in pendingRemovals:
+                raise Exception(f"Domain '{domain}' is already scheduled for removal")
+            activeDomains = [d for d in currentExperts if d not in pendingRemovals]
+            if len(activeDomains) <= 1:
+                raise Exception("Cannot remove last domain. Use cancel subscription instead.")
+            subscriptionId = user["razorpaySubscriptionId"]
+            if not subscriptionId:
+                raise Exception("No active subscription found for this user")
+            domainCount = user["domainCount"] or len(currentExperts)
+            newQuantity = domainCount - 1
+            self.razorpayClient.subscription.edit(subscriptionId, {
+                "quantity": newQuantity,
+                "schedule_change_at": "cycle_end"
+            })
+            pendingRemovals.append(domain)
+            self.client.table("Users").update({
+                "pendingRemovals": pendingRemovals
+            }).eq("userId", userId).execute()
+            self.client.table("DomainChangeLog").insert({
+                "userId": userId,
+                "action": "remove",
+                "domain": domain,
+                "previousQuantity": domainCount,
+                "newQuantity": newQuantity,
+                "proratedAmount": 0,
+                "effectiveAt": "cycle_end"
+            }).execute()
+            self._auditLog(
+                userId, "domain.removal_scheduled",
+                subscriptionId=subscriptionId,
+                status="active",
+                metadata={
+                    "domain": domain,
+                    "previousQuantity": domainCount,
+                    "newQuantity": newQuantity,
+                    "effectiveAt": "cycle_end"
+                }
+            )
+            logger.info(f"Domain '{domain}' scheduled for removal at cycle_end for user {userId}")
+            return {
+                "currentDomains": currentExperts,
+                "pendingRemovals": pendingRemovals,
+                "effectiveAt": "cycle_end"
+            }
+        except Exception as e:
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception
+
     def cancelSubscription(self, token: str, cancelAtCycleEnd: bool = True) -> dict:
         """
         Cancel a user's Razorpay subscription.
