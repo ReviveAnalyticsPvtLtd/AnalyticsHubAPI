@@ -10,7 +10,7 @@ __all__ = ["router"]
 
 
 from utils.exceptionHandler import CustomException, raiseHttpException
-from api.models import VerifySubscriptionRequest, CreateSubscriptionRequest, CancelSubscriptionRequest, RefundRequest
+from api.models import VerifySubscriptionRequest, CreateSubscriptionRequest, AddDomainRequest, CancelSubscriptionRequest, RefundRequest
 from api.services.subscriptionService import subscriptionService
 from fastapi.responses import ORJSONResponse
 from fastapi import APIRouter, Depends
@@ -87,6 +87,32 @@ async def verifySubscription(
             content={
                 "status": "SUCCESS",
                 "message": "Subscription verified successfully."
+            }
+        )
+    except CustomException as e:
+        raiseHttpException(e)
+
+
+@router.post("/addDomain")
+async def addDomain(payload: AddDomainRequest, token=Depends(verifyToken)):
+    """
+    Add a domain to the authenticated user's subscription with prorated billing.
+
+    Args:
+        payload (AddDomainRequest): Domain to add.
+        token: Authorization token dependency.
+
+    Returns:
+        ORJSONResponse: Updated subscription details.
+    """
+    try:
+        result = subscriptionService.addDomain(domain=payload.domain, token=token)
+        return ORJSONResponse(
+            status_code=200,
+            content={
+                "status": "SUCCESS",
+                "message": f"Domain '{payload.domain}' added successfully.",
+                "data": result
             }
         )
     except CustomException as e:

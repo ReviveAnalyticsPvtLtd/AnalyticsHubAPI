@@ -273,6 +273,111 @@ class SubscriptionService:
             logger.error(exception)
             raise exception
 
+    def addDomain(self, domain: str, token: str) -> dict:
+        """
+        Add a domain to an active subscription with prorated billing.
+
+        Calls Razorpay to increase the subscription quantity immediately,
+        triggering a prorated charge for the remainder of the current cycle.
+        Falls back to cycle_end scheduling if the prorated amount is below
+        Razorpay's minimum threshold.
+
+        Args:
+            domain (str): The domain expert name to add.
+            token (str): Authorization token.
+
+        Returns:
+            dict: Updated subscription details including new domain list.
+        """
+        try:
+            if domain not in self.VALID_DOMAINS:
+                raise Exception(f"Invalid domain: {domain}")
+            decodedToken = jwt.decode(
+                token,
+                os.environ["SECRET_KEY"],
+                algorithms = ["HS256"]
+            )
+            userId = decodedToken.get("userId")
+            userRecord = self.client.table("Users") \
+                .select("subscribedExperts, domainCount, razorpaySubscriptionId, subscriptionStatus, pendingRemovals") \
+                .eq("userId", userId) \
+                .execute()
+            if not userRecord.data:
+                raise Exception("User not found")
+            user = userRecord.data[0]
+            if user["subscriptionStatus"] != "active":
+                raise Exception("Subscription must be active to add a domain")
+            currentExperts = [e.strip() for e in user["subscribedExperts"].split(",") if e.strip()]
+            if domain in currentExperts:
+                raise Exception(f"Domain '{domain}' is already in your subscription")
+            domainCount = user["domainCount"] or len(currentExperts)
+            if domainCount >= 4:
+                raise Exception("Maximum of 4 domains reached")
+            subscriptionId = user["razorpaySubscriptionId"]
+            if not subscriptionId:
+                raise Exception("No active subscription found for this user")
+            newQuantity = domainCount + 1
+            effectiveAt = "now"
+            try:
+                self.razorpayClient.subscription.edit(subscriptionId, {
+                    "quantity": newQuantity,
+                    "schedule_change_at": "now"
+                })
+            except Exception as razorpayError:
+                if "minimum amount" in str(razorpayError).lower():
+                    self.razorpayClient.subscription.edit(subscriptionId, {
+                        "quantity": newQuantity,
+                        "schedule_change_at": "cycle_end"
+                    })
+                    effectiveAt = "cycle_end"
+                    logger.info(f"Prorated amount below minimum for user {userId}, falling back to cycle_end")
+                else:
+                    raise razorpayError
+            currentExperts.append(domain)
+            self.client.table("Users").update({
+                "subscribedExperts": ", ".join(currentExperts),
+                "domainCount": newQuantity
+            }).eq("userId", userId).execute()
+            pendingRemovals = user.get("pendingRemovals") or []
+            if pendingRemovals and effectiveAt == "now":
+                scheduledQuantity = newQuantity - len(pendingRemovals)
+                self.razorpayClient.subscription.edit(subscriptionId, {
+                    "quantity": scheduledQuantity,
+                    "schedule_change_at": "cycle_end"
+                })
+                logger.info(f"Re-scheduled pending removals for user {userId}: qty {scheduledQuantity} at cycle_end")
+            self.client.table("DomainChangeLog").insert({
+                "userId": userId,
+                "action": "add",
+                "domain": domain,
+                "previousQuantity": domainCount,
+                "newQuantity": newQuantity,
+                "proratedAmount": 0,
+                "effectiveAt": effectiveAt
+            }).execute()
+            self._auditLog(
+                userId, "domain.added",
+                subscriptionId=subscriptionId,
+                status="active",
+                metadata={
+                    "domain": domain,
+                    "previousQuantity": domainCount,
+                    "newQuantity": newQuantity,
+                    "effectiveAt": effectiveAt
+                }
+            )
+            logger.info(f"Domain '{domain}' added for user {userId}, quantity {domainCount} -> {newQuantity}")
+            return {
+                "domains": currentExperts,
+                "quantity": newQuantity,
+                "effectiveAt": effectiveAt,
+                "pendingRemovals": pendingRemovals
+            }
+        except Exception as e:
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception
+
     def cancelSubscription(self, token: str, cancelAtCycleEnd: bool = True) -> dict:
         """
         Cancel a user's Razorpay subscription.
