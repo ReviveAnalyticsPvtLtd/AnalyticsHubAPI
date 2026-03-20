@@ -222,7 +222,8 @@ class SubscriptionService:
         Verify Razorpay subscription checkout signature.
 
         This method performs official HMAC SHA256 verification
-        using Razorpay API secret. 
+        using Razorpay API secret. On success, stores the domain
+        count and sets the subscription plan to 'pro'.
 
         Args:
             payload (dict): Razorpay checkout response payload.
@@ -232,9 +233,14 @@ class SubscriptionService:
             subscriptionId = payload.get("razorpaySubscriptionId")
             signature = payload.get("razorpaySignature")
             userId = payload.get("userId")
-            experts = payload.get("subscribedExperts")  
-            if not all([paymentId, subscriptionId, signature, userId, experts]):
+            domains = payload.get("domains")
+            if not all([paymentId, subscriptionId, signature, userId, domains]):
                 raise Exception("Missing Razorpay verification fields")
+            invalidDomains = set(domains) - self.VALID_DOMAINS
+            if invalidDomains:
+                raise Exception(f"Invalid domains: {', '.join(invalidDomains)}")
+            if len(domains) > 4:
+                raise Exception("Domain count must be between 1 and 4")
             message = f"{paymentId}|{subscriptionId}"
             expectedSignature = hmac.new(
                 os.environ["RAZORPAY_KEY_SECRET"].encode(),
@@ -247,17 +253,20 @@ class SubscriptionService:
             expiry = currentTime + datetime.timedelta(days=30)
             self.client.table("Users").update({
                 "razorpaySubscriptionId": subscriptionId,
-                "subscriptionPlan": "paid",
+                "subscriptionPlan": "pro",
                 "subscriptionStatus": "active",
                 "subscriptionStart": str(currentTime),
                 "subscriptionExpiry": str(expiry),
-                "subscribedExperts": ", ".join(experts)
+                "subscribedExperts": ", ".join(domains),
+                "domainCount": len(domains),
+                "pendingRemovals": []
             }).eq("userId", userId).execute()
             self._auditLog(
                 userId, "subscription.verified",
                 paymentId=paymentId,
                 subscriptionId=subscriptionId,
-                status="active"
+                status="active",
+                metadata={"domains": domains, "quantity": len(domains)}
             )
         except Exception as e:
             exception = CustomException(e)

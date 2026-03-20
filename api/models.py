@@ -144,7 +144,6 @@ class DeleteDashboardElement(BaseModel):
 
 class VerifySubscriptionRequest(BaseModel):
     domains: list[str]
-    subscribedExperts: list[str] | None = None
     razorpaySubscriptionId: str
     razorpayPaymentId: str 
     razorpaySignature: str 
