@@ -207,6 +207,30 @@ async def refund(payload: RefundRequest, token=Depends(verifyToken)):
         raiseHttpException(e)
 
 
+@router.get("/currentPlan")
+async def getCurrentPlan(token=Depends(verifyToken)):
+    """
+    Retrieve the current subscription plan details for the authenticated user.
+
+    Args:
+        token: Authorization token dependency.
+
+    Returns:
+        ORJSONResponse: Subscription state including domains, counts, and expiry.
+    """
+    try:
+        result = subscriptionService.getCurrentPlan(token=token)
+        return ORJSONResponse(
+            status_code=200,
+            content={
+                "status": "SUCCESS",
+                "data": result
+            }
+        )
+    except CustomException as e:
+        raiseHttpException(e)
+
+
 @router.get("/invoices")
 async def getInvoices(token=Depends(verifyToken)):
     """
