@@ -34,6 +34,7 @@ EVENT_HANDLERS = {
     "subscription.resumed": "_handleSubscriptionResumed",
     "subscription.pending": "_handleSubscriptionPending",
     "subscription.completed": "_handleSubscriptionCompleted",
+    "subscription.updated": "_handleSubscriptionUpdated",
     "payment.authorized": "_handlePaymentAuthorized",
     "payment.captured": "_handlePaymentCaptured",
     "payment.failed": "_handlePaymentFailed",
@@ -127,7 +128,7 @@ class WebhookService:
             dict | None: The user record or None if not found.
         """
         result = self.client.table("Users") \
-            .select("userId, email, fullName") \
+            .select("userId, email, fullName, pendingRemovals, subscribedExperts, domainCount") \
             .eq("razorpaySubscriptionId", subscriptionId) \
             .execute()
         return result.data[0] if result.data else None
@@ -236,6 +237,17 @@ class WebhookService:
             currency=paymentEntity.get("currency", "INR"),
             status="charged"
         )
+        pendingRemovals = user.get("pendingRemovals") or []
+        if pendingRemovals:
+            experts = user.get("subscribedExperts") or ""
+            currentExperts = [e.strip() for e in experts.split(",") if e.strip()]
+            updatedExperts = [e for e in currentExperts if e not in pendingRemovals]
+            self.client.table("Users").update({
+                "subscribedExperts": ", ".join(updatedExperts),
+                "domainCount": len(updatedExperts),
+                "pendingRemovals": []
+            }).eq("userId", user["userId"]).execute()
+            logger.info(f"Processed pending removals for user {user['userId']}: {pendingRemovals}")
         logger.info(f"Subscription charged for user {user['userId']}, expiry extended to {expiry}")
 
     def _storeInvoiceFromCharge(self, userId: str, paymentEntity: dict, subscriptionEntity: dict) -> None:
@@ -400,6 +412,35 @@ class WebhookService:
             subscriptionId=subscriptionId, status="expired"
         )
         logger.info(f"Subscription completed for user {user['userId']}")
+
+    def _handleSubscriptionUpdated(self, event: dict) -> None:
+        """
+        Handle the subscription.updated webhook event.
+
+        Syncs the local domainCount with the quantity reported by Razorpay
+        after a subscription edit (add/remove domain).
+
+        Args:
+            event (dict): The Razorpay webhook event.
+        """
+        subscriptionId = self._extractSubscriptionId(event)
+        user = self._findUserBySubscriptionId(subscriptionId)
+        if not user:
+            logger.error(f"No user found for subscription {subscriptionId}")
+            return
+        subscriptionEntity = event.get("payload", {}).get("subscription", {}).get("entity", {})
+        newQuantity = subscriptionEntity.get("quantity")
+        if newQuantity is not None:
+            self.client.table("Users").update({
+                "domainCount": newQuantity,
+            }).eq("userId", user["userId"]).execute()
+        self._auditLog(
+            user["userId"], "subscription.updated",
+            subscriptionId=subscriptionId,
+            status="updated",
+            metadata={"new_quantity": newQuantity}
+        )
+        logger.info(f"Subscription updated for user {user['userId']}, quantity: {newQuantity}")
 
     def _handlePaymentAuthorized(self, event: dict) -> None:
         """
