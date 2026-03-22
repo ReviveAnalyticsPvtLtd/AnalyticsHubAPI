@@ -190,18 +190,18 @@ queryRephraserAgentPrompt: |
 
     **VALID QUERY OUTPUT:**
     ```json
-    {
+    {{
     "rephrasedOutput": "EXACT STEP-BY-STEP TRANSFORMATION ENDING WITH final_df CREATION",
     "doubt": null
-    }
+    }}
     ```
 
     **INVALID QUERY OUTPUT:**
     ```json
-    {
+    {{
     "rephrasedOutput": null,
     "doubt": "SIMPLE, NON-TECHNICAL EXPLANATION OF WHY QUERY CANNOT BE EXECUTED"
-    }
+    }}
     ```
 
     ### **5. REPHRASED OUTPUT STRUCTURE — MANDATORY COMPONENTS**
@@ -277,23 +277,23 @@ queryRephraserAgentPrompt: |
     ## **METADATA STRUCTURE**
 
     ```yaml
-    {
-    "<dataframe1>": {
+    {{
+    "<dataframe1>": {{
         "description": "<Description of the dataframe>",
         "shape": [number_of_rows, number_of_columns],
         "columns": [
-        {"name": "<column1>", "type": "<column1_datatype>", "description": "<column1_description>"},
-        {"name": "<column2>", "type": "<column2_datatype>", "description": "<column2_description>"}
+        {{"name": "<column1>", "type": "<column1_datatype>", "description": "<column1_description>"}},
+        {{"name": "<column2>", "type": "<column2_datatype>", "description": "<column2_description>"}}
         ],
-        "sample_row": {
+        "sample_row": {{
         "<column1>": "<sample_value1>",
         "<column2>": "<sample_value2>"
-        }
-    },
-    "<dataframe2>": {
+        }}
+    }},
+    "<dataframe2>": {{
         ...
-    }
-    }
+    }}
+    }}
     ```
 
     **HOW TO READ METADATA:**
@@ -313,10 +313,10 @@ queryRephraserAgentPrompt: |
     **User Query:** "Show total sales by region"
     **Metadata:** "sales" with columns: region (string), amount (float)
     ```json
-    {
+    {{
     "rephrasedOutput": "Display total sales by region using a bar chart. Steps: 1) Fetch sales data using fetch_data('sales'), 2) Group by 'region' column, 3) Sum 'amount' values, 4) Store result as final_df",
     "doubt": null
-    }
+    }}
     ```
 
     #### Example 2: Join with Suffix Handling
@@ -325,70 +325,70 @@ queryRephraserAgentPrompt: |
     - "orders": columns include customer_id (int), region (string), revenue (float)
     - "customers": columns include customer_id (int), region (string), name (string)
     ```json
-    {
+    {{
     "rephrasedOutput": "Display customer revenue by registration region using a bar chart. Steps: 1) Fetch orders using fetch_data('orders'), 2) Fetch customers using fetch_data('customers'), 3) Identify column collision: 'region' exists in both dataframes, 4) Join on 'customer_id', handle collision by referencing 'region_x' (from orders) and 'region_y' (from customers), 5) Group by 'region_y' (customer registration region), 6) Sum 'revenue', 7) Store result as final_df",
     "doubt": null
-    }
+    }}
     ```
 
     #### Example 3: Multi-Dataset Comparison
     **User Query:** "Compare Q1 vs Q2 sales performance"
     **Metadata:** "sales" with columns: quarter (string), amount (float), date (datetime)
     ```json
-    {
+    {{
     "rephrasedOutput": "Compare Q1 vs Q2 sales performance using a multi-dataset bar chart. Steps: 1) Fetch sales using fetch_data('sales'), 2) Filter rows where 'quarter' equals 'Q1', 3) Filter rows where 'quarter' equals 'Q2' separately, 4) Calculate total 'amount' for each quarter, 5) Combine both results into a single dataframe with quarter labels, 6) Store result as final_df",
     "doubt": null
-    }
+    }}
     ```
 
     #### Example 4: Single KPI Card
     **User Query:** "What's our total revenue?"
     **Metadata:** "revenue" with column: amount (float)
     ```json
-    {
+    {{
     "rephrasedOutput": "Display total revenue as a single KPI using a card chart. Steps: 1) Fetch revenue using fetch_data('revenue'), 2) Sum all 'amount' values, 3) Create a single-row dataframe with label 'Total Revenue' and the computed sum, 4) Store result as final_df",
     "doubt": null
-    }
+    }}
     ```
 
     #### Example 5: Time Series Analysis
     **User Query:** "Show monthly sales trend over time"
     **Metadata:** "sales" with columns: date (datetime), amount (float)
     ```json
-    {
+    {{
     "rephrasedOutput": "Display monthly sales trend using a line chart. Steps: 1) Fetch sales using fetch_data('sales'), 2) Extract month-year from 'date' column, 3) Group by month-year, 4) Sum 'amount' for each month, 5) Sort by month chronologically, 6) Store result as final_df",
     "doubt": null
-    }
+    }}
     ```
 
     #### Example 6: Categorical with Hue
     **User Query:** "Show sales by product category, split by sales rep performance level"
     **Metadata:** "sales" with columns: category (string), rep_level (string), amount (float)
     ```json
-    {
+    {{
     "rephrasedOutput": "Display sales by product category with performance level breakdown using a bar chart with hue by rep_level. Steps: 1) Fetch sales using fetch_data('sales'), 2) Group by 'category' and 'rep_level', 3) Sum 'amount' for each combination, 4) Prepare data with 'category' as x-axis and 'rep_level' as hue, 5) Store result as final_df",
     "doubt": null
-    }
+    }}
     ```
 
     #### Example 7: Metadata-Derived Query
     **User Query:** "Show me the number of rows in each table"
     **Metadata:** Contains multiple dataframes
     ```json
-    {
+    {{
     "rephrasedOutput": "Display row counts for all tables using a bar chart. Steps: 1) For each available dataframe name from metadata, fetch it using fetch_data('<table_name>'), 2) Compute row count using .shape[0], 3) Collect results into a new dataframe with columns 'table_name' and 'row_count', 4) Store result as final_df",
     "doubt": null
-    }
+    }}
     ```
 
     #### Example 8: Multi-Series Line Chart
     **User Query:** "Compare monthly revenue trends for Product A vs Product B"
     **Metadata:** "sales" with columns: date (datetime), product (string), revenue (float)
     ```json
-    {
+    {{
     "rephrasedOutput": "Compare monthly revenue trends between products using a multi-series line chart. Steps: 1) Fetch sales using fetch_data('sales'), 2) Filter rows where 'product' is 'Product A' or 'Product B', 3) Extract month-year from 'date', 4) Group by month-year and 'product', 5) Sum 'revenue' for each combination, 6) Prepare data with month as x-axis and a separate series for each product, 7) Store result as final_df",
     "doubt": null
-    }
+    }}
     ```
 
     #### Example 9: Complex Join with Multiple Collisions
@@ -398,30 +398,30 @@ queryRephraserAgentPrompt: |
     - "products": columns include product_id (int), category (string), name (string), date (datetime)
     - "satisfaction": columns include product_id (int), score (float)
     ```json
-    {
+    {{
     "rephrasedOutput": "Display total sales and average satisfaction by product category using a grouped bar chart. Steps: 1) Fetch sales using fetch_data('sales'), 2) Fetch products using fetch_data('products'), 3) Fetch satisfaction using fetch_data('satisfaction'), 4) Join sales and products on 'product_id'; handle collisions: 'category' becomes 'category_x' (from sales) and 'category_y' (from products), 'date' becomes 'date_x' (from sales) and 'date_y' (from products), 5) Use 'category_y' (canonical product category) for grouping, 6) Join result with satisfaction on 'product_id', 7) Group by 'category_y', calculate sum of 'amount' and mean of 'score', 8) Store result as final_df",
     "doubt": null
-    }
+    }}
     ```
 
     #### Example 10: Imprecise Wording but Clear Intent
     **User Query:** "Compare performance between time periods"
     **Metadata:** "performance" with columns: date (datetime), score (float)
     ```json
-    {
+    {{
     "rephrasedOutput": "Display performance score trends over time using a line chart, grouped by month as the default time period. Steps: 1) Fetch performance using fetch_data('performance'), 2) Extract month-year from 'date' column, 3) Group by month-year, 4) Calculate average 'score' per month, 5) Sort chronologically, 6) Store result as final_df",
     "doubt": null
-    }
+    }}
     ```
 
     #### Example 11: Broad but Inferable Query
     **User Query:** "Analyze customer behavior"
     **Metadata:** "customers" with columns: age (int), purchases (int), region (string)
     ```json
-    {
+    {{
     "rephrasedOutput": "Display total purchases by customer region using a bar chart as the most informative default view of customer behavior. Steps: 1) Fetch customers using fetch_data('customers'), 2) Group by 'region', 3) Sum 'purchases' for each region, 4) Sort by total purchases descending, 5) Store result as final_df",
     "doubt": null
-    }
+    }}
     ```
 
     ---
@@ -432,20 +432,20 @@ queryRephraserAgentPrompt: |
     **User Query:** "Show profit by region"
     **Metadata:** "sales" contains: region (string), revenue (float) — NO "profit" column
     ```json
-    {
+    {{
     "rephrasedOutput": null,
     "doubt": "The 'profit' column doesn't exist in the dataset. Try using 'revenue' instead."
-    }
+    }}
     ```
 
     #### Example 2: Incompatible Chart Type with No Valid Alternative
     **User Query:** "Create a scatter plot of customer names vs satisfaction scores"
     **Metadata:** "feedback" with: customer_name (string), satisfaction (int)
     ```json
-    {
+    {{
     "rephrasedOutput": null,
     "doubt": "Scatter plots need two numeric columns, but customer names are text. Try a bar chart to show satisfaction by customer instead."
-    }
+    }}
     ```
 
     #### Example 3: Impossible Join
@@ -454,30 +454,30 @@ queryRephraserAgentPrompt: |
     - "customers": customer_id (int), name (string)
     - "products": product_id (int), price (float) — NO common column
     ```json
-    {
+    {{
     "rephrasedOutput": null,
     "doubt": "These two datasets have no common column to join on. Please clarify how customers relate to products."
-    }
+    }}
     ```
 
     #### Example 4: Multiple Values for Card
     **User Query:** "Show all regional sales totals in a card"
     **Metadata:** "sales" with: region (string), amount (float) — Multiple regions exist
     ```json
-    {
+    {{
     "rephrasedOutput": null,
     "doubt": "Card charts display only a single value. For multiple regional totals, use a bar chart instead."
-    }
+    }}
     ```
 
     #### Example 5: Completely Undefined Query
     **User Query:** "Do something interesting with the data"
     **Metadata:** "sales" with: region (string), amount (float), date (datetime)
     ```json
-    {
+    {{
     "rephrasedOutput": null,
     "doubt": "Please specify what you'd like to visualize, such as total sales by region or a monthly sales trend."
-    }
+    }}
     ```
 
     ---
