@@ -1,8 +1,9 @@
 """
 imageToInsights.py
 
-This module provides the ImageToInsights class for analyzing base64-encoded dashboard images 
-and extracting meaningful, structured insights using a language model via the Groq API.
+This module provides the ImageToInsights class for analyzing base64-encoded dashboard images
+and extracting meaningful, structured insights using a vision-capable model via OpenRouter
+(OpenAI-compatible API).
 
 It handles prompt loading, model configuration, image input formatting, and safe API interaction.
 """
@@ -15,7 +16,7 @@ from utils.exceptionHandler import CustomException
 from analyticsHub.utils import readYaml, getConfig
 from dataclasses import dataclass
 from utils.logger import logger
-from groq import Groq
+from openai import OpenAI
 import os
 
 @dataclass
@@ -42,13 +43,16 @@ class ImageToInsights:
         Initializes the ImageToInsights instance:
             - Loads system prompt from YAML
             - Loads model configuration from config file
-            - Sets up the Groq API client
+            - Sets up the OpenRouter client (OpenAI-compatible)
         """
         logger.info("Initializing image-to-insight model.")
         self.imageToInsightsConfig = ImageToInsightsConfig()
         self.config = getConfig(self.imageToInsightsConfig.configPath)
         self.prompt = readYaml(filePath=self.imageToInsightsConfig.yamlPath).get("imageToInsightGeneratorPrompt")
-        self.client = Groq()
+        self.client = OpenAI(
+            base_url=os.environ.get("OPENROUTER_BASE_URL"),
+            api_key=os.environ.get("OPENAI_API_KEY"),
+        )
 
     def getInsights(self, b64String: str) -> str:
         """
@@ -91,7 +95,7 @@ class ImageToInsights:
                     }
                 ],
                 temperature=1,
-                max_completion_tokens=1024,
+                max_tokens=1024,
                 top_p=1,
                 stream=False,
                 stop=None,
