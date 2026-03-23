@@ -55,6 +55,14 @@ class SpeechToTextModel(BaseModel):
 
 class ImageToInsightsModel(BaseModel):
     b64String: str
+    projectId: str
+    pageId: str | None = None
+    widgetIds: list[str] | None = None
+    filters: list[dict] | None = None
+    dateRange: dict | None = None
+    audience: str = "owner"
+    businessGoals: list[str] | None = None
+    decisionFocus: str | None = None
 
 class DeleteTable(BaseModel):
     projectId: str
@@ -166,3 +174,8 @@ class DeleteQuery(BaseModel):
 class RenameProject(BaseModel):
     projectId: str
     newProjectName: str
+
+class UpdateDashboardInsightStatus(BaseModel):
+    projectId: str
+    insightId: str
+    status: str

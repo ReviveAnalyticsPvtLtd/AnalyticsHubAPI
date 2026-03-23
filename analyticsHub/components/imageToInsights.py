@@ -5,18 +5,21 @@ This module provides the ImageToInsights class for analyzing base64-encoded dash
 and extracting meaningful, structured insights using a vision-capable model via OpenRouter
 (OpenAI-compatible API).
 
-It handles prompt loading, model configuration, image input formatting, and safe API interaction.
+Supports a hybrid mode where chart data, statistical signals, and domain context are injected
+alongside the image to produce evidence-backed, structured JSON insights.
 """
 
 __version__ = "1.0.0"
 __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["ImageToInsights"]
 
+from utils.llmOutputParser import parseModelJsonOutput
 from utils.exceptionHandler import CustomException
 from analyticsHub.utils import readYaml, getConfig
 from dataclasses import dataclass
 from utils.logger import logger
 from openai import OpenAI
+import json
 import os
 
 @dataclass
@@ -37,6 +40,7 @@ class ImageToInsights:
     crisp, business-relevant insights using a language model.
 
     The analysis is guided by a custom system prompt defined in a YAML configuration file.
+    When context is provided, the component operates in hybrid mode producing structured JSON output.
     """
     def __init__(self):
         """
@@ -54,22 +58,84 @@ class ImageToInsights:
             api_key=os.environ.get("OPENAI_API_KEY"),
         )
 
-    def getInsights(self, b64String: str) -> str:
+    def _buildContextMessage(self, context: dict) -> str:
+        """
+        Serializes the context payload into a compact text block for the user message.
+
+        Args:
+            context (dict): Context payload from InsightContextBuilder + SignalEngine.
+
+        Returns:
+            str: Formatted context string for LLM consumption.
+        """
+        sections = []
+
+        chartData = context.get("chartData", [])
+        if chartData:
+            sections.append(f"## chart_json_data\n{json.dumps(chartData, default=str, indent=2)}")
+
+        stats = context.get("statisticalSummary", {})
+        if stats:
+            sections.append(f"## statistical_summary\n{json.dumps(stats, default=str, indent=2)}")
+
+        domain = context.get("domainContext", {})
+        if domain:
+            sections.append(f"## domain_context\n{json.dumps(domain, default=str, indent=2)}")
+
+        objectives = context.get("objectiveContext", {})
+        audience = objectives.get("audience", "owner")
+        goals = objectives.get("businessGoals", [])
+        focus = objectives.get("decisionFocus")
+
+        sections.append(f"## audience\n{audience}")
+        if goals:
+            sections.append(f"## business_goals\n{json.dumps(goals)}")
+        if focus:
+            sections.append(f"## decision_focus\n{focus}")
+
+        return "\n\n".join(sections)
+
+    def getInsights(self, b64String: str, context: dict | None = None) -> dict | str:
         """
         Processes a base64-encoded image string (e.g., a dashboard screenshot)
         and returns extracted insights based on the model's interpretation.
 
+        When context is provided, operates in hybrid mode: injects chart data,
+        statistical signals, and domain context into the prompt and returns
+        structured JSON output parsed into a dict.
+
         Args:
             b64String (str): A base64-encoded PNG image string representing a dashboard.
+            context (dict | None): Optional context payload containing chartData,
+                statisticalSummary, domainContext, and objectiveContext.
 
         Returns:
-            str: Text containing structured insights extracted from the image.
+            dict: Structured insights (when context is provided) with keys
+                diagnostic_insights, prescriptive_actions, missing_data.
+            str: Raw insight text (legacy mode, when context is None).
 
         Raises:
             CustomException: If insight generation fails or any error occurs during processing.
         """
         try:
             logger.info("Generating insights from image.")
+
+            userContent = [
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": "data:image/png;base64," + b64String
+                    }
+                }
+            ]
+
+            if context:
+                contextText = self._buildContextMessage(context)
+                userContent.append({
+                    "type": "text",
+                    "text": contextText
+                })
+
             completion = self.client.chat.completions.create(
                 model=self.config.get("IMAGETOINSIGHTS", "model"),
                 messages=[
@@ -84,23 +150,22 @@ class ImageToInsights:
                     },
                     {
                         "role": "user",
-                        "content": [
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": "data:image/png;base64," + b64String
-                                }
-                            }
-                        ]
+                        "content": userContent
                     }
                 ],
-                temperature=1,
-                max_tokens=1024,
+                temperature=self.config.getfloat("IMAGETOINSIGHTS", "temperature"),
+                max_tokens=self.config.getint("IMAGETOINSIGHTS", "maxTokens"),
                 top_p=1,
                 stream=False,
                 stop=None,
             )
-            return completion.choices[0].message.content
+
+            rawOutput = completion.choices[0].message.content
+
+            if context:
+                return parseModelJsonOutput(rawOutput, "Image-to-insights")
+
+            return rawOutput
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)

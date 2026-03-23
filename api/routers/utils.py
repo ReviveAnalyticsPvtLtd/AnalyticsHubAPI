@@ -1,7 +1,9 @@
 """
 API router for utility operations.
 
-This module provides endpoints for speech transcription, sending forecasts, temporary functions, and websocket task status updates.
+This module provides endpoints for speech transcription, hybrid image-to-insights generation,
+dashboard insight retrieval and lifecycle management, sending forecasts, temporary functions,
+and websocket task status updates.
 """
 
 __version__ = "1.0.0"
@@ -11,7 +13,7 @@ __all__ = ["router"]
 
 from utils.exceptionHandler import CustomException, raiseHttpException
 from fastapi import status, APIRouter, Depends, WebSocket, WebSocketDisconnect
-from api.models import SpeechToTextModel, ImageToInsightsModel
+from api.models import SpeechToTextModel, ImageToInsightsModel, UpdateDashboardInsightStatus
 from fastapi.security import HTTPAuthorizationCredentials
 from api.services.utilityService import utilityService
 from analyticsHub.triggers.celery import celeryApp
@@ -45,18 +47,61 @@ async def getSpeechTranscript(speechToText: SpeechToTextModel, token = Depends(v
 @router.post("/getInsightsFromImage")
 async def getInsightsFromImage(imageToInsights: ImageToInsightsModel, token = Depends(verifyToken)):
     """
-    Extract strategic business insights from a base64-encoded image of a dashboard.
+    Extract structured, evidence-backed business insights from a base64-encoded
+    dashboard image using the hybrid data + statistics + domain + LLM pipeline.
 
     Args:
-        imageToInsights (ImageToInsightsModel): Input model containing the base64-encoded image string.
+        imageToInsights (ImageToInsightsModel): Input model containing the base64 image,
+            project context, and user objectives.
         token: Authorization token dependency (for access control).
 
     Returns:
-        ORJSONResponse: A JSON response containing the extracted insight text or an error message.
+        ORJSONResponse: Structured JSON with diagnostic_insights, prescriptive_actions,
+            and missing_data.
     """
     try:
-        insightText = utilityService.getInsightsFromImage(imageToInsights=imageToInsights)
-        return ORJSONResponse(status_code=200, content={"insightText": insightText})
+        insights = utilityService.getInsightsFromImage(imageToInsights=imageToInsights)
+        return ORJSONResponse(status_code=200, content={"insights": insights})
+    except CustomException as e:
+        raiseHttpException(e)
+
+@router.get("/getDashboardInsights/{projectId}")
+async def getDashboardInsights(projectId: str, token = Depends(verifyToken)):
+    """
+    Retrieve all persisted dashboard insights for a project.
+
+    Args:
+        projectId (str): The project identifier.
+        token: Authorization token dependency.
+
+    Returns:
+        ORJSONResponse: List of insight records with status lifecycle.
+    """
+    try:
+        records = utilityService.getDashboardInsights(projectId=projectId)
+        return ORJSONResponse(status_code=200, content={"insights": records})
+    except CustomException as e:
+        raiseHttpException(e)
+
+@router.patch("/updateDashboardInsightStatus")
+async def updateDashboardInsightStatus(body: UpdateDashboardInsightStatus, token = Depends(verifyToken)):
+    """
+    Update the lifecycle status of a persisted dashboard insight.
+
+    Args:
+        body (UpdateDashboardInsightStatus): Model containing projectId, insightId, and new status.
+        token: Authorization token dependency.
+
+    Returns:
+        ORJSONResponse: The updated insight record.
+    """
+    try:
+        record = utilityService.updateDashboardInsightStatus(
+            projectId=body.projectId,
+            insightId=body.insightId,
+            status=body.status,
+        )
+        return ORJSONResponse(status_code=200, content={"insight": record})
     except CustomException as e:
         raiseHttpException(e)
 
