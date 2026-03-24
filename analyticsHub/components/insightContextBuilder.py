@@ -119,10 +119,6 @@ class InsightContextBuilder:
         pageId: str | None = None,
         widgetIds: list[str] | None = None,
         filters: list[dict] | None = None,
-        dateRange: dict | None = None,
-        businessGoals: list[str] | None = None,
-        decisionFocus: str | None = None,
-        audience: str = "owner",
     ) -> dict:
         """
         Assembles the full context payload for insight generation.
@@ -132,13 +128,9 @@ class InsightContextBuilder:
             pageId (str | None): Optional dashboard page to focus on.
             widgetIds (list[str] | None): Optional widget IDs to restrict chart data.
             filters (list[dict] | None): Active dashboard filters.
-            dateRange (dict | None): Active date range selection.
-            businessGoals (list[str] | None): User-provided business objectives.
-            decisionFocus (str | None): Decision focus area (growth, cost, risk, retention, efficiency).
-            audience (str): Target audience — "owner" or "analyst".
 
         Returns:
-            dict: Context payload with keys: metadata, dashboard, chartData, domainContext, objectiveContext.
+            dict: Context payload with keys: metadata, dashboard, chartData, domainContext, filters.
 
         Raises:
             CustomException: If a critical error prevents context assembly.
@@ -166,13 +158,7 @@ class InsightContextBuilder:
                 },
                 "chartData": chartData,
                 "domainContext": domainContext,
-                "objectiveContext": {
-                    "audience": audience,
-                    "businessGoals": businessGoals or [],
-                    "decisionFocus": decisionFocus,
-                    "filters": filters or [],
-                    "dateRange": dateRange,
-                },
+                "filters": filters or [],
             }
 
             logger.info(f"Insight context assembled: {len(chartData)} widgets, domain={'present' if domainContext else 'absent'}.")

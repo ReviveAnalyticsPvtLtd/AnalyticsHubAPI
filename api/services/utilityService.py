@@ -94,10 +94,6 @@ class UtilityService:
                 pageId=imageToInsights.pageId,
                 widgetIds=imageToInsights.widgetIds,
                 filters=imageToInsights.filters,
-                dateRange=imageToInsights.dateRange,
-                businessGoals=imageToInsights.businessGoals,
-                decisionFocus=imageToInsights.decisionFocus,
-                audience=imageToInsights.audience,
             )
 
             statisticalSummary = self.signalEngine.buildStatisticalSummary(
@@ -113,7 +109,6 @@ class UtilityService:
             self._persistDashboardInsight(
                 projectId=imageToInsights.projectId,
                 pageId=imageToInsights.pageId,
-                audience=imageToInsights.audience,
                 insights=insights,
             )
 
@@ -123,14 +118,13 @@ class UtilityService:
             logger.error(exception)
             raise exception
 
-    def _persistDashboardInsight(self, projectId: str, pageId: str | None, audience: str, insights: dict) -> None:
+    def _persistDashboardInsight(self, projectId: str, pageId: str | None, insights: dict) -> None:
         """
         Persists a generated insight record to dashboardInsights.json in project storage.
 
         Args:
             projectId (str): The project identifier.
             pageId (str | None): The dashboard page the insight was generated for.
-            audience (str): The target audience of the insight.
             insights (dict): The structured insight payload.
         """
         try:
@@ -138,7 +132,6 @@ class UtilityService:
                 "id": str(uuid.uuid4()),
                 "pageId": pageId,
                 "generatedAt": datetime.now(timezone.utc).isoformat(),
-                "audience": audience,
                 "insights": insights,
                 "status": "new",
             }

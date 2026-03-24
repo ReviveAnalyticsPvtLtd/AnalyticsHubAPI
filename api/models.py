@@ -59,10 +59,6 @@ class ImageToInsightsModel(BaseModel):
     pageId: str | None = None
     widgetIds: list[str] | None = None
     filters: list[dict] | None = None
-    dateRange: dict | None = None
-    audience: str = "owner"
-    businessGoals: list[str] | None = None
-    decisionFocus: str | None = None
 
 class DeleteTable(BaseModel):
     projectId: str

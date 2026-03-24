@@ -82,17 +82,6 @@ class ImageToInsights:
         if domain:
             sections.append(f"## domain_context\n{json.dumps(domain, default=str, indent=2)}")
 
-        objectives = context.get("objectiveContext", {})
-        audience = objectives.get("audience", "owner")
-        goals = objectives.get("businessGoals", [])
-        focus = objectives.get("decisionFocus")
-
-        sections.append(f"## audience\n{audience}")
-        if goals:
-            sections.append(f"## business_goals\n{json.dumps(goals)}")
-        if focus:
-            sections.append(f"## decision_focus\n{focus}")
-
         return "\n\n".join(sections)
 
     def getInsights(self, b64String: str, context: dict | None = None) -> dict | str:
