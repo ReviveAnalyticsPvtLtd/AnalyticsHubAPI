@@ -12,7 +12,7 @@ __all__ = ["recalculateSubscriptionDays", "syncSubscriptionStatuses"]
 
 
 from supabase import create_client
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dateutil import parser
 from loguru import logger
 import razorpay
@@ -61,7 +61,7 @@ def recalculateSubscriptionDays() -> None:
     """
     edgeFunctionUrl = os.environ["FREE_TRIAL_EXPIRY_WARNING_EMAIL_URL"]
     client = _getSupabaseClient()
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     users = client.table("Users") \
         .select("userId, email, fullName, subscriptionStart, subscriptionExpiry, subscriptionDaysLeft, gracePeriodEnd, subscriptionStatus") \
         .not_.is_("subscriptionExpiry", "null") \
@@ -69,11 +69,20 @@ def recalculateSubscriptionDays() -> None:
     for user in users:
         expiryRaw = user["subscriptionExpiry"]
         expiry = parser.parse(expiryRaw)
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        else:
+            expiry = expiry.astimezone(timezone.utc)
         deltaDays = (expiry.date() - now.date()).days
         if deltaDays < 0:
             gracePeriodEnd = user.get("gracePeriodEnd")
             if gracePeriodEnd:
-                graceDelta = (parser.parse(gracePeriodEnd).date() - now.date()).days
+                parsedGraceEnd = parser.parse(gracePeriodEnd)
+                if parsedGraceEnd.tzinfo is None:
+                    parsedGraceEnd = parsedGraceEnd.replace(tzinfo=timezone.utc)
+                else:
+                    parsedGraceEnd = parsedGraceEnd.astimezone(timezone.utc)
+                graceDelta = (parsedGraceEnd.date() - now.date()).days
                 if graceDelta >= 0:
                     newDaysLeft = 0
                 else:
@@ -84,7 +93,7 @@ def recalculateSubscriptionDays() -> None:
             else:
                 newGracePeriodEnd = now + timedelta(days=GRACE_PERIOD_DAYS)
                 client.table("Users").update({
-                    "gracePeriodEnd": str(newGracePeriodEnd),
+                    "gracePeriodEnd": newGracePeriodEnd.isoformat(),
                 }).eq("userId", user["userId"]).execute()
                 newDaysLeft = 0
         else:
@@ -100,7 +109,7 @@ def recalculateSubscriptionDays() -> None:
                 fullName = user["fullName"],
                 subscriptionStart = user["subscriptionStart"]
             )
-    logger.info("Subscription days recalculation completed (local time)")
+    logger.info("Subscription days recalculation completed (UTC)")
     return
 
 

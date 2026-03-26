@@ -12,6 +12,7 @@ __all__ = ["router"]
 
 
 from utils.exceptionHandler import CustomException, raiseHttpException
+from utils.webhookExceptions import RetryableWebhookError
 from api.services.webhookService import webhookService
 from fastapi.responses import ORJSONResponse
 from fastapi import APIRouter, HTTPException, Request
@@ -50,5 +51,13 @@ async def razorpayWebhook(request: Request):
         )
     except HTTPException:
         raise
+    except RetryableWebhookError as e:
+        raiseHttpException(
+            CustomException(
+                exception=e,
+                statusCode=503,
+                uiMessage="Webhook processing dependency unresolved. Retrying later."
+            )
+        )
     except CustomException as e:
         raiseHttpException(e)

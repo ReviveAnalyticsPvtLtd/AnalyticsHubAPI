@@ -13,6 +13,7 @@ __all__ = ["webhookService"]
 
 
 from utils.exceptionHandler import CustomException
+from utils.webhookExceptions import RetryableWebhookError
 from utils.logger import logger
 from api.commons import client
 import datetime
@@ -89,8 +90,8 @@ class WebhookService:
         Args:
             event (dict): The parsed Razorpay webhook event payload.
         """
+        eventId = event.get("event_id") or event.get("id", "")
         try:
-            eventId = event.get("event_id") or event.get("id", "")
             eventType = event.get("event", "")
             if not eventId or not eventType:
                 logger.error("Webhook event missing event_id or event type.")
@@ -104,11 +105,21 @@ class WebhookService:
             else:
                 logger.info(f"Unhandled webhook event type: {eventType}")
             self._markWebhookEventCompleted(eventId=eventId)
+        except RetryableWebhookError as e:
+            try:
+                if eventId:
+                    self._markWebhookEventFailed(
+                        eventId=eventId,
+                        errorMessage=str(e)
+                    )
+            except Exception as markError:
+                logger.error(f"Failed to mark webhook event as failed: {markError}")
+            raise
         except Exception as e:
             try:
-                if event.get("event_id") or event.get("id", ""):
+                if eventId:
                     self._markWebhookEventFailed(
-                        eventId=event.get("event_id") or event.get("id", ""),
+                        eventId=eventId,
                         errorMessage=str(e)
                     )
             except Exception as markError:
@@ -256,6 +267,26 @@ class WebhookService:
             .execute()
         return result.data[0] if result.data else None
 
+    def _requireUserBySubscriptionId(self, subscriptionId: str, eventType: str) -> dict:
+        """
+        Resolve user by subscription ID or raise a retryable webhook error.
+
+        Args:
+            subscriptionId (str): Razorpay subscription ID from webhook payload.
+            eventType (str): Webhook event type for logging context.
+
+        Returns:
+            dict: The resolved user record.
+        """
+        if not subscriptionId:
+            raise RetryableWebhookError(f"Missing subscription_id for webhook event {eventType}")
+        user = self._findUserBySubscriptionId(subscriptionId)
+        if not user:
+            raise RetryableWebhookError(
+                f"No user found for subscription {subscriptionId} during {eventType}"
+            )
+        return user
+
     def _auditLog(self, userId: str, action: str, **kwargs) -> None:
         """
         Insert a row into the PaymentAuditLog table.
@@ -303,10 +334,7 @@ class WebhookService:
             event (dict): The Razorpay webhook event.
         """
         subscriptionId = self._extractSubscriptionId(event)
-        user = self._findUserBySubscriptionId(subscriptionId)
-        if not user:
-            logger.error(f"No user found for subscription {subscriptionId}")
-            return
+        user = self._requireUserBySubscriptionId(subscriptionId, "subscription.activated")
         currentTime = datetime.datetime.utcnow()
         self.client.table("Users").update({
             "subscriptionStatus": "active",
@@ -329,10 +357,7 @@ class WebhookService:
             event (dict): The Razorpay webhook event.
         """
         subscriptionId = self._extractSubscriptionId(event)
-        user = self._findUserBySubscriptionId(subscriptionId)
-        if not user:
-            logger.error(f"No user found for subscription {subscriptionId}")
-            return
+        user = self._requireUserBySubscriptionId(subscriptionId, "subscription.charged")
         payload = event.get("payload", {})
         paymentEntity = payload.get("payment", {}).get("entity", {})
         subscriptionEntity = payload.get("subscription", {}).get("entity", {})
@@ -385,25 +410,49 @@ class WebhookService:
         invoiceId = paymentEntity.get("invoice_id")
         if not invoiceId:
             return
-        billingStart = subscriptionEntity.get("current_start")
-        billingEnd = subscriptionEntity.get("current_end")
-        paidAt = paymentEntity.get("captured_at") or paymentEntity.get("created_at")
-        try:
-            self.client.table("Invoices").insert({
-                "userId": userId,
-                "razorpayInvoiceId": invoiceId,
-                "razorpaySubscriptionId": subscriptionEntity.get("id"),
-                "razorpayPaymentId": paymentEntity.get("id"),
+        self._upsertInvoiceRecord(
+            userId=userId,
+            invoiceData={
+                "id": invoiceId,
+                "subscription_id": subscriptionEntity.get("id"),
+                "payment_id": paymentEntity.get("id"),
                 "amount": paymentEntity.get("amount", 0),
                 "currency": paymentEntity.get("currency", "INR"),
                 "status": "paid",
+                "billing_start": subscriptionEntity.get("current_start"),
+                "billing_end": subscriptionEntity.get("current_end"),
+                "paid_at": paymentEntity.get("captured_at") or paymentEntity.get("created_at"),
+                "short_url": paymentEntity.get("short_url"),
+            }
+        )
+
+    def _upsertInvoiceRecord(self, userId: str, invoiceData: dict) -> None:
+        """
+        Store or update an invoice record from webhook payload data.
+
+        Args:
+            userId (str): The user ID.
+            invoiceData (dict): Invoice-shaped payload data.
+        """
+        billingStart = invoiceData.get("billing_start")
+        billingEnd = invoiceData.get("billing_end")
+        paidAt = invoiceData.get("paid_at")
+        try:
+            self.client.table("Invoices").upsert({
+                "userId": userId,
+                "razorpayInvoiceId": invoiceData.get("id"),
+                "razorpaySubscriptionId": invoiceData.get("subscription_id"),
+                "razorpayPaymentId": invoiceData.get("payment_id"),
+                "amount": invoiceData.get("amount", 0),
+                "currency": invoiceData.get("currency", "INR"),
+                "status": invoiceData.get("status", "paid"),
                 "billingStart": str(datetime.datetime.utcfromtimestamp(billingStart)) if billingStart else None,
                 "billingEnd": str(datetime.datetime.utcfromtimestamp(billingEnd)) if billingEnd else None,
                 "paidAt": str(datetime.datetime.utcfromtimestamp(paidAt)) if paidAt else None,
-                "shortUrl": paymentEntity.get("short_url"),
-            }).execute()
+                "shortUrl": invoiceData.get("short_url"),
+            }, on_conflict="razorpayInvoiceId").execute()
         except Exception as e:
-            logger.error(f"Failed to store invoice {invoiceId} for user {userId}: {e}")
+            logger.error(f"Failed to upsert invoice {invoiceData.get('id')} for user {userId}: {e}")
 
     def _handleSubscriptionHalted(self, event: dict) -> None:
         """
@@ -415,10 +464,7 @@ class WebhookService:
             event (dict): The Razorpay webhook event.
         """
         subscriptionId = self._extractSubscriptionId(event)
-        user = self._findUserBySubscriptionId(subscriptionId)
-        if not user:
-            logger.error(f"No user found for subscription {subscriptionId}")
-            return
+        user = self._requireUserBySubscriptionId(subscriptionId, "subscription.halted")
         gracePeriodEnd = datetime.datetime.utcnow() + datetime.timedelta(days=GRACE_PERIOD_DAYS)
         self.client.table("Users").update({
             "subscriptionStatus": "halted",
@@ -439,10 +485,7 @@ class WebhookService:
             event (dict): The Razorpay webhook event.
         """
         subscriptionId = self._extractSubscriptionId(event)
-        user = self._findUserBySubscriptionId(subscriptionId)
-        if not user:
-            logger.error(f"No user found for subscription {subscriptionId}")
-            return
+        user = self._requireUserBySubscriptionId(subscriptionId, "subscription.cancelled")
         self.client.table("Users").update({
             "subscriptionStatus": "cancelled",
         }).eq("userId", user["userId"]).execute()
@@ -460,10 +503,7 @@ class WebhookService:
             event (dict): The Razorpay webhook event.
         """
         subscriptionId = self._extractSubscriptionId(event)
-        user = self._findUserBySubscriptionId(subscriptionId)
-        if not user:
-            logger.error(f"No user found for subscription {subscriptionId}")
-            return
+        user = self._requireUserBySubscriptionId(subscriptionId, "subscription.paused")
         self.client.table("Users").update({
             "subscriptionStatus": "paused",
         }).eq("userId", user["userId"]).execute()
@@ -481,10 +521,7 @@ class WebhookService:
             event (dict): The Razorpay webhook event.
         """
         subscriptionId = self._extractSubscriptionId(event)
-        user = self._findUserBySubscriptionId(subscriptionId)
-        if not user:
-            logger.error(f"No user found for subscription {subscriptionId}")
-            return
+        user = self._requireUserBySubscriptionId(subscriptionId, "subscription.resumed")
         self.client.table("Users").update({
             "subscriptionStatus": "active",
         }).eq("userId", user["userId"]).execute()
@@ -502,10 +539,7 @@ class WebhookService:
             event (dict): The Razorpay webhook event.
         """
         subscriptionId = self._extractSubscriptionId(event)
-        user = self._findUserBySubscriptionId(subscriptionId)
-        if not user:
-            logger.error(f"No user found for subscription {subscriptionId}")
-            return
+        user = self._requireUserBySubscriptionId(subscriptionId, "subscription.pending")
         self.client.table("Users").update({
             "subscriptionStatus": "pending",
         }).eq("userId", user["userId"]).execute()
@@ -523,10 +557,7 @@ class WebhookService:
             event (dict): The Razorpay webhook event.
         """
         subscriptionId = self._extractSubscriptionId(event)
-        user = self._findUserBySubscriptionId(subscriptionId)
-        if not user:
-            logger.error(f"No user found for subscription {subscriptionId}")
-            return
+        user = self._requireUserBySubscriptionId(subscriptionId, "subscription.completed")
         self.client.table("Users").update({
             "subscriptionStatus": "expired",
         }).eq("userId", user["userId"]).execute()
@@ -547,10 +578,7 @@ class WebhookService:
             event (dict): The Razorpay webhook event.
         """
         subscriptionId = self._extractSubscriptionId(event)
-        user = self._findUserBySubscriptionId(subscriptionId)
-        if not user:
-            logger.error(f"No user found for subscription {subscriptionId}")
-            return
+        user = self._requireUserBySubscriptionId(subscriptionId, "subscription.updated")
         subscriptionEntity = event.get("payload", {}).get("subscription", {}).get("entity", {})
         newQuantity = subscriptionEntity.get("quantity")
         if newQuantity is not None:
@@ -645,29 +673,8 @@ class WebhookService:
         """
         invoiceEntity = event.get("payload", {}).get("invoice", {}).get("entity", {})
         subscriptionId = invoiceEntity.get("subscription_id", "")
-        user = self._findUserBySubscriptionId(subscriptionId) if subscriptionId else None
-        if not user:
-            logger.error(f"No user found for invoice subscription {subscriptionId}")
-            return
-        billingStart = invoiceEntity.get("billing_start")
-        billingEnd = invoiceEntity.get("billing_end")
-        paidAt = invoiceEntity.get("paid_at")
-        try:
-            self.client.table("Invoices").insert({
-                "userId": user["userId"],
-                "razorpayInvoiceId": invoiceEntity.get("id"),
-                "razorpaySubscriptionId": subscriptionId,
-                "razorpayPaymentId": invoiceEntity.get("payment_id"),
-                "amount": invoiceEntity.get("amount", 0),
-                "currency": invoiceEntity.get("currency", "INR"),
-                "status": invoiceEntity.get("status", "paid"),
-                "billingStart": str(datetime.datetime.utcfromtimestamp(billingStart)) if billingStart else None,
-                "billingEnd": str(datetime.datetime.utcfromtimestamp(billingEnd)) if billingEnd else None,
-                "paidAt": str(datetime.datetime.utcfromtimestamp(paidAt)) if paidAt else None,
-                "shortUrl": invoiceEntity.get("short_url"),
-            }).execute()
-        except Exception as e:
-            logger.error(f"Failed to store invoice from webhook: {e}")
+        user = self._requireUserBySubscriptionId(subscriptionId, "invoice.paid")
+        self._upsertInvoiceRecord(userId=user["userId"], invoiceData=invoiceEntity)
         self._auditLog(
             user["userId"], "invoice.paid",
             invoiceId=invoiceEntity.get("id"),

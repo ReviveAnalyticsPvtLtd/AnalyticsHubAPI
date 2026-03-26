@@ -140,6 +140,18 @@ class SubscriptionService:
             raise Exception(f"Invalid domains: {', '.join(invalidDomains)}")
         return normalizedDomains
 
+    def _normalizeSingleDomain(self, domain: str) -> str:
+        """
+        Normalize and validate a single domain value.
+
+        Args:
+            domain (str): Raw domain input.
+
+        Returns:
+            str: Normalized domain value.
+        """
+        return self._normalizeAndValidateDomains([domain])[0]
+
     @staticmethod
     def _sendFreeTrialEmail(email: str, name: str) -> None:
         """
@@ -327,8 +339,7 @@ class SubscriptionService:
             dict: Updated subscription details including new domain list.
         """
         try:
-            if domain not in self.VALID_DOMAINS:
-                raise Exception(f"Invalid domain: {domain}")
+            normalizedDomain = self._normalizeSingleDomain(domain)
             decodedToken = jwt.decode(
                 token,
                 os.environ["SECRET_KEY"],
@@ -345,8 +356,8 @@ class SubscriptionService:
             if user["subscriptionStatus"] != "active":
                 raise Exception("Subscription must be active to add a domain")
             currentExperts = [e.strip() for e in user["subscribedExperts"].split(",") if e.strip()]
-            if domain in currentExperts:
-                raise Exception(f"Domain '{domain}' is already in your subscription")
+            if normalizedDomain in currentExperts:
+                raise Exception(f"Domain '{normalizedDomain}' is already in your subscription")
             domainCount = user["domainCount"] or len(currentExperts)
             if domainCount >= 4:
                 raise Exception("Maximum of 4 domains reached")
@@ -370,7 +381,7 @@ class SubscriptionService:
                     logger.info(f"Prorated amount below minimum for user {userId}, falling back to cycle_end")
                 else:
                     raise razorpayError
-            currentExperts.append(domain)
+            currentExperts.append(normalizedDomain)
             self.client.table("Users").update({
                 "subscribedExperts": ", ".join(currentExperts),
                 "domainCount": newQuantity
@@ -386,7 +397,7 @@ class SubscriptionService:
             self.client.table("DomainChangeLog").insert({
                 "userId": userId,
                 "action": "add",
-                "domain": domain,
+                "domain": normalizedDomain,
                 "previousQuantity": domainCount,
                 "newQuantity": newQuantity,
                 "proratedAmount": 0,
@@ -397,13 +408,13 @@ class SubscriptionService:
                 subscriptionId=subscriptionId,
                 status="active",
                 metadata={
-                    "domain": domain,
+                    "domain": normalizedDomain,
                     "previousQuantity": domainCount,
                     "newQuantity": newQuantity,
                     "effectiveAt": effectiveAt
                 }
             )
-            logger.info(f"Domain '{domain}' added for user {userId}, quantity {domainCount} -> {newQuantity}")
+            logger.info(f"Domain '{normalizedDomain}' added for user {userId}, quantity {domainCount} -> {newQuantity}")
             return {
                 "domains": currentExperts,
                 "quantity": newQuantity,
@@ -430,8 +441,7 @@ class SubscriptionService:
             dict: Current domains, pending removals, and effective timing.
         """
         try:
-            if domain not in self.VALID_DOMAINS:
-                raise Exception(f"Invalid domain: {domain}")
+            normalizedDomain = self._normalizeSingleDomain(domain)
             decodedToken = jwt.decode(
                 token,
                 os.environ["SECRET_KEY"],
@@ -448,11 +458,11 @@ class SubscriptionService:
             if user["subscriptionStatus"] != "active":
                 raise Exception("Subscription must be active to remove a domain")
             currentExperts = [e.strip() for e in user["subscribedExperts"].split(",") if e.strip()]
-            if domain not in currentExperts:
-                raise Exception(f"Domain '{domain}' is not in your active domains")
+            if normalizedDomain not in currentExperts:
+                raise Exception(f"Domain '{normalizedDomain}' is not in your active domains")
             pendingRemovals = user.get("pendingRemovals") or []
-            if domain in pendingRemovals:
-                raise Exception(f"Domain '{domain}' is already scheduled for removal")
+            if normalizedDomain in pendingRemovals:
+                raise Exception(f"Domain '{normalizedDomain}' is already scheduled for removal")
             activeDomains = [d for d in currentExperts if d not in pendingRemovals]
             if len(activeDomains) <= 1:
                 raise Exception("Cannot remove last domain. Use cancel subscription instead.")
@@ -468,14 +478,14 @@ class SubscriptionService:
                 "quantity": newQuantity,
                 "schedule_change_at": "cycle_end"
             })
-            pendingRemovals.append(domain)
+            pendingRemovals.append(normalizedDomain)
             self.client.table("Users").update({
                 "pendingRemovals": pendingRemovals
             }).eq("userId", userId).execute()
             self.client.table("DomainChangeLog").insert({
                 "userId": userId,
                 "action": "remove",
-                "domain": domain,
+                "domain": normalizedDomain,
                 "previousQuantity": domainCount,
                 "newQuantity": newQuantity,
                 "proratedAmount": 0,
@@ -486,13 +496,13 @@ class SubscriptionService:
                 subscriptionId=subscriptionId,
                 status="active",
                 metadata={
-                    "domain": domain,
+                    "domain": normalizedDomain,
                     "previousQuantity": domainCount,
                     "newQuantity": newQuantity,
                     "effectiveAt": "cycle_end"
                 }
             )
-            logger.info(f"Domain '{domain}' scheduled for removal at cycle_end for user {userId}")
+            logger.info(f"Domain '{normalizedDomain}' scheduled for removal at cycle_end for user {userId}")
             return {
                 "currentDomains": currentExperts,
                 "pendingRemovals": pendingRemovals,
