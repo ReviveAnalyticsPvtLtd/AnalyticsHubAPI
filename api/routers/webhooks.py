@@ -39,7 +39,10 @@ async def razorpayWebhook(request: Request):
         signature = request.headers.get("X-Razorpay-Signature", "")
         if not webhookService.verifyWebhookSignature(body, signature):
             raise HTTPException(status_code=400, detail="Invalid webhook signature")
-        event = json.loads(body)
+        try:
+            event = json.loads(body)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise HTTPException(status_code=400, detail="Malformed webhook JSON payload")
         webhookService.processEvent(event)
         return ORJSONResponse(
             status_code=200,

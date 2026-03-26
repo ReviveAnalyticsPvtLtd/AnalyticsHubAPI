@@ -151,7 +151,6 @@ class VerifySubscriptionRequest(BaseModel):
     razorpaySubscriptionId: str
     razorpayPaymentId: str 
     razorpaySignature: str 
-    userId: str 
 
 class CreateSubscriptionRequest(BaseModel):
     domains: list[str]

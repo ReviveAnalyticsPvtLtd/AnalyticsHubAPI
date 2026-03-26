@@ -24,6 +24,7 @@ import os
 
 
 GRACE_PERIOD_DAYS = int(os.environ.get("GRACE_PERIOD_DAYS", "3"))
+WEBHOOK_PROCESSING_TIMEOUT_MINUTES = int(os.environ.get("WEBHOOK_PROCESSING_TIMEOUT_MINUTES", "10"))
 
 EVENT_HANDLERS = {
     "subscription.activated": "_handleSubscriptionActivated",
@@ -94,12 +95,7 @@ class WebhookService:
             if not eventId or not eventType:
                 logger.error("Webhook event missing event_id or event type.")
                 return
-            existing = self.client.table("WebhookEvents") \
-                .select("id") \
-                .eq("razorpayEventId", eventId) \
-                .execute()
-            if existing.data:
-                logger.info(f"Duplicate webhook event skipped: {eventId}")
+            if not self._claimWebhookEvent(eventId=eventId, eventType=eventType, event=event):
                 return
             handlerName = EVENT_HANDLERS.get(eventType)
             if handlerName:
@@ -107,15 +103,142 @@ class WebhookService:
                 handler(event)
             else:
                 logger.info(f"Unhandled webhook event type: {eventType}")
+            self._markWebhookEventCompleted(eventId=eventId)
+        except Exception as e:
+            try:
+                if event.get("event_id") or event.get("id", ""):
+                    self._markWebhookEventFailed(
+                        eventId=event.get("event_id") or event.get("id", ""),
+                        errorMessage=str(e)
+                    )
+            except Exception as markError:
+                logger.error(f"Failed to mark webhook event as failed: {markError}")
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception
+
+    def _claimWebhookEvent(self, eventId: str, eventType: str, event: dict) -> bool:
+        """
+        Atomically claim a webhook event for processing.
+
+        Returns True only for the worker that owns processing rights.
+        Returns False for duplicates already completed or being processed.
+        """
+        nowTime = datetime.datetime.utcnow()
+        nowIso = str(nowTime)
+        try:
             self.client.table("WebhookEvents").insert({
                 "razorpayEventId": eventId,
                 "eventType": eventType,
                 "payload": event,
+                "status": "processing",
+                "attempts": 1,
+                "lastAttemptAt": nowIso,
+                "errorMessage": None,
             }).execute()
-        except Exception as e:
-            exception = CustomException(e)
-            logger.error(exception)
-            raise exception
+            logger.info(f"Webhook event claimed for processing: {eventId}")
+            return True
+        except Exception as insertError:
+            if not self._isUniqueViolation(insertError):
+                raise insertError
+            existingResult = self.client.table("WebhookEvents") \
+                .select("status, attempts, lastAttemptAt") \
+                .eq("razorpayEventId", eventId) \
+                .limit(1) \
+                .execute()
+            if not existingResult.data:
+                logger.warning(f"Webhook duplicate claim conflict with missing row: {eventId}")
+                return False
+            existingEvent = existingResult.data[0]
+            status = existingEvent.get("status")
+            attempts = int(existingEvent.get("attempts") or 1)
+            lastAttemptAt = existingEvent.get("lastAttemptAt")
+            if status == "completed":
+                logger.info(f"Duplicate webhook event skipped (already completed): {eventId}")
+                return False
+            if status == "processing":
+                if not self._isStaleProcessing(lastAttemptAt=lastAttemptAt, nowTime=nowTime):
+                    logger.info(f"Duplicate webhook event skipped (already processing): {eventId}")
+                    return False
+                reclaimResult = self.client.table("WebhookEvents").update({
+                    "status": "processing",
+                    "attempts": attempts + 1,
+                    "lastAttemptAt": nowIso,
+                    "errorMessage": None,
+                    "payload": event,
+                    "eventType": eventType,
+                }).eq("razorpayEventId", eventId) \
+                 .eq("status", "processing") \
+                 .eq("lastAttemptAt", lastAttemptAt) \
+                 .execute()
+                if reclaimResult.data:
+                    logger.warning(f"Reclaimed stale webhook processing lock: {eventId}")
+                    return True
+                logger.info(f"Stale webhook lock reclaim lost to another worker: {eventId}")
+                return False
+            if status == "failed":
+                retryResult = self.client.table("WebhookEvents").update({
+                    "status": "processing",
+                    "attempts": attempts + 1,
+                    "lastAttemptAt": nowIso,
+                    "errorMessage": None,
+                    "payload": event,
+                    "eventType": eventType,
+                }).eq("razorpayEventId", eventId) \
+                 .eq("status", "failed") \
+                 .execute()
+                if retryResult.data:
+                    logger.info(f"Retrying failed webhook event: {eventId}, attempt={attempts + 1}")
+                    return True
+                logger.info(f"Failed webhook retry lost to another worker: {eventId}")
+                return False
+            logger.info(f"Webhook event skipped with unsupported status '{status}': {eventId}")
+            return False
+
+    def _markWebhookEventCompleted(self, eventId: str) -> None:
+        """
+        Mark a webhook event as completed after successful processing.
+        """
+        self.client.table("WebhookEvents").update({
+            "status": "completed",
+            "completedAt": str(datetime.datetime.utcnow()),
+            "errorMessage": None,
+        }).eq("razorpayEventId", eventId).execute()
+
+    def _markWebhookEventFailed(self, eventId: str, errorMessage: str) -> None:
+        """
+        Mark a webhook event as failed to enable replay-based retries.
+        """
+        self.client.table("WebhookEvents").update({
+            "status": "failed",
+            "errorMessage": errorMessage[:2000],
+            "lastAttemptAt": str(datetime.datetime.utcnow()),
+        }).eq("razorpayEventId", eventId).execute()
+
+    @staticmethod
+    def _isUniqueViolation(error: Exception) -> bool:
+        """
+        Detect duplicate key violations from Postgres/Supabase errors.
+        """
+        errorMessage = str(error).lower()
+        return "duplicate key" in errorMessage or "unique constraint" in errorMessage or "23505" in errorMessage
+
+    @staticmethod
+    def _isStaleProcessing(lastAttemptAt: str | None, nowTime: datetime.datetime) -> bool:
+        """
+        Determine whether a processing lock is stale and safe to reclaim.
+        """
+        if not lastAttemptAt:
+            return True
+        try:
+            normalized = lastAttemptAt.replace("Z", "+00:00")
+            lastAttempt = datetime.datetime.fromisoformat(normalized)
+            if lastAttempt.tzinfo is not None:
+                lastAttempt = lastAttempt.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+            delta = nowTime - lastAttempt
+            return delta.total_seconds() > WEBHOOK_PROCESSING_TIMEOUT_MINUTES * 60
+        except Exception:
+            return True
 
     def _findUserBySubscriptionId(self, subscriptionId: str) -> dict | None:
         """

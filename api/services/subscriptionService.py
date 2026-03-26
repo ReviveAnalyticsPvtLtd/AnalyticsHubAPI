@@ -101,6 +101,45 @@ class SubscriptionService:
         logger.info(f"Razorpay customer created for user {userId}: {customerId}")
         return customerId
 
+    def _normalizeAndValidateDomains(self, domains: list[str]) -> list[str]:
+        """
+        Normalize and validate domain input for subscription workflows.
+
+        Normalization rules:
+        - Trim surrounding whitespace
+        - Lowercase domain names
+
+        Validation rules:
+        - Must be a non-empty list of strings
+        - Domain count must be between 1 and 4
+        - No duplicate domains allowed
+        - All domains must be in VALID_DOMAINS
+
+        Args:
+            domains (list[str]): Raw domains from request payload.
+
+        Returns:
+            list[str]: Normalized domain list preserving input order.
+        """
+        if not isinstance(domains, list):
+            raise Exception("Domains must be provided as a list")
+        normalizedDomains = []
+        for domain in domains:
+            if not isinstance(domain, str):
+                raise Exception("All domains must be strings")
+            normalized = domain.strip().lower()
+            if not normalized:
+                raise Exception("Domain values must be non-empty strings")
+            normalizedDomains.append(normalized)
+        if not normalizedDomains or len(normalizedDomains) > 4:
+            raise Exception("Domain count must be between 1 and 4")
+        if len(set(normalizedDomains)) != len(normalizedDomains):
+            raise Exception("Duplicate domains not allowed. Domains must be unique.")
+        invalidDomains = set(normalizedDomains) - self.VALID_DOMAINS
+        if invalidDomains:
+            raise Exception(f"Invalid domains: {', '.join(invalidDomains)}")
+        return normalizedDomains
+
     @staticmethod
     def _sendFreeTrialEmail(email: str, name: str) -> None:
         """
@@ -173,11 +212,7 @@ class SubscriptionService:
             dict: Data required to open Razorpay checkout.
         """
         try:
-            invalidDomains = set(domains) - self.VALID_DOMAINS
-            if invalidDomains:
-                raise Exception(f"Invalid domains: {', '.join(invalidDomains)}")
-            if not domains or len(domains) > 4:
-                raise Exception("Domain count must be between 1 and 4")
+            normalizedDomains = self._normalizeAndValidateDomains(domains)
             decodedToken = jwt.decode(
                 token,
                 os.environ["SECRET_KEY"],
@@ -188,7 +223,7 @@ class SubscriptionService:
             userRecord = self.client.table("Users").select("fullName").eq("userId", userId).execute()
             fullName = userRecord.data[0]["fullName"] if userRecord.data else userEmail
             customerId = self._getOrCreateRazorpayCustomer(userId, userEmail, fullName)
-            quantity = len(domains)
+            quantity = len(normalizedDomains)
             subscription = self.razorpayClient.subscription.create({
                 "plan_id": self.BASE_PLAN_ID,
                 "customer_notify": 1,
@@ -200,7 +235,7 @@ class SubscriptionService:
                 userId, "subscription.created",
                 subscriptionId=subscription["id"],
                 status=subscription["status"],
-                metadata={"domains": domains, "quantity": quantity}
+                metadata={"domains": normalizedDomains, "quantity": quantity}
             )
             return {
                 "userId": userId,
@@ -210,14 +245,14 @@ class SubscriptionService:
                 "shortUrl": subscription["short_url"],
                 "status": subscription["status"],
                 "quantity": quantity,
-                "domains": domains
+                "domains": normalizedDomains
             }
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
             raise exception
         
-    def verifySubscription(self, payload: dict) -> None:
+    def verifySubscription(self, payload: dict, token: str) -> None:
         """
         Verify Razorpay subscription checkout signature.
 
@@ -227,20 +262,22 @@ class SubscriptionService:
 
         Args:
             payload (dict): Razorpay checkout response payload.
+            token (str): Authorization token.
         """
         try:
+            decodedToken = jwt.decode(
+                token,
+                os.environ["SECRET_KEY"],
+                algorithms = ["HS256"]
+            )
+            userId = decodedToken.get("userId")
             paymentId = payload.get("razorpayPaymentId")
             subscriptionId = payload.get("razorpaySubscriptionId")
             signature = payload.get("razorpaySignature")
-            userId = payload.get("userId")
             domains = payload.get("domains")
             if not all([paymentId, subscriptionId, signature, userId, domains]):
                 raise Exception("Missing Razorpay verification fields")
-            invalidDomains = set(domains) - self.VALID_DOMAINS
-            if invalidDomains:
-                raise Exception(f"Invalid domains: {', '.join(invalidDomains)}")
-            if len(domains) > 4:
-                raise Exception("Domain count must be between 1 and 4")
+            normalizedDomains = self._normalizeAndValidateDomains(domains)
             message = f"{paymentId}|{subscriptionId}"
             expectedSignature = hmac.new(
                 os.environ["RAZORPAY_KEY_SECRET"].encode(),
@@ -257,8 +294,8 @@ class SubscriptionService:
                 "subscriptionStatus": "active",
                 "subscriptionStart": str(currentTime),
                 "subscriptionExpiry": str(expiry),
-                "subscribedExperts": ", ".join(domains),
-                "domainCount": len(domains),
+                "subscribedExperts": ", ".join(normalizedDomains),
+                "domainCount": len(normalizedDomains),
                 "pendingRemovals": []
             }).eq("userId", userId).execute()
             self._auditLog(
@@ -266,7 +303,7 @@ class SubscriptionService:
                 paymentId=paymentId,
                 subscriptionId=subscriptionId,
                 status="active",
-                metadata={"domains": domains, "quantity": len(domains)}
+                metadata={"domains": normalizedDomains, "quantity": len(normalizedDomains)}
             )
         except Exception as e:
             exception = CustomException(e)
@@ -423,7 +460,10 @@ class SubscriptionService:
             if not subscriptionId:
                 raise Exception("No active subscription found for this user")
             domainCount = user["domainCount"] or len(currentExperts)
-            newQuantity = domainCount - 1
+            activeCount = domainCount - len(pendingRemovals)
+            newQuantity = activeCount - 1
+            if newQuantity < 1:
+                raise Exception("Cannot remove last domain. Use cancel subscription instead.")
             self.razorpayClient.subscription.edit(subscriptionId, {
                 "quantity": newQuantity,
                 "schedule_change_at": "cycle_end"
@@ -573,19 +613,35 @@ class SubscriptionService:
             dict: The Razorpay refund response.
         """
         try:
+            if not paymentId:
+                raise Exception("paymentId is required")
+            if amount is not None and amount <= 0:
+                raise Exception("amount must be greater than 0")
             decodedToken = jwt.decode(
                 token,
                 os.environ["SECRET_KEY"],
                 algorithms = ["HS256"]
             )
             userId = decodedToken.get("userId")
+            if not userId:
+                raise Exception("Invalid token payload")
             userRecord = self.client.table("Users") \
-                .select("razorpaySubscriptionId") \
+                .select("razorpayCustomerId, razorpaySubscriptionId") \
                 .eq("userId", userId) \
                 .execute()
-            subscriptionId = userRecord.data[0].get("razorpaySubscriptionId") if userRecord.data else None
+            if not userRecord.data:
+                raise Exception("User not found")
+            customerId = userRecord.data[0].get("razorpayCustomerId")
+            subscriptionId = userRecord.data[0].get("razorpaySubscriptionId")
+            if not customerId:
+                raise Exception("No Razorpay customer found for this user")
             payment = self.razorpayClient.payment.fetch(paymentId)
+            paymentCustomerId = payment.get("customer_id")
+            if not paymentCustomerId or paymentCustomerId != customerId:
+                logger.warning(f"Unauthorized refund attempt blocked for user {userId}, payment {paymentId}")
+                raise Exception("Payment does not belong to this user")
             if subscriptionId and payment.get("subscription_id") != subscriptionId:
+                logger.warning(f"Subscription ownership mismatch on refund attempt for user {userId}, payment {paymentId}")
                 raise Exception("Payment does not belong to this user's subscription")
             refundParams = {}
             if amount is not None:
