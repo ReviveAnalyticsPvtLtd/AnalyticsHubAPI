@@ -13,14 +13,10 @@ from analyticsHub.components.queryRephraser import QueryRephaser
 from analyticsHub.components.codeGenerator import CodeGenerator
 from analyticsHub.components.codeDebugger import CodeDebugger
 from langgraph.graph import StateGraph, START, END
-from utils.codeExecutor import replManager
+from utils.codeExecutor import REPLManager
 from typing_extensions import TypedDict
 from utils.logger import logger
 import json
-
-codeDebuggerChain = CodeDebugger().getCodeDebuggerChain()
-queryRephraseChain = QueryRephaser().getQueryRephraserChain()
-codeGeneratorChain = CodeGenerator().getCodeGeneratorChain()
 
 class State(TypedDict):
     """
@@ -40,9 +36,14 @@ class ReportingToolWorkflow:
     """
     def __init__(self):
         """
-        Initializes the ReportingToolWorkflow and logs the initialization event.
+        Initializes the ReportingToolWorkflow with its own chain instances and replManager
+        to ensure thread-safe parallel execution without shared state.
         """
         logger.info("Initializing multi-agentic reporting workflow.")
+        self.queryRephraseChain = QueryRephaser().getQueryRephraserChain()
+        self.codeGeneratorChain = CodeGenerator().getCodeGeneratorChain()
+        self.codeDebuggerChain = CodeDebugger().getCodeDebuggerChain()
+        self.replManager = REPLManager(timeoutSeconds=7)
 
     def _rephraseQuery(self, state: State):
         """
@@ -54,7 +55,7 @@ class ReportingToolWorkflow:
         Returns:
             dict: Updated state with the rephrased query.
         """
-        response = queryRephraseChain.invoke({
+        response = self.queryRephraseChain.invoke({
             "query": state["inputQuery"],
             "metadata": state["metadata"]
         })
@@ -72,7 +73,7 @@ class ReportingToolWorkflow:
         Returns:
             dict: Updated state with the generated code.
         """
-        response = codeGeneratorChain.invoke({
+        response = self.codeGeneratorChain.invoke({
             "query": state["rephrasedQuery"],
             "metadata": state["metadata"]
         })
@@ -94,7 +95,7 @@ class ReportingToolWorkflow:
             code = "\n".join(state["generatedCode"].split("```")[-2].split("\n")[1:])
         else:
             code = state["generatedCode"].split("</think>")[-1]
-        response = replManager.run(code)
+        response = self.replManager.run(code)
         return {
             "codeOutput": response
         }
@@ -125,7 +126,7 @@ class ReportingToolWorkflow:
         Returns:
             dict: Updated state with the corrected/generated code.
         """
-        response = codeDebuggerChain.invoke({
+        response = self.codeDebuggerChain.invoke({
             "user_query": state["rephrasedQuery"],
             "metadata_context": state["metadata"],
             "code_with_errors": state["generatedCode"],
