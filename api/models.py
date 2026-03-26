@@ -147,17 +147,36 @@ class DeleteDashboardElement(BaseModel):
     id: str
 
 class VerifySubscriptionRequest(BaseModel):
-    subscribedExperts: list[str]
+    domains: list[str]
     razorpaySubscriptionId: str
     razorpayPaymentId: str 
     razorpaySignature: str 
-    userId: str 
 
-class SubscriptionPlan(str, Enum):
-    MONTHLY_20 = "MONTHLY_20"
-    MONTHLY_40 = "MONTHLY_40"
-    MONTHLY_60 = "MONTHLY_60"
-    MONTHLY_80 = "MONTHLY_80"
+class CreateSubscriptionRequest(BaseModel):
+    domains: list[str]
+
+class AddDomainRequest(BaseModel):
+    domain: str
+
+class RemoveDomainRequest(BaseModel):
+    domain: str
+
+class SubscriptionStatus(str, Enum):
+    NONE = "none"
+    TRIALING = "trialing"
+    ACTIVE = "active"
+    HALTED = "halted"
+    CANCELLED = "cancelled"
+    PAUSED = "paused"
+    EXPIRED = "expired"
+    PENDING = "pending"
+
+class CancelSubscriptionRequest(BaseModel):
+    cancelAtCycleEnd: bool = True
+
+class RefundRequest(BaseModel):
+    paymentId: str
+    amount: int | None = None
 
 class SaveQuery(BaseModel):
     projectId: str
