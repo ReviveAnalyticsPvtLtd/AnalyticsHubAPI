@@ -10,7 +10,7 @@ __all__ = ["router"]
 
 
 from utils.exceptionHandler import CustomException, raiseHttpException
-from api.models import VerifySubscriptionRequest, CreateSubscriptionRequest, AddDomainRequest, RemoveDomainRequest, CancelSubscriptionRequest, RefundRequest
+from api.models import VerifySubscriptionRequest, CreateSubscriptionRequest, AddDomainRequest, RemoveDomainRequest, CancelPendingAdditionRequest, CancelSubscriptionRequest, RefundRequest
 from api.services.subscriptionService import subscriptionService
 from fastapi.responses import ORJSONResponse
 from fastapi import APIRouter, Depends
@@ -111,7 +111,7 @@ async def addDomain(payload: AddDomainRequest, token=Depends(verifyToken)):
             status_code=200,
             content={
                 "status": "SUCCESS",
-                "message": f"Domain '{payload.domain}' added successfully.",
+                "message": "Domain upgrade initiated.",
                 "data": result
             }
         )
@@ -144,6 +144,31 @@ async def removeDomain(payload: RemoveDomainRequest, token=Depends(verifyToken))
     except CustomException as e:
         raiseHttpException(e)
 
+
+@router.post("/cancelPendingAddition")
+async def cancelPendingAddition(payload: CancelPendingAdditionRequest, token=Depends(verifyToken)):
+    """
+    Cancel a pending domain addition request.
+
+    Args:
+        payload (CancelPendingAdditionRequest): Domain to cancel.
+        token: Authorization token dependency.
+
+    Returns:
+        ORJSONResponse: Cancellation result.
+    """
+    try:
+        result = subscriptionService.cancelPendingAddition(domain=payload.domain, token=token)
+        return ORJSONResponse(
+            status_code=200,
+            content={
+                "status": "SUCCESS",
+                "message": "Pending domain addition cancelled.",
+                "data": result
+            }
+        )
+    except CustomException as e:
+        raiseHttpException(e)
 
 @router.post("/cancelSubscription")
 async def cancelSubscription(

@@ -324,19 +324,18 @@ class SubscriptionService:
 
     def addDomain(self, domain: str, token: str) -> dict:
         """
-        Add a domain to an active subscription with prorated billing.
+        Initiate adding a domain to an active subscription.
 
-        Calls Razorpay to increase the subscription quantity immediately,
-        triggering a prorated charge for the remainder of the current cycle.
-        Falls back to cycle_end scheduling if the prorated amount is below
-        Razorpay's minimum threshold.
+        Calls Razorpay to increase the subscription quantity but does NOT
+        grant immediate access. The domain is placed in pendingAdditions
+        and activated only after webhook reconciliation confirms payment.
 
         Args:
             domain (str): The domain expert name to add.
             token (str): Authorization token.
 
         Returns:
-            dict: Updated subscription details including new domain list.
+            dict: Initiation state with upgradeState and checkoutUrl.
         """
         try:
             normalizedDomain = self._normalizeSingleDomain(domain)
@@ -347,7 +346,7 @@ class SubscriptionService:
             )
             userId = decodedToken.get("userId")
             userRecord = self.client.table("Users") \
-                .select("subscribedExperts, domainCount, razorpaySubscriptionId, subscriptionStatus, pendingRemovals") \
+                .select("subscribedExperts, domainCount, razorpaySubscriptionId, subscriptionStatus, pendingRemovals, pendingAdditions") \
                 .eq("userId", userId) \
                 .execute()
             if not userRecord.data:
@@ -358,14 +357,20 @@ class SubscriptionService:
             currentExperts = [e.strip() for e in user["subscribedExperts"].split(",") if e.strip()]
             if normalizedDomain in currentExperts:
                 raise Exception(f"Domain '{normalizedDomain}' is already in your subscription")
+            pendingAdditions = user.get("pendingAdditions") or []
+            pendingDomains = [item["domain"] for item in pendingAdditions if item.get("state") not in ("failed", "activated")]
+            if normalizedDomain in pendingDomains:
+                raise Exception(f"Domain '{normalizedDomain}' already has a pending addition request")
             domainCount = user["domainCount"] or len(currentExperts)
-            if domainCount >= 4:
-                raise Exception("Maximum of 4 domains reached")
+            totalWithPending = domainCount + len(pendingDomains)
+            if totalWithPending >= 4:
+                raise Exception("Maximum of 4 domains reached (including pending additions)")
             subscriptionId = user["razorpaySubscriptionId"]
             if not subscriptionId:
                 raise Exception("No active subscription found for this user")
-            newQuantity = domainCount + 1
+            newQuantity = domainCount + len(pendingDomains) + 1
             effectiveAt = "now"
+            upgradeState = "processing"
             try:
                 self.razorpayClient.subscription.edit(subscriptionId, {
                     "quantity": newQuantity,
@@ -378,13 +383,23 @@ class SubscriptionService:
                         "schedule_change_at": "cycle_end"
                     })
                     effectiveAt = "cycle_end"
+                    upgradeState = "scheduled_cycle_end"
                     logger.info(f"Prorated amount below minimum for user {userId}, falling back to cycle_end")
                 else:
                     raise razorpayError
-            currentExperts.append(normalizedDomain)
+            pendingItem = {
+                "domain": normalizedDomain,
+                "currentQuantity": domainCount,
+                "targetQuantity": newQuantity,
+                "state": upgradeState,
+                "checkoutUrl": None,
+                "requestedAt": str(datetime.datetime.utcnow()),
+                "invoiceId": None,
+                "paymentId": None,
+            }
+            pendingAdditions.append(pendingItem)
             self.client.table("Users").update({
-                "subscribedExperts": ", ".join(currentExperts),
-                "domainCount": newQuantity
+                "pendingAdditions": pendingAdditions
             }).eq("userId", userId).execute()
             pendingRemovals = user.get("pendingRemovals") or []
             if pendingRemovals and effectiveAt == "now":
@@ -396,7 +411,7 @@ class SubscriptionService:
                 logger.info(f"Re-scheduled pending removals for user {userId}: qty {scheduledQuantity} at cycle_end")
             self.client.table("DomainChangeLog").insert({
                 "userId": userId,
-                "action": "add",
+                "action": "add_requested",
                 "domain": normalizedDomain,
                 "previousQuantity": domainCount,
                 "newQuantity": newQuantity,
@@ -404,9 +419,9 @@ class SubscriptionService:
                 "effectiveAt": effectiveAt
             }).execute()
             self._auditLog(
-                userId, "domain.added",
+                userId, "domain.add_requested",
                 subscriptionId=subscriptionId,
-                status="active",
+                status=upgradeState,
                 metadata={
                     "domain": normalizedDomain,
                     "previousQuantity": domainCount,
@@ -414,11 +429,14 @@ class SubscriptionService:
                     "effectiveAt": effectiveAt
                 }
             )
-            logger.info(f"Domain '{normalizedDomain}' added for user {userId}, quantity {domainCount} -> {newQuantity}")
+            logger.info(f"Domain '{normalizedDomain}' add requested for user {userId}, quantity {domainCount} -> {newQuantity}")
             return {
-                "domains": currentExperts,
-                "quantity": newQuantity,
+                "domain": normalizedDomain,
+                "currentQuantity": domainCount,
+                "targetQuantity": newQuantity,
                 "effectiveAt": effectiveAt,
+                "upgradeState": upgradeState,
+                "checkoutUrl": None,
                 "pendingRemovals": pendingRemovals
             }
         except Exception as e:
@@ -532,7 +550,7 @@ class SubscriptionService:
             )
             userId = decodedToken.get("userId")
             userRecord = self.client.table("Users") \
-                .select("subscriptionPlan, subscriptionStatus, subscribedExperts, domainCount, pendingRemovals, subscriptionExpiry, billingAnchorDate") \
+                .select("subscriptionPlan, subscriptionStatus, subscribedExperts, domainCount, pendingRemovals, pendingAdditions, subscriptionExpiry, billingAnchorDate") \
                 .eq("userId", userId) \
                 .execute()
             if not userRecord.data:
@@ -555,10 +573,96 @@ class SubscriptionService:
                 "domains": domains,
                 "domainCount": user.get("domainCount") or len(domains),
                 "pendingRemovals": user.get("pendingRemovals") or [],
+                "pendingAdditions": user.get("pendingAdditions") or [],
                 "subscriptionExpiry": expiryStr,
                 "subscriptionDaysLeft": daysLeft,
                 "billingAnchorDate": user.get("billingAnchorDate")
             }
+        except Exception as e:
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception
+
+    def cancelPendingAddition(self, domain: str, token: str) -> dict:
+        """
+        Cancel a pending domain addition request.
+
+        Removes the domain from pendingAdditions and reverts the Razorpay
+        subscription quantity if the addition was still in progress.
+
+        Args:
+            domain (str): The domain to cancel.
+            token (str): Authorization token.
+
+        Returns:
+            dict: Confirmation of cancellation.
+        """
+        try:
+            normalizedDomain = self._normalizeSingleDomain(domain)
+            decodedToken = jwt.decode(
+                token,
+                os.environ["SECRET_KEY"],
+                algorithms = ["HS256"]
+            )
+            userId = decodedToken.get("userId")
+            userRecord = self.client.table("Users") \
+                .select("pendingAdditions, domainCount, razorpaySubscriptionId, pendingRemovals") \
+                .eq("userId", userId) \
+                .execute()
+            if not userRecord.data:
+                raise Exception("User not found")
+            user = userRecord.data[0]
+            pendingAdditions = user.get("pendingAdditions") or []
+            targetItem = None
+            targetIndex = None
+            for i, item in enumerate(pendingAdditions):
+                if item["domain"] == normalizedDomain and item.get("state") not in ("activated",):
+                    targetItem = item
+                    targetIndex = i
+                    break
+            if targetItem is None:
+                raise Exception(f"No cancellable pending addition found for domain '{normalizedDomain}'")
+            shouldRevertQuantity = targetItem.get("state") in ("processing", "awaiting_payment", "scheduled_cycle_end")
+            pendingAdditions.pop(targetIndex)
+            self.client.table("Users").update({
+                "pendingAdditions": pendingAdditions
+            }).eq("userId", userId).execute()
+            if shouldRevertQuantity:
+                subscriptionId = user["razorpaySubscriptionId"]
+                if subscriptionId:
+                    domainCount = user["domainCount"] or 0
+                    activePendingCount = len([
+                        item for item in pendingAdditions
+                        if item.get("state") not in ("failed", "activated")
+                    ])
+                    revertQuantity = domainCount + activePendingCount
+                    pendingRemovals = user.get("pendingRemovals") or []
+                    if pendingRemovals:
+                        revertQuantity = revertQuantity - len(pendingRemovals)
+                    try:
+                        self.razorpayClient.subscription.edit(subscriptionId, {
+                            "quantity": max(revertQuantity, 1),
+                            "schedule_change_at": "now"
+                        })
+                    except Exception as rzpError:
+                        logger.error(f"Failed to revert Razorpay quantity for user {userId}: {rzpError}")
+            self.client.table("DomainChangeLog").insert({
+                "userId": userId,
+                "action": "add_cancelled",
+                "domain": normalizedDomain,
+                "previousQuantity": targetItem.get("targetQuantity", 0),
+                "newQuantity": (user["domainCount"] or 0),
+                "proratedAmount": 0,
+                "effectiveAt": "immediate"
+            }).execute()
+            self._auditLog(
+                userId, "domain.add_cancelled",
+                subscriptionId=user.get("razorpaySubscriptionId"),
+                status="cancelled",
+                metadata={"domain": normalizedDomain}
+            )
+            logger.info(f"Pending addition cancelled for domain '{normalizedDomain}', user {userId}")
+            return {"domain": normalizedDomain, "cancelled": True}
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
