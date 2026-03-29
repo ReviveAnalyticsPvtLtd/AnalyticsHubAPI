@@ -41,11 +41,11 @@ class SubscriptionService:
         self.client = client
         self.razorpayClient = razorpay.Client(
             auth=(
-                os.environ["RAZORPAY_KEY_ID"],
-                os.environ["RAZORPAY_KEY_SECRET"]
+                os.environ.get("RAZORPAY_KEY_ID", ""),
+                os.environ.get("RAZORPAY_KEY_SECRET", "")
             )
         )
-        self.BASE_PLAN_ID = os.environ["RAZORPAY_PRO_PLAN_ID"]
+        self.BASE_PLAN_ID = os.environ.get("RAZORPAY_PRO_PLAN_ID", "")
         self.VALID_DOMAINS = {"banking", "manufacturing", "supplychain", "telecom"}
 
     def _auditLog(self, userId: str, action: str, **kwargs) -> None:
