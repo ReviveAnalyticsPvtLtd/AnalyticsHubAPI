@@ -262,7 +262,7 @@ class WebhookService:
             dict | None: The user record or None if not found.
         """
         result = self.client.table("Users") \
-            .select("userId, email, fullName, pendingRemovals, subscribedExperts, domainCount") \
+            .select("userId, email, fullName, pendingRemovals, pendingAdditions, subscribedExperts, domainCount") \
             .eq("razorpaySubscriptionId", subscriptionId) \
             .execute()
         return result.data[0] if result.data else None
@@ -470,6 +470,30 @@ class WebhookService:
             "subscriptionStatus": "halted",
             "gracePeriodEnd": str(gracePeriodEnd),
         }).eq("userId", user["userId"]).execute()
+        pendingAdditions = user.get("pendingAdditions") or []
+        failedAny = False
+        for item in pendingAdditions:
+            if item.get("state") in ("processing", "awaiting_payment"):
+                item["state"] = "failed"
+                failedAny = True
+        if failedAny:
+            self.client.table("Users").update({
+                "pendingAdditions": pendingAdditions
+            }).eq("userId", user["userId"]).execute()
+            for item in pendingAdditions:
+                if item.get("state") == "failed":
+                    try:
+                        self.client.table("DomainChangeLog").insert({
+                            "userId": user["userId"],
+                            "action": "add_failed",
+                            "domain": item["domain"],
+                            "previousQuantity": item.get("currentQuantity", 0),
+                            "newQuantity": item.get("currentQuantity", 0),
+                            "proratedAmount": 0,
+                            "effectiveAt": "none"
+                        }).execute()
+                    except Exception as logErr:
+                        logger.error(f"DomainChangeLog insert failed for halted pending addition: {logErr}")
         self._auditLog(
             user["userId"], "subscription.halted",
             subscriptionId=subscriptionId, status="halted"
@@ -571,8 +595,9 @@ class WebhookService:
         """
         Handle the subscription.updated webhook event.
 
-        Syncs the local domainCount with the quantity reported by Razorpay
-        after a subscription edit (add/remove domain).
+        Activates pending domain additions when Razorpay confirms a quantity
+        increase. Skips activation if quantity decreased or is unchanged
+        relative to active domain count (e.g. removal events).
 
         Args:
             event (dict): The Razorpay webhook event.
@@ -581,7 +606,70 @@ class WebhookService:
         user = self._requireUserBySubscriptionId(subscriptionId, "subscription.updated")
         subscriptionEntity = event.get("payload", {}).get("subscription", {}).get("entity", {})
         newQuantity = subscriptionEntity.get("quantity")
-        if newQuantity is not None:
+        if newQuantity is None:
+            logger.info(f"Subscription updated for user {user['userId']} but no quantity in payload, skipping.")
+            return
+        currentDomainCount = user.get("domainCount") or 0
+        pendingAdditions = user.get("pendingAdditions") or []
+        pendingRemovals = user.get("pendingRemovals") or []
+        experts = user.get("subscribedExperts") or ""
+        currentExperts = [e.strip() for e in experts.split(",") if e.strip()]
+        activationCount = newQuantity - currentDomainCount
+        if activationCount > 0 and pendingAdditions:
+            activatable = [
+                item for item in pendingAdditions
+                if item.get("state") in ("processing", "awaiting_payment", "scheduled_cycle_end")
+            ]
+            activatable.sort(key=lambda x: x.get("requestedAt", ""))
+            toActivate = activatable[:activationCount]
+            activatedDomains = []
+            for item in toActivate:
+                domain = item["domain"]
+                if domain not in currentExperts:
+                    currentExperts.append(domain)
+                    activatedDomains.append(domain)
+                item["state"] = "activated"
+            remainingPending = [
+                item for item in pendingAdditions
+                if item.get("state") != "activated"
+            ]
+            updatedDomainCount = len(currentExperts)
+            self.client.table("Users").update({
+                "subscribedExperts": ", ".join(currentExperts),
+                "domainCount": updatedDomainCount,
+                "pendingAdditions": remainingPending,
+            }).eq("userId", user["userId"]).execute()
+            for domain in activatedDomains:
+                try:
+                    self.client.table("DomainChangeLog").insert({
+                        "userId": user["userId"],
+                        "action": "add_activated",
+                        "domain": domain,
+                        "previousQuantity": currentDomainCount,
+                        "newQuantity": updatedDomainCount,
+                        "proratedAmount": 0,
+                        "effectiveAt": "now"
+                    }).execute()
+                except Exception as logErr:
+                    logger.error(f"DomainChangeLog insert failed for {domain}: {logErr}")
+            if pendingRemovals:
+                scheduledQuantity = updatedDomainCount - len(pendingRemovals)
+                if scheduledQuantity >= 1:
+                    try:
+                        import razorpay
+                        import os
+                        rzpClient = razorpay.Client(
+                            auth=(os.environ["RAZORPAY_KEY_ID"], os.environ["RAZORPAY_KEY_SECRET"])
+                        )
+                        rzpClient.subscription.edit(subscriptionId, {
+                            "quantity": scheduledQuantity,
+                            "schedule_change_at": "cycle_end"
+                        })
+                        logger.info(f"Re-scheduled pending removals after activation for user {user['userId']}: qty {scheduledQuantity}")
+                    except Exception as rzpErr:
+                        logger.error(f"Failed to re-schedule pending removals for user {user['userId']}: {rzpErr}")
+            logger.info(f"Activated domains {activatedDomains} for user {user['userId']}, new count: {updatedDomainCount}")
+        else:
             self.client.table("Users").update({
                 "domainCount": newQuantity,
             }).eq("userId", user["userId"]).execute()
@@ -589,7 +677,7 @@ class WebhookService:
             user["userId"], "subscription.updated",
             subscriptionId=subscriptionId,
             status="updated",
-            metadata={"new_quantity": newQuantity}
+            metadata={"new_quantity": newQuantity, "activation_count": max(activationCount, 0) if pendingAdditions else 0}
         )
         logger.info(f"Subscription updated for user {user['userId']}, quantity: {newQuantity}")
 
@@ -659,6 +747,30 @@ class WebhookService:
             metadata={"error_code": errorMeta, "error_description": paymentEntity.get("error_description", "")}
         )
         if user:
+            pendingAdditions = user.get("pendingAdditions") or []
+            failedAny = False
+            for item in pendingAdditions:
+                if item.get("state") in ("processing", "awaiting_payment"):
+                    item["state"] = "failed"
+                    failedAny = True
+            if failedAny:
+                self.client.table("Users").update({
+                    "pendingAdditions": pendingAdditions
+                }).eq("userId", user["userId"]).execute()
+                for item in pendingAdditions:
+                    if item.get("state") == "failed":
+                        try:
+                            self.client.table("DomainChangeLog").insert({
+                                "userId": user["userId"],
+                                "action": "add_failed",
+                                "domain": item["domain"],
+                                "previousQuantity": item.get("currentQuantity", 0),
+                                "newQuantity": item.get("currentQuantity", 0),
+                                "proratedAmount": 0,
+                                "effectiveAt": "none"
+                            }).execute()
+                        except Exception as logErr:
+                            logger.error(f"DomainChangeLog insert failed for failed pending addition: {logErr}")
             self._sendPaymentFailureEmail(user["email"], user["fullName"], "payment_failed")
         logger.info(f"Payment failed: {paymentEntity.get('id')}")
 
@@ -675,6 +787,23 @@ class WebhookService:
         subscriptionId = invoiceEntity.get("subscription_id", "")
         user = self._requireUserBySubscriptionId(subscriptionId, "invoice.paid")
         self._upsertInvoiceRecord(userId=user["userId"], invoiceData=invoiceEntity)
+        pendingAdditions = user.get("pendingAdditions") or []
+        enriched = False
+        for item in pendingAdditions:
+            if item.get("state") == "processing":
+                item["invoiceId"] = invoiceEntity.get("id")
+                item["paymentId"] = invoiceEntity.get("payment_id")
+                shortUrl = invoiceEntity.get("short_url")
+                if shortUrl:
+                    item["checkoutUrl"] = shortUrl
+                    item["state"] = "awaiting_payment"
+                enriched = True
+                break
+        if enriched:
+            self.client.table("Users").update({
+                "pendingAdditions": pendingAdditions
+            }).eq("userId", user["userId"]).execute()
+            logger.info(f"Enriched pending addition with invoice data for user {user['userId']}")
         self._auditLog(
             user["userId"], "invoice.paid",
             invoiceId=invoiceEntity.get("id"),
@@ -685,7 +814,6 @@ class WebhookService:
             status="paid"
         )
         logger.info(f"Invoice paid stored for user {user['userId']}")
-
     def _handleRefundProcessed(self, event: dict) -> None:
         """
         Handle the refund.processed webhook event.

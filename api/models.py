@@ -161,6 +161,9 @@ class AddDomainRequest(BaseModel):
 class RemoveDomainRequest(BaseModel):
     domain: str
 
+class CancelPendingAdditionRequest(BaseModel):
+    domain: str
+
 class SubscriptionStatus(str, Enum):
     NONE = "none"
     TRIALING = "trialing"

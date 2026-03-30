@@ -915,7 +915,10 @@ class ManagementService:
                     "role",
                     "profileBio",
                     "subscriptionPlan",
-                    "subscribedExperts"
+                    "subscribedExperts",
+                    "subscriptionStatus",
+                    "subscriptionExpiry",
+                    "billingAnchorDate"
                 ) \
                 .eq("userId", userId) \
                 .execute().data
@@ -939,8 +942,13 @@ class ManagementService:
                 "company": record.get("companyName"),
                 "position": record.get("role"),
                 "bio": record.get("profileBio"),
-                "plan": record.get("subscriptionPlan"),
-                "aiExperts": aiExpertsList
+                "plan": {
+                    "planType": record.get("subscriptionPlan"),
+                    "status": record.get("subscriptionStatus"),
+                    "planExpire": record.get("subscriptionExpiry"),
+                    "nextBilling": record.get("billingAnchorDate"),
+                    "subscribedExperts": aiExpertsList
+                }
             }
             return profileResponse
         except Exception as e:
@@ -1030,7 +1038,10 @@ class ManagementService:
                     "role",
                     "profileBio",
                     "subscriptionPlan",
-                    "subscribedExperts"
+                    "subscribedExperts",
+                    "subscriptionStatus",
+                    "subscriptionExpiry",
+                    "billingAnchorDate"
                 ) \
                 .eq("userId", userId) \
                 .execute().data
@@ -1048,8 +1059,13 @@ class ManagementService:
                 "company": record.get("companyName"),
                 "position": record.get("role"),
                 "bio": record.get("profileBio"),
-                "plan": record.get("subscriptionPlan"),
-                "aiExperts": aiExpertsList
+                "plan": {
+                    "planType": record.get("subscriptionPlan"),
+                    "status": record.get("subscriptionStatus"),
+                    "planExpire": record.get("subscriptionExpiry"),
+                    "nextBilling": record.get("billingAnchorDate"),
+                    "subscribedExperts": aiExpertsList
+                }
             }
             return profileResponse
         except Exception as e:
