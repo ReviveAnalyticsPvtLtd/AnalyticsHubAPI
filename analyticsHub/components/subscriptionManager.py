@@ -1,5 +1,5 @@
 """
-subscriptionManager.py
+analyticsHub/components/subscriptionManager.py
 
 This module provides utility functions for managing user subscription expiry calculations,
 grace period handling, Razorpay subscription status synchronization, and sending warning
