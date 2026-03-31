@@ -79,7 +79,7 @@ class QueryRephaser:
                 partial_variables = {"format_instructions": queryRephraseParser.get_format_instructions()}
             )
             llm = ChatOpenAI(
-                base_url=os.environ.get("OPENROUTER_BASE_URL"),
+                base_url=os.environ.get("GEMINI_BASE_URL"),
                 model=self.config.get("QUERYREPHRASER", "model"),
                 temperature=self.config.getfloat("QUERYREPHRASER", "temperature"),
                 max_tokens=self.config.getint("QUERYREPHRASER", "maxTokens", fallback=8192)

@@ -72,7 +72,7 @@ class DomainKpiMapper:
             promptTemplate = readYaml(self.domaonKpiMapperConfig.yamlPath).get("domainAwareKpiMappingAgentPrompt")
             domainAwareKpiMappingAgentPrompt = PromptTemplate.from_template(promptTemplate)
             llm = ChatOpenAI(
-                base_url=os.environ.get("OPENROUTER_BASE_URL"),
+                base_url=os.environ.get("GEMINI_BASE_URL"),
                 model=self.config.get("DOMAINKPIMAPPER", "model"),
                 temperature=self.config.getfloat("DOMAINKPIMAPPER", "temperature"),
                 max_tokens=self.config.getint("DOMAINKPIMAPPER", "maxTokens", fallback=8192)

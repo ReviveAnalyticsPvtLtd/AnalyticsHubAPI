@@ -72,7 +72,7 @@ class DashboardNameGenerator:
             promptTemplate = readYaml(self.dashboardNameGeneratorConfig.yamlPath).get("dashboardNameGeneratorPrompt")
             dashboardNamePrompt = PromptTemplate.from_template(promptTemplate)
             llm = ChatOpenAI(
-                base_url=os.environ.get("OPENROUTER_BASE_URL"),
+                base_url=os.environ.get("GEMINI_BASE_URL"),
                 model=self.config.get("DASHBOARDNAMEGENERATOR", "model"),
                 temperature=self.config.getfloat("DASHBOARDNAMEGENERATOR", "temperature"),
                 max_tokens=self.config.getint("DASHBOARDNAMEGENERATOR", "maxTokens", fallback=8192)

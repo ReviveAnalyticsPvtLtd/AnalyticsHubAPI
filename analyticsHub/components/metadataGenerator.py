@@ -68,7 +68,7 @@ class MetadataGenerator:
             promptTemplate = readYaml(self.metadataGeneratorConfig.yamlPath).get("metadataGeneratorPrompt")
             prompt = ChatPromptTemplate.from_template(promptTemplate)
             llm = ChatOpenAI(
-                base_url=os.environ.get("OPENROUTER_BASE_URL"),
+                base_url=os.environ.get("GEMINI_BASE_URL"),
                 model=self.config.get("METADATAGENERATOR", "model"),
                 temperature=self.config.getfloat("METADATAGENERATOR", "temperature"),
                 max_tokens=self.config.getint("METADATAGENERATOR", "maxTokens", fallback=8192)

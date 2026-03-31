@@ -70,7 +70,7 @@ class InsightGenerator:
             promptTemplate = readYaml(self.insightGeneratorConfig.yamlPath).get("insightGeneratorAgentPrompt")
             insightGeneratorPrompt = PromptTemplate.from_template(promptTemplate)
             llm = ChatOpenAI(
-                base_url=os.environ.get("OPENROUTER_BASE_URL"),
+                base_url=os.environ.get("GEMINI_BASE_URL"),
                 model=self.config.get("INSIGHTGENERATOR", "model"),
                 temperature=self.config.getfloat("INSIGHTGENERATOR", "temperature"),
                 max_tokens=self.config.getint("INSIGHTGENERATOR", "maxTokens", fallback=8192)

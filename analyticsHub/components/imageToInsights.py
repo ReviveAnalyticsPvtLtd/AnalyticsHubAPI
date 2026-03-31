@@ -54,7 +54,7 @@ class ImageToInsights:
         self.config = getConfig(self.imageToInsightsConfig.configPath)
         self.prompt = readYaml(filePath=self.imageToInsightsConfig.yamlPath).get("imageToInsightGeneratorPrompt")
         self.client = OpenAI(
-            base_url=os.environ.get("OPENROUTER_BASE_URL"),
+            base_url=os.environ.get("GEMINI_BASE_URL"),
             api_key=os.environ.get("OPENAI_API_KEY"),
         )
 

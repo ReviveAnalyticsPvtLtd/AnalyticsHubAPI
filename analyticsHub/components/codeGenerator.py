@@ -70,7 +70,7 @@ class CodeGenerator:
             promptTemplate = readYaml(self.codeGeneratorConfig.yamlPath).get("codeGeneratorAgentPrompt")
             codeGeneratorPrompt = PromptTemplate.from_template(promptTemplate)
             llm = ChatOpenAI(
-                base_url=os.environ.get("OPENROUTER_BASE_URL"),
+                base_url=os.environ.get("GEMINI_BASE_URL"),
                 model=self.config.get("CODEGENERATOR", "model"),
                 temperature=self.config.getfloat("CODEGENERATOR", "temperature"),
                 max_tokens=self.config.getint("CODEGENERATOR", "maxTokens", fallback=8192)
