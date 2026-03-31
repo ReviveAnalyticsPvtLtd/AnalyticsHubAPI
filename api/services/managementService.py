@@ -12,7 +12,7 @@ from analyticsHub.components.metadataGenerator import MetadataGenerator
 from analyticsHub.components.insightGenerator import InsightGenerator
 from analyticsHub.components.reportGenerator import ReportGenerator
 from analyticsHub.components.domainKpiMapper import DomainKpiMapper
-from langchain_experimental.utilities import PythonREPL
+from utils.llmOutputParser import parseModelJsonOutput
 from api.commons import updateProjectModifiedAt
 from utils.exceptionHandler import CustomException
 from concurrent.futures import ProcessPoolExecutor
@@ -451,77 +451,9 @@ class ManagementService:
         attributeInfo += 'SAMPLE ROW:\n' + str(df.loc[df.index[:1]].to_string()) + '\n'
         return attributeInfo
 
-    @staticmethod
-    def _extractBetween(text: str, opening: str, closing: str) -> str | None:
-        """Extract substring from first opening to last closing token."""
-        startIdx = text.find(opening)
-        endIdx = text.rfind(closing)
-        if startIdx == -1 or endIdx == -1 or endIdx <= startIdx:
-            return None
-        return text[startIdx : endIdx + 1].strip()
-
-    @staticmethod
-    def _stripFenceLanguage(block: str) -> str:
-        """Remove fence language tags like `json` from fenced blocks."""
-        cleaned = block.strip()
-        lowered = cleaned.lower()
-        if lowered.startswith("json\n"):
-            return cleaned.split("\n", 1)[1].strip()
-        if lowered.startswith("json "):
-            return cleaned[5:].strip()
-        if "\n" in cleaned:
-            firstLine, rest = cleaned.split("\n", 1)
-            if firstLine.strip().lower() in {"json", "python", "javascript", "js"}:
-                return rest.strip()
-        return cleaned
-
     def _parseModelJsonOutput(self, rawOutput: object, stage: str) -> dict:
-        """
-        Parse potentially messy model output into a JSON object.
-
-        Handles code fences, language tags, and extra prose around JSON.
-        """
-        if isinstance(rawOutput, dict):
-            return rawOutput
-        if rawOutput is None:
-            raise ValueError(f"{stage} model output is empty.")
-
-        rawText = str(rawOutput).strip()
-        if not rawText:
-            raise ValueError(f"{stage} model output is blank.")
-
-        sanitized = PythonREPL().sanitize_input(query=rawText).strip()
-        candidates: list[str] = [rawText, sanitized]
-
-        for baseText in (rawText, sanitized):
-            if "```" in baseText:
-                for block in baseText.split("```"):
-                    block = self._stripFenceLanguage(block)
-                    if block:
-                        candidates.append(block)
-            for opening, closing in (("{", "}"), ("[", "]")):
-                sliced = self._extractBetween(baseText, opening, closing)
-                if sliced:
-                    candidates.append(sliced)
-
-        seen: set[str] = set()
-        for candidate in candidates:
-            candidate = self._stripFenceLanguage(candidate).strip()
-            if not candidate or candidate in seen:
-                continue
-            seen.add(candidate)
-            try:
-                parsed = orjson.loads(candidate.encode("utf-8"))
-                if not isinstance(parsed, dict):
-                    raise ValueError(f"{stage} output must be a JSON object.")
-                return parsed
-            except Exception:
-                continue
-
-        preview = sanitized[:300].replace("\n", "\\n")
-        raise ValueError(
-            f"{stage} returned non-JSON output. Preview: {preview}"
-        )
+        """Delegate to shared parser in utils.llmOutputParser."""
+        return parseModelJsonOutput(rawOutput, stage)
         
     def _generateMetadata(self, projectId: str) -> dict:
         """
@@ -983,7 +915,10 @@ class ManagementService:
                     "role",
                     "profileBio",
                     "subscriptionPlan",
-                    "subscribedExperts"
+                    "subscribedExperts",
+                    "subscriptionStatus",
+                    "subscriptionExpiry",
+                    "billingAnchorDate"
                 ) \
                 .eq("userId", userId) \
                 .execute().data
@@ -1007,8 +942,13 @@ class ManagementService:
                 "company": record.get("companyName"),
                 "position": record.get("role"),
                 "bio": record.get("profileBio"),
-                "plan": record.get("subscriptionPlan"),
-                "aiExperts": aiExpertsList
+                "plan": {
+                    "planType": record.get("subscriptionPlan"),
+                    "status": record.get("subscriptionStatus"),
+                    "planExpire": record.get("subscriptionExpiry"),
+                    "nextBilling": record.get("billingAnchorDate"),
+                    "subscribedExperts": aiExpertsList
+                }
             }
             return profileResponse
         except Exception as e:
@@ -1098,7 +1038,10 @@ class ManagementService:
                     "role",
                     "profileBio",
                     "subscriptionPlan",
-                    "subscribedExperts"
+                    "subscribedExperts",
+                    "subscriptionStatus",
+                    "subscriptionExpiry",
+                    "billingAnchorDate"
                 ) \
                 .eq("userId", userId) \
                 .execute().data
@@ -1116,8 +1059,13 @@ class ManagementService:
                 "company": record.get("companyName"),
                 "position": record.get("role"),
                 "bio": record.get("profileBio"),
-                "plan": record.get("subscriptionPlan"),
-                "aiExperts": aiExpertsList
+                "plan": {
+                    "planType": record.get("subscriptionPlan"),
+                    "status": record.get("subscriptionStatus"),
+                    "planExpire": record.get("subscriptionExpiry"),
+                    "nextBilling": record.get("billingAnchorDate"),
+                    "subscribedExperts": aiExpertsList
+                }
             }
             return profileResponse
         except Exception as e:

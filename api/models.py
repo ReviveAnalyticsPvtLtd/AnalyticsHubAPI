@@ -55,6 +55,10 @@ class SpeechToTextModel(BaseModel):
 
 class ImageToInsightsModel(BaseModel):
     b64String: str
+    projectId: str
+    pageId: str | None = None
+    widgetIds: list[str] | None = None
+    filters: list[dict] | None = None
 
 class DeleteTable(BaseModel):
     projectId: str
@@ -143,17 +147,39 @@ class DeleteDashboardElement(BaseModel):
     id: str
 
 class VerifySubscriptionRequest(BaseModel):
-    subscribedExperts: list[str]
+    domains: list[str]
     razorpaySubscriptionId: str
     razorpayPaymentId: str 
     razorpaySignature: str 
-    userId: str 
 
-class SubscriptionPlan(str, Enum):
-    MONTHLY_20 = "MONTHLY_20"
-    MONTHLY_40 = "MONTHLY_40"
-    MONTHLY_60 = "MONTHLY_60"
-    MONTHLY_80 = "MONTHLY_80"
+class CreateSubscriptionRequest(BaseModel):
+    domains: list[str]
+
+class AddDomainRequest(BaseModel):
+    domain: str
+
+class RemoveDomainRequest(BaseModel):
+    domain: str
+
+class CancelPendingAdditionRequest(BaseModel):
+    domain: str
+
+class SubscriptionStatus(str, Enum):
+    NONE = "none"
+    TRIALING = "trialing"
+    ACTIVE = "active"
+    HALTED = "halted"
+    CANCELLED = "cancelled"
+    PAUSED = "paused"
+    EXPIRED = "expired"
+    PENDING = "pending"
+
+class CancelSubscriptionRequest(BaseModel):
+    cancelAtCycleEnd: bool = True
+
+class RefundRequest(BaseModel):
+    paymentId: str
+    amount: int | None = None
 
 class SaveQuery(BaseModel):
     projectId: str
@@ -166,3 +192,8 @@ class DeleteQuery(BaseModel):
 class RenameProject(BaseModel):
     projectId: str
     newProjectName: str
+
+class UpdateDashboardInsightStatus(BaseModel):
+    projectId: str
+    insightId: str
+    status: str

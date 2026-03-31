@@ -1,5 +1,7 @@
 """
-UtilityService module provides utility functions such as speech-to-text transcription, sending forecasts, and sample data manipulations for AnalyticsHub.
+UtilityService module provides utility functions such as speech-to-text transcription,
+hybrid image-to-insights generation, insight persistence, sending forecasts,
+and sample data manipulations for AnalyticsHub.
 
 Author: Rauhan Ahmed Siddiqui
 Version: 1.0.0
@@ -10,20 +12,32 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["utilityService"]
 
 
+from analyticsHub.components.insightContextBuilder import InsightContextBuilder
 from analyticsHub.components.imageToInsights import ImageToInsights
-from api.models import SpeechToTextModel, ImageToInsightsModel
+from analyticsHub.components.signalEngine import SignalEngine
 from analyticsHub.components.speechToText import SpeechToText
+from api.models import SpeechToTextModel, ImageToInsightsModel
 from utils.exceptionHandler import CustomException
 from analyticsHub.triggers.celery import celeryApp
+from urllib.request import urlopen
 from celery.result import AsyncResult
 from utils.logger import logger
 from api.commons import client
+from datetime import datetime, timezone
 import seaborn as sns
 import pandas as pd
+import json
+import uuid
+import time
+import os
+import io
+
+VALID_INSIGHT_STATUSES = {"new", "accepted", "rejected", "implemented"}
 
 class UtilityService:
     """
-    Service class providing utility operations such as speech transcription, sending forecasts, and sample data manipulations.
+    Service class providing utility operations such as speech transcription, hybrid insight
+    generation with persistence, sending forecasts, and sample data manipulations.
     """
     def __init__(self) -> None:
         """
@@ -32,6 +46,8 @@ class UtilityService:
         logger.info("Initializing Utility Service.")
         self.sampleDataset = sns.load_dataset("tips")
         self.imageToInsightsModule = ImageToInsights()
+        self.insightContextBuilder = InsightContextBuilder()
+        self.signalEngine = SignalEngine()
         self.speechToTextModule = SpeechToText()
         self.client = client
     
@@ -54,27 +70,169 @@ class UtilityService:
             logger.error(exception)
             raise exception
         
-    def getInsightsFromImage(self, imageToInsights: ImageToInsightsModel) -> str:
+    def getInsightsFromImage(self, imageToInsights: ImageToInsightsModel) -> dict:
         """
-        Extracts insights from a base64-encoded image (e.g., a dashboard screenshot)
-        using the ImageToInsights module.
+        Extracts structured, evidence-backed insights from a base64-encoded dashboard image
+        using the hybrid data + statistics + domain + LLM pipeline.
+
+        Orchestrates context building, statistical signal extraction, LLM inference,
+        and persistence of the generated insights.
 
         Args:
-            imageToInsights (ImageToInsightsModel): Model containing the base64-encoded image string.
+            imageToInsights (ImageToInsightsModel): Model containing image, project context,
+                and user objectives.
 
         Returns:
-            str: Text containing structured business insights extracted from the image.
+            dict: Structured insights with diagnostic_insights, prescriptive_actions, missing_data.
 
         Raises:
             CustomException: If insight generation fails.
         """
         try:
-            insightText = self.imageToInsightsModule.getInsights(b64String=imageToInsights.b64String)
-            return insightText
+            context = self.insightContextBuilder.buildContext(
+                projectId=imageToInsights.projectId,
+                pageId=imageToInsights.pageId,
+                widgetIds=imageToInsights.widgetIds,
+                filters=imageToInsights.filters,
+            )
+
+            statisticalSummary = self.signalEngine.buildStatisticalSummary(
+                chartData=context.get("chartData", [])
+            )
+            context["statisticalSummary"] = statisticalSummary
+
+            insights = self.imageToInsightsModule.getInsights(
+                b64String=imageToInsights.b64String,
+                context=context,
+            )
+
+            self._persistDashboardInsight(
+                projectId=imageToInsights.projectId,
+                pageId=imageToInsights.pageId,
+                insights=insights,
+            )
+
+            return insights
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
-            raise exception   
+            raise exception
+
+    def _persistDashboardInsight(self, projectId: str, pageId: str | None, insights: dict) -> None:
+        """
+        Persists a generated insight record to dashboardInsights.json in project storage.
+
+        Args:
+            projectId (str): The project identifier.
+            pageId (str | None): The dashboard page the insight was generated for.
+            insights (dict): The structured insight payload.
+        """
+        try:
+            record = {
+                "id": str(uuid.uuid4()),
+                "pageId": pageId,
+                "generatedAt": datetime.now(timezone.utc).isoformat(),
+                "insights": insights,
+                "status": "new",
+            }
+
+            existing = self._loadDashboardInsightsFile(projectId)
+            existing.append(record)
+
+            with io.BytesIO() as buffer:
+                buffer.write(json.dumps(existing, indent=4).encode("utf-8"))
+                buffer.seek(0)
+                self.client.storage.from_("AnalyticsHub").upload(
+                    path=f"{projectId}/dashboardInsights.json",
+                    file=buffer.getvalue(),
+                    file_options={"upsert": "true"},
+                )
+            logger.info(f"Dashboard insight persisted for project {projectId}.")
+        except Exception as e:
+            logger.warning(f"Failed to persist dashboard insight: {e}")
+
+    def _loadDashboardInsightsFile(self, projectId: str) -> list:
+        """
+        Loads dashboardInsights.json from Supabase storage.
+
+        Returns:
+            list: Existing insight records, or empty list if file does not exist.
+        """
+        try:
+            files = self.client.storage.from_("AnalyticsHub").list(path=projectId)
+            if "dashboardInsights.json" not in [x.get("name") for x in files]:
+                return []
+            fileUrl = os.environ["FILE_URL"].format(projectId=projectId, fileName="dashboardInsights.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            data = json.loads(urlopen(fileUrl).read())
+            return data if isinstance(data, list) else []
+        except Exception:
+            return []
+
+    def getDashboardInsights(self, projectId: str) -> list:
+        """
+        Retrieves all persisted dashboard insights for a project.
+
+        Args:
+            projectId (str): The project identifier.
+
+        Returns:
+            list: List of insight records.
+
+        Raises:
+            CustomException: If retrieval fails.
+        """
+        try:
+            return self._loadDashboardInsightsFile(projectId)
+        except Exception as e:
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception
+
+    def updateDashboardInsightStatus(self, projectId: str, insightId: str, status: str) -> dict:
+        """
+        Updates the lifecycle status of a persisted dashboard insight.
+
+        Args:
+            projectId (str): The project identifier.
+            insightId (str): The unique insight record ID.
+            status (str): New status — one of "new", "accepted", "rejected", "implemented".
+
+        Returns:
+            dict: The updated insight record.
+
+        Raises:
+            CustomException: If the update fails or the insight is not found.
+        """
+        try:
+            if status not in VALID_INSIGHT_STATUSES:
+                raise ValueError(f"Invalid status '{status}'. Must be one of {VALID_INSIGHT_STATUSES}.")
+
+            records = self._loadDashboardInsightsFile(projectId)
+            updatedRecord = None
+            for record in records:
+                if record.get("id") == insightId:
+                    record["status"] = status
+                    updatedRecord = record
+                    break
+
+            if updatedRecord is None:
+                raise ValueError(f"Insight record '{insightId}' not found in project '{projectId}'.")
+
+            with io.BytesIO() as buffer:
+                buffer.write(json.dumps(records, indent=4).encode("utf-8"))
+                buffer.seek(0)
+                self.client.storage.from_("AnalyticsHub").upload(
+                    path=f"{projectId}/dashboardInsights.json",
+                    file=buffer.getvalue(),
+                    file_options={"upsert": "true"},
+                )
+
+            logger.info(f"Dashboard insight {insightId} status updated to '{status}'.")
+            return updatedRecord
+        except Exception as e:
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception
         
     def sendForecasts(self) -> AsyncResult:
         """
