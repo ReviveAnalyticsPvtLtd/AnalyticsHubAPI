@@ -13,11 +13,11 @@ __all__ = ["DashboardNameGenerator"]
 
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
+from langchain_google_genai import ChatGoogleGenerativeAI
 from analyticsHub.utils import readYaml, getConfig
 from utils.exceptionHandler import CustomException
 from langchain_core.prompts import PromptTemplate
 from langchain_core.messages import AIMessage
-from langchain_openai import ChatOpenAI
 from dataclasses import dataclass
 from utils.logger import logger
 import os
@@ -71,8 +71,7 @@ class DashboardNameGenerator:
             self.config = getConfig(self.dashboardNameGeneratorConfig.configPath)
             promptTemplate = readYaml(self.dashboardNameGeneratorConfig.yamlPath).get("dashboardNameGeneratorPrompt")
             dashboardNamePrompt = PromptTemplate.from_template(promptTemplate)
-            llm = ChatOpenAI(
-                base_url=os.environ.get("GEMINI_BASE_URL"),
+            llm = ChatGoogleGenerativeAI(
                 model=self.config.get("DASHBOARDNAMEGENERATOR", "model"),
                 temperature=self.config.getfloat("DASHBOARDNAMEGENERATOR", "temperature"),
                 max_tokens=self.config.getint("DASHBOARDNAMEGENERATOR", "maxTokens", fallback=8192)

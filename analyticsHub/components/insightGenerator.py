@@ -11,11 +11,11 @@ __all__ = ["InsightGenerator"]
 
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
+from langchain_google_genai import ChatGoogleGenerativeAI
 from analyticsHub.utils import readYaml, getConfig
 from utils.exceptionHandler import CustomException
 from langchain_core.prompts import PromptTemplate
 from langchain_core.messages import AIMessage
-from langchain_openai import ChatOpenAI
 from dataclasses import dataclass
 from utils.logger import logger
 import os
@@ -69,8 +69,7 @@ class InsightGenerator:
             self.config = getConfig(self.insightGeneratorConfig.configPath)
             promptTemplate = readYaml(self.insightGeneratorConfig.yamlPath).get("insightGeneratorAgentPrompt")
             insightGeneratorPrompt = PromptTemplate.from_template(promptTemplate)
-            llm = ChatOpenAI(
-                base_url=os.environ.get("GEMINI_BASE_URL"),
+            llm = ChatGoogleGenerativeAI(
                 model=self.config.get("INSIGHTGENERATOR", "model"),
                 temperature=self.config.getfloat("INSIGHTGENERATOR", "temperature"),
                 max_tokens=self.config.getint("INSIGHTGENERATOR", "maxTokens", fallback=8192)

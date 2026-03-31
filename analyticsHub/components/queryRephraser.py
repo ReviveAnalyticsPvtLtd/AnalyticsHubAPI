@@ -10,12 +10,12 @@ __all__ = ["QueryRephaser"]
 
 
 from langchain_core.output_parsers import JsonOutputParser
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.runnables import RunnableLambda
 from utils.exceptionHandler import CustomException
 from analyticsHub.utils import readYaml, getConfig
 from langchain_core.prompts import PromptTemplate
 from langchain_core.messages import AIMessage
-from langchain_openai import ChatOpenAI
 from pydantic import Field, BaseModel
 from dataclasses import dataclass
 from utils.logger import logger
@@ -78,8 +78,7 @@ class QueryRephaser:
                 input_variables = ["metadata", "query"],
                 partial_variables = {"format_instructions": queryRephraseParser.get_format_instructions()}
             )
-            llm = ChatOpenAI(
-                base_url=os.environ.get("GEMINI_BASE_URL"),
+            llm = ChatGoogleGenerativeAI(
                 model=self.config.get("QUERYREPHRASER", "model"),
                 temperature=self.config.getfloat("QUERYREPHRASER", "temperature"),
                 max_tokens=self.config.getint("QUERYREPHRASER", "maxTokens", fallback=8192)
