@@ -132,12 +132,12 @@ async def removeDomain(payload: RemoveDomainRequest, token=Depends(verifyToken))
         ORJSONResponse: Current domains, pending removals, and effective timing.
     """
     try:
-        result = subscriptionService.removeDomain(domain=payload.domain, token=token)
+        result = subscriptionService.removeDomain(domains=payload.domains, token=token)
         return ORJSONResponse(
             status_code=200,
             content={
                 "status": "SUCCESS",
-                "message": f"Domain '{payload.domain}' scheduled for removal at cycle end.",
+                "message": f"{len(payload.domains)} domain(s) scheduled for removal at cycle end.",
                 "data": result
             }
         )

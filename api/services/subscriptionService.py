@@ -444,22 +444,23 @@ class SubscriptionService:
             logger.error(exception)
             raise exception
 
-    def removeDomain(self, domain: str, token: str) -> dict:
+    def removeDomain(self, domains: list[str], token: str) -> dict:
         """
-        Schedule a domain removal at the end of the current billing cycle.
+        Schedule one or more domain removals at the end of the current billing cycle.
 
-        The user retains access to the domain until cycle end. Razorpay is
-        told to reduce quantity at cycle_end so no refund is issued.
+        The user retains access to all removed domains until cycle end. Razorpay is
+        told to reduce quantity at cycle_end so no refund is issued. At least one
+        domain must remain active after the operation.
 
         Args:
-            domain (str): The domain expert name to remove.
+            domains (list[str]): The domain expert names to remove.
             token (str): Authorization token.
 
         Returns:
             dict: Current domains, pending removals, and effective timing.
         """
         try:
-            normalizedDomain = self._normalizeSingleDomain(domain)
+            normalizedDomains = self._normalizeAndValidateDomains(domains)
             decodedToken = jwt.decode(
                 token,
                 os.environ["SECRET_KEY"],
@@ -476,51 +477,53 @@ class SubscriptionService:
             if user["subscriptionStatus"] != "active":
                 raise Exception("Subscription must be active to remove a domain")
             currentExperts = [e.strip() for e in user["subscribedExperts"].split(",") if e.strip()]
-            if normalizedDomain not in currentExperts:
-                raise Exception(f"Domain '{normalizedDomain}' is not in your active domains")
             pendingRemovals = user.get("pendingRemovals") or []
-            if normalizedDomain in pendingRemovals:
-                raise Exception(f"Domain '{normalizedDomain}' is already scheduled for removal")
+            for domain in normalizedDomains:
+                if domain not in currentExperts:
+                    raise Exception(f"Domain '{domain}' is not in your active domains")
+                if domain in pendingRemovals:
+                    raise Exception(f"Domain '{domain}' is already scheduled for removal")
             activeDomains = [d for d in currentExperts if d not in pendingRemovals]
-            if len(activeDomains) <= 1:
-                raise Exception("Cannot remove last domain. Use cancel subscription instead.")
+            if len(activeDomains) - len(normalizedDomains) < 1:
+                raise Exception("Cannot remove all domains. At least one must remain active. Use cancel subscription instead.")
             subscriptionId = user["razorpaySubscriptionId"]
             if not subscriptionId:
                 raise Exception("No active subscription found for this user")
             domainCount = user["domainCount"] or len(currentExperts)
             activeCount = domainCount - len(pendingRemovals)
-            newQuantity = activeCount - 1
+            newQuantity = activeCount - len(normalizedDomains)
             if newQuantity < 1:
-                raise Exception("Cannot remove last domain. Use cancel subscription instead.")
+                raise Exception("Cannot remove all domains. At least one must remain active. Use cancel subscription instead.")
             self.razorpayClient.subscription.edit(subscriptionId, {
                 "quantity": newQuantity,
                 "schedule_change_at": "cycle_end"
             })
-            pendingRemovals.append(normalizedDomain)
+            pendingRemovals.extend(normalizedDomains)
             self.client.table("Users").update({
                 "pendingRemovals": pendingRemovals
             }).eq("userId", userId).execute()
-            self.client.table("DomainChangeLog").insert({
-                "userId": userId,
-                "action": "remove",
-                "domain": normalizedDomain,
-                "previousQuantity": domainCount,
-                "newQuantity": newQuantity,
-                "proratedAmount": 0,
-                "effectiveAt": "cycle_end"
-            }).execute()
+            for domain in normalizedDomains:
+                self.client.table("DomainChangeLog").insert({
+                    "userId": userId,
+                    "action": "remove",
+                    "domain": domain,
+                    "previousQuantity": domainCount,
+                    "newQuantity": newQuantity,
+                    "proratedAmount": 0,
+                    "effectiveAt": "cycle_end"
+                }).execute()
             self._auditLog(
                 userId, "domain.removal_scheduled",
                 subscriptionId=subscriptionId,
                 status="active",
                 metadata={
-                    "domain": normalizedDomain,
+                    "domains": normalizedDomains,
                     "previousQuantity": domainCount,
                     "newQuantity": newQuantity,
                     "effectiveAt": "cycle_end"
                 }
             )
-            logger.info(f"Domain '{normalizedDomain}' scheduled for removal at cycle_end for user {userId}")
+            logger.info(f"Domains {normalizedDomains} scheduled for removal at cycle_end for user {userId}")
             return {
                 "currentDomains": currentExperts,
                 "pendingRemovals": pendingRemovals,

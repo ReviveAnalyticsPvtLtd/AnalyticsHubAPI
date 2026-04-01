@@ -157,7 +157,7 @@ class AddDomainRequest(BaseModel):
     domain: str
 
 class RemoveDomainRequest(BaseModel):
-    domain: str
+    domains: list[str]
 
 class CancelPendingAdditionRequest(BaseModel):
     domain: str
