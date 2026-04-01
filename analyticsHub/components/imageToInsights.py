@@ -52,7 +52,10 @@ class ImageToInsights:
         logger.info("Initializing image-to-insight model.")
         self.imageToInsightsConfig = ImageToInsightsConfig()
         self.config = getConfig(self.imageToInsightsConfig.configPath)
-        self.prompt = readYaml(filePath=self.imageToInsightsConfig.yamlPath).get("imageToInsightGeneratorPrompt")
+        prompt = readYaml(filePath=self.imageToInsightsConfig.yamlPath).get("imageToInsightGeneratorPrompt")
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError("Missing or invalid 'imageToInsightGeneratorPrompt' in prompts.yaml.")
+        self.prompt = prompt
         self.client = OpenAI(
             base_url=os.environ.get("GEMINI_BASE_URL"),
             api_key=os.environ.get("OPENAI_API_KEY"),
@@ -125,9 +128,9 @@ class ImageToInsights:
                     "text": contextText
                 })
 
-            completion = self.client.chat.completions.create(
-                model=self.config.get("IMAGETOINSIGHTS", "model"),
-                messages=[
+            requestPayload = {
+                "model": self.config.get("IMAGETOINSIGHTS", "model"),
+                "messages": [
                     {
                         "role": "system",
                         "content": [
@@ -142,12 +145,17 @@ class ImageToInsights:
                         "content": userContent
                     }
                 ],
-                temperature=self.config.getfloat("IMAGETOINSIGHTS", "temperature"),
-                max_tokens=self.config.getint("IMAGETOINSIGHTS", "maxTokens"),
-                top_p=1,
-                stream=False,
-                stop=None,
-            )
+                "temperature": self.config.getfloat("IMAGETOINSIGHTS", "temperature"),
+                "max_tokens": self.config.getint("IMAGETOINSIGHTS", "maxTokens"),
+                "top_p": 1,
+                "stream": False,
+            }
+
+            stopSequence = self.config.get("IMAGETOINSIGHTS", "stop", fallback="").strip()
+            if stopSequence:
+                requestPayload["stop"] = stopSequence
+
+            completion = self.client.chat.completions.create(**requestPayload)
 
             rawOutput = completion.choices[0].message.content
 
