@@ -126,7 +126,7 @@ class ImageToInsights:
                 contextText = self._buildContextMessage(context)
                 userContent.append({
                     "type": "text",
-                    "text": contextText
+                    "text": contextText + "\n\nCRITICAL: You MUST output ONLY raw, valid JSON. Your response must be immediately parseable by `json.loads`. DO NOT wrap the output in markdown code blocks like ```json."
                 })
 
             messages = [

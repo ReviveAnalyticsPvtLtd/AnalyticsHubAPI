@@ -83,13 +83,43 @@ def parseModelJsonOutput(rawOutput: object, stage: str) -> dict:
         if not candidate or candidate in seen:
             continue
         seen.add(candidate)
+        
+        # Method 1: Strict JSON parsing
         try:
             parsed = orjson.loads(candidate.encode("utf-8"))
-            if not isinstance(parsed, dict):
-                raise ValueError(f"{stage} output must be a JSON object.")
-            return parsed
+            if isinstance(parsed, dict):
+                return parsed
         except Exception:
-            continue
+            pass
+
+        # Method 2: Python dict parsing (handles single quotes, trailing commas)
+        try:
+            import ast
+            parsed_ast = ast.literal_eval(candidate)
+            if isinstance(parsed_ast, dict):
+                return parsed_ast
+        except Exception:
+            pass
+            
+    # Method 3: Attempt to extract anything that looks like a dict
+    for candidate in candidates:
+        candidate = stripFenceLanguage(candidate).strip()
+        start = candidate.find("{")
+        end = candidate.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            dict_str = candidate[start:end+1]
+            try:
+                parsed = orjson.loads(dict_str.encode("utf-8"))
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                try:
+                    import ast
+                    parsed_ast = ast.literal_eval(dict_str)
+                    if isinstance(parsed_ast, dict):
+                        return parsed_ast
+                except Exception:
+                    pass
 
     preview = sanitized[:300].replace("\n", "\\n")
     raise ValueError(
