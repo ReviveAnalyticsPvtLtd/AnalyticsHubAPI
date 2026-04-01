@@ -86,9 +86,9 @@ class InsightContextBuilder:
         except Exception:
             return {}
 
-    def _extractChartData(self, dashboardConfig: dict, pageId: str | None, widgetIds: list[str] | None) -> list[dict]:
+    def _extractChartData(self, dashboardConfig: dict, pageId: str | None) -> list[dict]:
         """
-        Extracts compact chart data from dashboard widgets, filtered by page and widget IDs.
+        Extracts compact chart data from dashboard widgets, filtered by page.
         """
         chartData = []
         if not dashboardConfig:
@@ -100,10 +100,7 @@ class InsightContextBuilder:
             if not page:
                 continue
             for widget in page.get("widgets", []):
-                if widgetIds and widget.get("id") not in widgetIds:
-                    continue
                 chartData.append({
-                    "widgetId": widget.get("id"),
                     "title": widget.get("title"),
                     "chartType": widget.get("chartType"),
                     "data": widget.get("data"),
@@ -117,8 +114,6 @@ class InsightContextBuilder:
         self,
         projectId: str,
         pageId: str | None = None,
-        widgetIds: list[str] | None = None,
-        filters: list[dict] | None = None,
     ) -> dict:
         """
         Assembles the full context payload for insight generation.
@@ -126,8 +121,6 @@ class InsightContextBuilder:
         Args:
             projectId (str): The project identifier.
             pageId (str | None): Optional dashboard page to focus on.
-            widgetIds (list[str] | None): Optional widget IDs to restrict chart data.
-            filters (list[dict] | None): Active dashboard filters.
 
         Returns:
             dict: Context payload with keys: metadata, dashboard, chartData, domainContext, filters.
@@ -142,7 +135,7 @@ class InsightContextBuilder:
             dashboardConfig = self._loadJsonFromStorage(projectId, "dashboardConfig.json") or {}
             existingInsights = self._loadJsonFromStorage(projectId, "insights.json") or {}
             domainContext = self._loadDomainContext(projectId)
-            chartData = self._extractChartData(dashboardConfig, pageId, widgetIds)
+            chartData = self._extractChartData(dashboardConfig, pageId)
 
             pageName = None
             if pageId and dashboardConfig.get(pageId):
@@ -158,7 +151,6 @@ class InsightContextBuilder:
                 },
                 "chartData": chartData,
                 "domainContext": domainContext,
-                "filters": filters or [],
             }
 
             logger.info(f"Insight context assembled: {len(chartData)} widgets, domain={'present' if domainContext else 'absent'}.")
