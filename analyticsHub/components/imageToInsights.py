@@ -2,9 +2,7 @@
 imageToInsights.py
 
 This module provides the ImageToInsights class for analyzing base64-encoded dashboard images
-and extracting meaningful, structured insights using a vision-capable model via OpenRouter
-(OpenAI-compatible API).
-
+and extracting meaningful, structured insights using a vision-capable model.
 Supports a hybrid mode where chart data, statistical signals, and domain context are injected
 alongside the image to produce evidence-backed, structured JSON insights.
 """
@@ -13,12 +11,13 @@ __version__ = "1.0.0"
 __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["ImageToInsights"]
 
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import HumanMessage, SystemMessage
 from utils.llmOutputParser import parseModelJsonOutput
 from utils.exceptionHandler import CustomException
 from analyticsHub.utils import readYaml, getConfig
 from dataclasses import dataclass
 from utils.logger import logger
-from openai import OpenAI
 import json
 import os
 
@@ -47,7 +46,7 @@ class ImageToInsights:
         Initializes the ImageToInsights instance:
             - Loads system prompt from YAML
             - Loads model configuration from config file
-            - Sets up the OpenRouter client (OpenAI-compatible)
+            - Sets up the ChatGoogleGenerativeAI client
         """
         logger.info("Initializing image-to-insight model.")
         self.imageToInsightsConfig = ImageToInsightsConfig()
@@ -56,9 +55,11 @@ class ImageToInsights:
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Missing or invalid 'imageToInsightGeneratorPrompt' in prompts.yaml.")
         self.prompt = prompt
-        self.client = OpenAI(
-            base_url=os.environ.get("GEMINI_BASE_URL"),
-            api_key=os.environ.get("OPENAI_API_KEY"),
+        
+        self.llm = ChatGoogleGenerativeAI(
+            model=self.config.get("IMAGETOINSIGHTS", "model"),
+            temperature=self.config.getfloat("IMAGETOINSIGHTS", "temperature"),
+            max_tokens=self.config.getint("IMAGETOINSIGHTS", "maxTokens", fallback=4096)
         )
 
     def _buildContextMessage(self, context: dict) -> str:
@@ -128,36 +129,19 @@ class ImageToInsights:
                     "text": contextText
                 })
 
-            requestPayload = {
-                "model": self.config.get("IMAGETOINSIGHTS", "model"),
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": self.prompt
-                            }
-                        ]
-                    },
-                    {
-                        "role": "user",
-                        "content": userContent
-                    }
-                ],
-                "temperature": self.config.getfloat("IMAGETOINSIGHTS", "temperature"),
-                "max_tokens": self.config.getint("IMAGETOINSIGHTS", "maxTokens"),
-                "top_p": 1,
-                "stream": False,
-            }
+            messages = [
+                SystemMessage(content=self.prompt),
+                HumanMessage(content=userContent)
+            ]
 
             stopSequence = self.config.get("IMAGETOINSIGHTS", "stop", fallback="").strip()
+            
             if stopSequence:
-                requestPayload["stop"] = stopSequence
+                response = self.llm.bind(stop=[stopSequence]).invoke(messages)
+            else:
+                response = self.llm.invoke(messages)
 
-            completion = self.client.chat.completions.create(**requestPayload)
-
-            rawOutput = completion.choices[0].message.content
+            rawOutput = response.content
 
             if context:
                 return parseModelJsonOutput(rawOutput, "Image-to-insights")
