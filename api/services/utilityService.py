@@ -92,8 +92,6 @@ class UtilityService:
             context = self.insightContextBuilder.buildContext(
                 projectId=imageToInsights.projectId,
                 pageId=imageToInsights.pageId,
-                widgetIds=imageToInsights.widgetIds,
-                filters=imageToInsights.filters,
             )
 
             statisticalSummary = self.signalEngine.buildStatisticalSummary(
