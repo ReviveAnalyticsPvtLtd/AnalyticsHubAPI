@@ -671,14 +671,15 @@ class SubscriptionService:
             logger.error(exception)
             raise exception
 
-    def cancelSubscription(self, token: str, cancelAtCycleEnd: bool = True) -> dict:
+    def cancelSubscription(self, token: str) -> dict:
         """
-        Cancel a user's Razorpay subscription.
+        Cancel a user's Razorpay subscription at the end of the current billing cycle.
+
+        The user retains full access until the cycle ends. The actual status
+        transition to 'cancelled' is handled by the subscription.cancelled webhook.
 
         Args:
             token (str): Authorization token.
-            cancelAtCycleEnd (bool): If True, cancel at end of current billing
-                cycle. If False, cancel immediately.
 
         Returns:
             dict: The Razorpay cancellation response.
@@ -699,18 +700,18 @@ class SubscriptionService:
                 raise Exception("No active subscription found for this user")
             result = self.razorpayClient.subscription.cancel(
                 subscriptionId,
-                {"cancel_at_cycle_end": 1 if cancelAtCycleEnd else 0}
+                {"cancel_at_cycle_end": 1}
             )
             self.client.table("Users").update({
-                "subscriptionStatus": "cancelled",
+                "subscriptionStatus": "pending_cancellation",
             }).eq("userId", userId).execute()
             self._auditLog(
-                userId, "subscription.cancelled",
+                userId, "subscription.cancellation_scheduled",
                 subscriptionId=subscriptionId,
-                status="cancelled",
-                metadata={"cancel_at_cycle_end": cancelAtCycleEnd}
+                status="pending_cancellation",
+                metadata={"cancel_at_cycle_end": True}
             )
-            logger.info(f"Subscription {subscriptionId} cancelled for user {userId}")
+            logger.info(f"Subscription {subscriptionId} scheduled for cancellation at cycle end for user {userId}")
             return result
         except Exception as e:
             exception = CustomException(e)

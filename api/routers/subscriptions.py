@@ -10,7 +10,7 @@ __all__ = ["router"]
 
 
 from utils.exceptionHandler import CustomException, raiseHttpException
-from api.models import VerifySubscriptionRequest, CreateSubscriptionRequest, AddDomainRequest, RemoveDomainRequest, CancelPendingAdditionRequest, CancelSubscriptionRequest, RefundRequest
+from api.models import VerifySubscriptionRequest, CreateSubscriptionRequest, AddDomainRequest, RemoveDomainRequest, CancelPendingAdditionRequest, RefundRequest
 from api.services.subscriptionService import subscriptionService
 from fastapi.responses import ORJSONResponse
 from fastapi import APIRouter, Depends
@@ -171,30 +171,24 @@ async def cancelPendingAddition(payload: CancelPendingAdditionRequest, token=Dep
         raiseHttpException(e)
 
 @router.post("/cancelSubscription")
-async def cancelSubscription(
-    payload: CancelSubscriptionRequest,
-    token=Depends(verifyToken)
-):
+async def cancelSubscription(token=Depends(verifyToken)):
     """
-    Cancel the authenticated user's Razorpay subscription.
+    Cancel the authenticated user's Razorpay subscription at the end
+    of the current billing cycle.
 
     Args:
-        payload (CancelSubscriptionRequest): Cancellation options.
         token: Authorization token dependency.
 
     Returns:
         ORJSONResponse: Cancellation result.
     """
     try:
-        result = subscriptionService.cancelSubscription(
-            token=token,
-            cancelAtCycleEnd=payload.cancelAtCycleEnd
-        )
+        result = subscriptionService.cancelSubscription(token=token)
         return ORJSONResponse(
             status_code=200,
             content={
                 "status": "SUCCESS",
-                "message": "Subscription cancelled successfully.",
+                "message": "Subscription will be cancelled at the end of the current billing cycle.",
                 "data": result
             }
         )

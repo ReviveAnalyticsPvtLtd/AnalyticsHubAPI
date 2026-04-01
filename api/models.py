@@ -168,12 +168,10 @@ class SubscriptionStatus(str, Enum):
     ACTIVE = "active"
     HALTED = "halted"
     CANCELLED = "cancelled"
+    PENDING_CANCELLATION = "pending_cancellation"
     PAUSED = "paused"
     EXPIRED = "expired"
     PENDING = "pending"
-
-class CancelSubscriptionRequest(BaseModel):
-    cancelAtCycleEnd: bool = True
 
 class RefundRequest(BaseModel):
     paymentId: str
