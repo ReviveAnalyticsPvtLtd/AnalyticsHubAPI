@@ -534,57 +534,8 @@ class SubscriptionService:
             logger.error(exception)
             raise exception
 
-    def getCurrentPlan(self, token: str) -> dict:
-        """
-        Retrieve the current subscription plan details for the authenticated user.
 
-        Args:
-            token (str): Authorization token.
 
-        Returns:
-            dict: Structured subscription state including domains, counts,
-                  pending removals, expiry, and computed days left.
-        """
-        try:
-            decodedToken = jwt.decode(
-                token,
-                os.environ["SECRET_KEY"],
-                algorithms = ["HS256"]
-            )
-            userId = decodedToken.get("userId")
-            userRecord = self.client.table("Users") \
-                .select("subscriptionPlan, subscriptionStatus, subscribedExperts, domainCount, pendingRemovals, pendingAdditions, subscriptionExpiry, billingAnchorDate") \
-                .eq("userId", userId) \
-                .execute()
-            if not userRecord.data:
-                raise Exception("User not found")
-            user = userRecord.data[0]
-            experts = user.get("subscribedExperts") or ""
-            domains = [e.strip() for e in experts.split(",") if e.strip()]
-            daysLeft = 0
-            expiryStr = user.get("subscriptionExpiry")
-            if expiryStr:
-                try:
-                    expiry = datetime.datetime.fromisoformat(expiryStr)
-                    delta = (expiry - datetime.datetime.utcnow()).days
-                    daysLeft = max(0, delta)
-                except (ValueError, TypeError):
-                    daysLeft = 0
-            return {
-                "subscriptionPlan": user.get("subscriptionPlan"),
-                "subscriptionStatus": user.get("subscriptionStatus"),
-                "domains": domains,
-                "domainCount": user.get("domainCount") or len(domains),
-                "pendingRemovals": user.get("pendingRemovals") or [],
-                "pendingAdditions": user.get("pendingAdditions") or [],
-                "subscriptionExpiry": expiryStr,
-                "subscriptionDaysLeft": daysLeft,
-                "billingAnchorDate": user.get("billingAnchorDate")
-            }
-        except Exception as e:
-            exception = CustomException(e)
-            logger.error(exception)
-            raise exception
 
     def cancelPendingAddition(self, domain: str, token: str) -> dict:
         """

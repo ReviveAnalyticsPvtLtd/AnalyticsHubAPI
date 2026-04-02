@@ -918,7 +918,10 @@ class ManagementService:
                     "subscribedExperts",
                     "subscriptionStatus",
                     "subscriptionExpiry",
-                    "billingAnchorDate"
+                    "billingAnchorDate",
+                    "domainCount",
+                    "pendingRemovals",
+                    "pendingAdditions"
                 ) \
                 .eq("userId", userId) \
                 .execute().data
@@ -934,6 +937,15 @@ class ManagementService:
                 aiExpertsList = [x.strip() for x in subscribedExperts.split(",") if x.strip()]
             else:
                 aiExpertsList = []
+            subscriptionDaysLeft = 0
+            expiryStr = record.get("subscriptionExpiry")
+            if expiryStr:
+                try:
+                    expiry = datetime.datetime.fromisoformat(expiryStr)
+                    delta = (expiry - datetime.datetime.utcnow()).days
+                    subscriptionDaysLeft = max(0, delta)
+                except (ValueError, TypeError):
+                    subscriptionDaysLeft = 0
             profileResponse = {
                 "userId": record.get("userId"),
                 "userName": record.get("fullName"),
@@ -947,7 +959,11 @@ class ManagementService:
                     "status": record.get("subscriptionStatus"),
                     "planExpire": record.get("subscriptionExpiry"),
                     "nextBilling": record.get("billingAnchorDate"),
-                    "subscribedExperts": aiExpertsList
+                    "subscribedExperts": aiExpertsList,
+                    "domainCount": record.get("domainCount") or len(aiExpertsList),
+                    "pendingRemovals": record.get("pendingRemovals") or [],
+                    "pendingAdditions": record.get("pendingAdditions") or [],
+                    "subscriptionDaysLeft": subscriptionDaysLeft
                 }
             }
             return profileResponse
@@ -1041,7 +1057,10 @@ class ManagementService:
                     "subscribedExperts",
                     "subscriptionStatus",
                     "subscriptionExpiry",
-                    "billingAnchorDate"
+                    "billingAnchorDate",
+                    "domainCount",
+                    "pendingRemovals",
+                    "pendingAdditions"
                 ) \
                 .eq("userId", userId) \
                 .execute().data
@@ -1051,6 +1070,15 @@ class ManagementService:
                 aiExpertsList = [x.strip() for x in subscribedExperts.split(",") if x.strip()]
             else:
                 aiExpertsList = []
+            subscriptionDaysLeft = 0
+            expiryStr = record.get("subscriptionExpiry")
+            if expiryStr:
+                try:
+                    expiry = datetime.datetime.fromisoformat(expiryStr)
+                    delta = (expiry - datetime.datetime.utcnow()).days
+                    subscriptionDaysLeft = max(0, delta)
+                except (ValueError, TypeError):
+                    subscriptionDaysLeft = 0
             profileResponse = {
                 "userId": record.get("userId"),
                 "userName": record.get("fullName"),
@@ -1064,7 +1092,11 @@ class ManagementService:
                     "status": record.get("subscriptionStatus"),
                     "planExpire": record.get("subscriptionExpiry"),
                     "nextBilling": record.get("billingAnchorDate"),
-                    "subscribedExperts": aiExpertsList
+                    "subscribedExperts": aiExpertsList,
+                    "domainCount": record.get("domainCount") or len(aiExpertsList),
+                    "pendingRemovals": record.get("pendingRemovals") or [],
+                    "pendingAdditions": record.get("pendingAdditions") or [],
+                    "subscriptionDaysLeft": subscriptionDaysLeft
                 }
             }
             return profileResponse
