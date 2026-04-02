@@ -177,12 +177,15 @@ class SubscriptionService:
             logger.error(exception)
             raise exception
 
-    def activateFreeTrial(self, token: str) -> None:
+    def activateFreeTrial(self, token: str) -> dict:
         """
         Activate a free trial for a user.
 
         Args:
             token (str): Authorization token.
+
+        Returns:
+            dict: The affected subscription fields.
         """
         try:
             decodedToken = jwt.decode(
@@ -196,6 +199,7 @@ class SubscriptionService:
             trialDurationDays = 12
             updateData = {
                 "subscriptionPlan": "free",
+                "subscriptionStatus": "trialing",
                 "subscriptionStart": str(currentTime),
                 "subscriptionExpiry": str(
                     currentTime + datetime.timedelta(days=trialDurationDays)
@@ -205,8 +209,8 @@ class SubscriptionService:
             records = self.client.table("Users").update(updateData).eq("userId", userId).execute()
             name = records.data[0]["fullName"]
             self._sendFreeTrialEmail(email=userEmail, name=name)
-            self._auditLog(userId, "free_trial.activated", status="active")
-            return
+            self._auditLog(userId, "free_trial.activated", status="trialing")
+            return updateData
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)

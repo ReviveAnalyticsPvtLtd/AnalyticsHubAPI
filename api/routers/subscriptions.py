@@ -31,15 +31,16 @@ async def activateFreeTrial(token=Depends(verifyToken)):
         token: Authorization token dependency.
 
     Returns:
-        ORJSONResponse: Success or error message.
+        ORJSONResponse: Success message with affected subscription fields.
     """
     try:
-        subscriptionService.activateFreeTrial(token=token)
+        result = subscriptionService.activateFreeTrial(token=token)
         return ORJSONResponse(
             status_code=200,
             content={
                 "status": "SUCCESS",
-                "message": "Free trial activated successfully."
+                "message": "Free trial activated successfully.",
+                "data": result
             }
         )
     except CustomException as e:
