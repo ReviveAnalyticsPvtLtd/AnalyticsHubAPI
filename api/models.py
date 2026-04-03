@@ -163,13 +163,13 @@ class CancelPendingAdditionRequest(BaseModel):
     domain: str
 
 class SubscriptionStatus(str, Enum):
-    NONE = "none"
-    TRIAL = "trial"
-    ACTIVE = "active"
-    CANCELLED = "cancelled"
-    PENDING_CANCELLATION = "pending_cancellation"
-    PAUSED = "paused"
-    EXPIRED = "expired"
+    NONE = "NONE"
+    TRIAL = "TRIAL"
+    ACTIVE = "ACTIVE"
+    CANCELLED = "CANCELLED"
+    PENDING_CANCELLATION = "PENDING_CANCELLATION"
+    PAUSED = "PAUSED"
+    EXPIRED = "EXPIRED"
 
 class RefundRequest(BaseModel):
     paymentId: str

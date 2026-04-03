@@ -336,12 +336,12 @@ class WebhookService:
         user = self._requireUserBySubscriptionId(subscriptionId, "subscription.activated")
         currentTime = datetime.datetime.utcnow()
         self.client.table("Users").update({
-            "subscriptionStatus": "active",
+            "subscriptionStatus": "ACTIVE",
             "subscriptionStart": str(currentTime),
         }).eq("userId", user["userId"]).execute()
         self._auditLog(
             user["userId"], "subscription.activated",
-            subscriptionId=subscriptionId, status="active"
+            subscriptionId=subscriptionId, status="ACTIVE"
         )
         logger.info(f"Subscription activated for user {user['userId']}")
 
@@ -366,7 +366,7 @@ class WebhookService:
         else:
             expiry = datetime.datetime.utcnow() + datetime.timedelta(days=30)
         updateData = {
-            "subscriptionStatus": "active",
+            "subscriptionStatus": "ACTIVE",
             "subscriptionExpiry": str(expiry),
         }
         daysLeft = (expiry.date() - datetime.datetime.utcnow().date()).days
@@ -464,7 +464,7 @@ class WebhookService:
         subscriptionId = self._extractSubscriptionId(event)
         user = self._requireUserBySubscriptionId(subscriptionId, "subscription.halted")
         self.client.table("Users").update({
-            "subscriptionStatus": "expired",
+            "subscriptionStatus": "EXPIRED",
             "subscriptionDaysLeft": -1,
         }).eq("userId", user["userId"]).execute()
         pendingAdditions = user.get("pendingAdditions") or []
@@ -493,7 +493,7 @@ class WebhookService:
                         logger.error(f"DomainChangeLog insert failed for halted pending addition: {logErr}")
         self._auditLog(
             user["userId"], "subscription.halted",
-            subscriptionId=subscriptionId, status="expired"
+            subscriptionId=subscriptionId, status="EXPIRED"
         )
         self._sendPaymentFailureEmail(user["email"], user["fullName"], "subscription_halted")
         logger.info(f"Subscription expired immediately for user {user['userId']} (halted, no grace period)")
@@ -508,11 +508,11 @@ class WebhookService:
         subscriptionId = self._extractSubscriptionId(event)
         user = self._requireUserBySubscriptionId(subscriptionId, "subscription.cancelled")
         self.client.table("Users").update({
-            "subscriptionStatus": "cancelled",
+            "subscriptionStatus": "CANCELLED",
         }).eq("userId", user["userId"]).execute()
         self._auditLog(
             user["userId"], "subscription.cancelled",
-            subscriptionId=subscriptionId, status="cancelled"
+            subscriptionId=subscriptionId, status="CANCELLED"
         )
         logger.info(f"Subscription cancelled for user {user['userId']}")
 
@@ -526,11 +526,11 @@ class WebhookService:
         subscriptionId = self._extractSubscriptionId(event)
         user = self._requireUserBySubscriptionId(subscriptionId, "subscription.paused")
         self.client.table("Users").update({
-            "subscriptionStatus": "paused",
+            "subscriptionStatus": "PAUSED",
         }).eq("userId", user["userId"]).execute()
         self._auditLog(
             user["userId"], "subscription.paused",
-            subscriptionId=subscriptionId, status="paused"
+            subscriptionId=subscriptionId, status="PAUSED"
         )
         logger.info(f"Subscription paused for user {user['userId']}")
 
@@ -544,11 +544,11 @@ class WebhookService:
         subscriptionId = self._extractSubscriptionId(event)
         user = self._requireUserBySubscriptionId(subscriptionId, "subscription.resumed")
         self.client.table("Users").update({
-            "subscriptionStatus": "active",
+            "subscriptionStatus": "ACTIVE",
         }).eq("userId", user["userId"]).execute()
         self._auditLog(
             user["userId"], "subscription.resumed",
-            subscriptionId=subscriptionId, status="active"
+            subscriptionId=subscriptionId, status="ACTIVE"
         )
         logger.info(f"Subscription resumed for user {user['userId']}")
 
@@ -563,11 +563,11 @@ class WebhookService:
         subscriptionId = self._extractSubscriptionId(event)
         user = self._requireUserBySubscriptionId(subscriptionId, "subscription.completed")
         self.client.table("Users").update({
-            "subscriptionStatus": "expired",
+            "subscriptionStatus": "EXPIRED",
         }).eq("userId", user["userId"]).execute()
         self._auditLog(
             user["userId"], "subscription.completed",
-            subscriptionId=subscriptionId, status="expired"
+            subscriptionId=subscriptionId, status="EXPIRED"
         )
         logger.info(f"Subscription completed for user {user['userId']}")
 

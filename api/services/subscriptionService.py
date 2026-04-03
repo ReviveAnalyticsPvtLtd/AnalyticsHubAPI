@@ -199,7 +199,7 @@ class SubscriptionService:
             trialDurationDays = 12
             updateData = {
                 "subscriptionPlan": "free",
-                "subscriptionStatus": "trial",
+                "subscriptionStatus": "TRIAL",
                 "subscriptionStart": str(currentTime),
                 "subscriptionExpiry": str(
                     currentTime + datetime.timedelta(days=trialDurationDays)
@@ -209,7 +209,7 @@ class SubscriptionService:
             records = self.client.table("Users").update(updateData).eq("userId", userId).execute()
             name = records.data[0]["fullName"]
             self._sendFreeTrialEmail(email=userEmail, name=name)
-            self._auditLog(userId, "free_trial.activated", status="trial")
+            self._auditLog(userId, "free_trial.activated", status="TRIAL")
             return updateData
         except Exception as e:
             exception = CustomException(e)
@@ -307,7 +307,7 @@ class SubscriptionService:
             self.client.table("Users").update({
                 "razorpaySubscriptionId": subscriptionId,
                 "subscriptionPlan": "pro",
-                "subscriptionStatus": "active",
+                "subscriptionStatus": "ACTIVE",
                 "subscriptionStart": str(currentTime),
                 "subscriptionExpiry": str(expiry),
                 "subscribedExperts": ", ".join(normalizedDomains),
@@ -318,7 +318,7 @@ class SubscriptionService:
                 userId, "subscription.verified",
                 paymentId=paymentId,
                 subscriptionId=subscriptionId,
-                status="active",
+                status="ACTIVE",
                 metadata={"domains": normalizedDomains, "quantity": len(normalizedDomains)}
             )
         except Exception as e:
@@ -356,7 +356,7 @@ class SubscriptionService:
             if not userRecord.data:
                 raise Exception("User not found")
             user = userRecord.data[0]
-            if user["subscriptionStatus"] != "active":
+            if user["subscriptionStatus"] != "ACTIVE":
                 raise Exception("Subscription must be active to add a domain")
             currentExperts = [e.strip() for e in user["subscribedExperts"].split(",") if e.strip()]
             if normalizedDomain in currentExperts:
@@ -478,7 +478,7 @@ class SubscriptionService:
             if not userRecord.data:
                 raise Exception("User not found")
             user = userRecord.data[0]
-            if user["subscriptionStatus"] != "active":
+            if user["subscriptionStatus"] != "ACTIVE":
                 raise Exception("Subscription must be active to remove a domain")
             currentExperts = [e.strip() for e in user["subscribedExperts"].split(",") if e.strip()]
             pendingRemovals = user.get("pendingRemovals") or []
@@ -519,7 +519,7 @@ class SubscriptionService:
             self._auditLog(
                 userId, "domain.removal_scheduled",
                 subscriptionId=subscriptionId,
-                status="active",
+                status="ACTIVE",
                 metadata={
                     "domains": normalizedDomains,
                     "previousQuantity": domainCount,
@@ -616,7 +616,7 @@ class SubscriptionService:
             self._auditLog(
                 userId, "domain.add_cancelled",
                 subscriptionId=user.get("razorpaySubscriptionId"),
-                status="cancelled",
+                status="CANCELLED",
                 metadata={"domain": normalizedDomain}
             )
             logger.info(f"Pending addition cancelled for domain '{normalizedDomain}', user {userId}")
@@ -658,12 +658,12 @@ class SubscriptionService:
                 {"cancel_at_cycle_end": 1}
             )
             self.client.table("Users").update({
-                "subscriptionStatus": "pending_cancellation",
+                "subscriptionStatus": "PENDING_CANCELLATION",
             }).eq("userId", userId).execute()
             self._auditLog(
                 userId, "subscription.cancellation_scheduled",
                 subscriptionId=subscriptionId,
-                status="pending_cancellation",
+                status="PENDING_CANCELLATION",
                 metadata={"cancel_at_cycle_end": True}
             )
             logger.info(f"Subscription {subscriptionId} scheduled for cancellation at cycle end for user {userId}")

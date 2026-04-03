@@ -22,15 +22,15 @@ import os
 
 
 RAZORPAY_STATUS_MAP = {
-    "created": "none",
-    "authenticated": "none",
-    "active": "active",
-    "halted": "expired",
-    "cancelled": "cancelled",
-    "paused": "paused",
-    "completed": "expired",
-    "expired": "expired",
-    "pending": "none",
+    "created": None,
+    "authenticated": None,
+    "active": "ACTIVE",
+    "halted": "EXPIRED",
+    "cancelled": "CANCELLED",
+    "paused": "PAUSED",
+    "completed": "EXPIRED",
+    "expired": "EXPIRED",
+    "pending": None,
 }
 
 
@@ -74,9 +74,9 @@ def recalculateSubscriptionDays() -> None:
         deltaDays = (expiry.date() - now.date()).days
         if deltaDays < 0:
             newDaysLeft = -1
-            if user.get("subscriptionStatus") != "expired":
+            if user.get("subscriptionStatus") != "EXPIRED":
                 client.table("Users").update({
-                    "subscriptionStatus": "expired"
+                    "subscriptionStatus": "EXPIRED"
                 }).eq("userId", user["userId"]).execute()
         else:
             newDaysLeft = deltaDays
@@ -120,7 +120,7 @@ def syncSubscriptionStatuses() -> None:
     syncCount = 0
     for user in users:
         subscriptionId = user["razorpaySubscriptionId"]
-        localStatus = user.get("subscriptionStatus", "none")
+        localStatus = user.get("subscriptionStatus", "NONE")
         try:
             subscription = razorpayClient.subscription.fetch(subscriptionId)
             razorpayStatus = subscription.get("status", "")

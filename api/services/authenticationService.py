@@ -265,7 +265,7 @@ class AuthenticationService:
                             subscriptionPlan = userData["subscriptionPlan"]
                         else:
                             subscriptionStatus = "INACTIVE"
-                            subscriptionPlan = "expired"
+                            subscriptionPlan = "EXPIRED"
                     else:
                         subscriptionStatus = "INACTIVE"
                         subscriptionPlan = "unclaimedFreeSubscription"
