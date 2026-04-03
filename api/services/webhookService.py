@@ -34,7 +34,6 @@ EVENT_HANDLERS = {
     "subscription.cancelled": "_handleSubscriptionCancelled",
     "subscription.paused": "_handleSubscriptionPaused",
     "subscription.resumed": "_handleSubscriptionResumed",
-    "subscription.pending": "_handleSubscriptionPending",
     "subscription.completed": "_handleSubscriptionCompleted",
     "subscription.updated": "_handleSubscriptionUpdated",
     "payment.authorized": "_handlePaymentAuthorized",
@@ -553,23 +552,6 @@ class WebhookService:
         )
         logger.info(f"Subscription resumed for user {user['userId']}")
 
-    def _handleSubscriptionPending(self, event: dict) -> None:
-        """
-        Handle the subscription.pending webhook event.
-
-        Args:
-            event (dict): The Razorpay webhook event.
-        """
-        subscriptionId = self._extractSubscriptionId(event)
-        user = self._requireUserBySubscriptionId(subscriptionId, "subscription.pending")
-        self.client.table("Users").update({
-            "subscriptionStatus": "pending",
-        }).eq("userId", user["userId"]).execute()
-        self._auditLog(
-            user["userId"], "subscription.pending",
-            subscriptionId=subscriptionId, status="pending"
-        )
-        logger.info(f"Subscription pending for user {user['userId']}")
 
     def _handleSubscriptionCompleted(self, event: dict) -> None:
         """

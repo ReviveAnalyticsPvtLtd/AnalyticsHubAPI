@@ -164,14 +164,12 @@ class CancelPendingAdditionRequest(BaseModel):
 
 class SubscriptionStatus(str, Enum):
     NONE = "none"
-    TRIALING = "trialing"
+    TRIAL = "trial"
     ACTIVE = "active"
-    HALTED = "halted"
     CANCELLED = "cancelled"
     PENDING_CANCELLATION = "pending_cancellation"
     PAUSED = "paused"
     EXPIRED = "expired"
-    PENDING = "pending"
 
 class RefundRequest(BaseModel):
     paymentId: str

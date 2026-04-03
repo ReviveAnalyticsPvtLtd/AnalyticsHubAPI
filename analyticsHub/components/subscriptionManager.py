@@ -22,15 +22,15 @@ import os
 
 
 RAZORPAY_STATUS_MAP = {
-    "created": "pending",
-    "authenticated": "pending",
+    "created": "none",
+    "authenticated": "none",
     "active": "active",
     "halted": "expired",
     "cancelled": "cancelled",
     "paused": "paused",
     "completed": "expired",
     "expired": "expired",
-    "pending": "pending",
+    "pending": "none",
 }
 
 

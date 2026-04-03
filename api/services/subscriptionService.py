@@ -199,7 +199,7 @@ class SubscriptionService:
             trialDurationDays = 12
             updateData = {
                 "subscriptionPlan": "free",
-                "subscriptionStatus": "trialing",
+                "subscriptionStatus": "trial",
                 "subscriptionStart": str(currentTime),
                 "subscriptionExpiry": str(
                     currentTime + datetime.timedelta(days=trialDurationDays)
@@ -209,7 +209,7 @@ class SubscriptionService:
             records = self.client.table("Users").update(updateData).eq("userId", userId).execute()
             name = records.data[0]["fullName"]
             self._sendFreeTrialEmail(email=userEmail, name=name)
-            self._auditLog(userId, "free_trial.activated", status="trialing")
+            self._auditLog(userId, "free_trial.activated", status="trial")
             return updateData
         except Exception as e:
             exception = CustomException(e)
