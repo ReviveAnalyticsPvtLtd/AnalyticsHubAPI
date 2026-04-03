@@ -2,8 +2,8 @@
 analyticsHub/components/subscriptionManager.py
 
 This module provides utility functions for managing user subscription expiry calculations,
-grace period handling, Razorpay subscription status synchronization, and sending warning
-emails when subscriptions are about to expire.
+Razorpay subscription status synchronization, and sending warning emails when subscriptions
+are about to expire.
 """
 
 __version__ = "1.0.0"
@@ -12,7 +12,7 @@ __all__ = ["recalculateSubscriptionDays", "syncSubscriptionStatuses"]
 
 
 from supabase import create_client
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from dateutil import parser
 from loguru import logger
 import razorpay
@@ -21,13 +21,11 @@ import time
 import os
 
 
-GRACE_PERIOD_DAYS = int(os.environ.get("GRACE_PERIOD_DAYS", "3"))
-
 RAZORPAY_STATUS_MAP = {
     "created": "pending",
     "authenticated": "pending",
     "active": "active",
-    "halted": "halted",
+    "halted": "expired",
     "cancelled": "cancelled",
     "paused": "paused",
     "completed": "expired",
@@ -49,9 +47,9 @@ def _getSupabaseClient():
 def recalculateSubscriptionDays() -> None:
     """
     Recalculates subscription days left for all users with a subscription expiry date.
-    Updates the subscriptionDaysLeft field in the Users table, applies grace period
-    logic for expired subscriptions, and sends warning emails when exactly 2 days
-    are remaining.
+    Updates the subscriptionDaysLeft field in the Users table. Expired subscriptions
+    are immediately set to expired status (no grace period). Sends warning emails
+    when exactly 2 days are remaining.
 
     Returns:
         None
@@ -63,7 +61,7 @@ def recalculateSubscriptionDays() -> None:
     client = _getSupabaseClient()
     now = datetime.now(timezone.utc)
     users = client.table("Users") \
-        .select("userId, email, fullName, subscriptionStart, subscriptionExpiry, subscriptionDaysLeft, gracePeriodEnd, subscriptionStatus") \
+        .select("userId, email, fullName, subscriptionStart, subscriptionExpiry, subscriptionDaysLeft, subscriptionStatus") \
         .not_.is_("subscriptionExpiry", "null") \
         .execute().data
     for user in users:
@@ -75,27 +73,11 @@ def recalculateSubscriptionDays() -> None:
             expiry = expiry.astimezone(timezone.utc)
         deltaDays = (expiry.date() - now.date()).days
         if deltaDays < 0:
-            gracePeriodEnd = user.get("gracePeriodEnd")
-            if gracePeriodEnd:
-                parsedGraceEnd = parser.parse(gracePeriodEnd)
-                if parsedGraceEnd.tzinfo is None:
-                    parsedGraceEnd = parsedGraceEnd.replace(tzinfo=timezone.utc)
-                else:
-                    parsedGraceEnd = parsedGraceEnd.astimezone(timezone.utc)
-                graceDelta = (parsedGraceEnd.date() - now.date()).days
-                if graceDelta >= 0:
-                    newDaysLeft = 0
-                else:
-                    newDaysLeft = -1
-                    client.table("Users").update({
-                        "subscriptionStatus": "expired"
-                    }).eq("userId", user["userId"]).execute()
-            else:
-                newGracePeriodEnd = now + timedelta(days=GRACE_PERIOD_DAYS)
+            newDaysLeft = -1
+            if user.get("subscriptionStatus") != "expired":
                 client.table("Users").update({
-                    "gracePeriodEnd": newGracePeriodEnd.isoformat(),
+                    "subscriptionStatus": "expired"
                 }).eq("userId", user["userId"]).execute()
-                newDaysLeft = 0
         else:
             newDaysLeft = deltaDays
         client.table("Users") \

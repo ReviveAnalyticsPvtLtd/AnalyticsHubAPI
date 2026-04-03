@@ -24,7 +24,7 @@ import hmac
 import os
 
 
-GRACE_PERIOD_DAYS = int(os.environ.get("GRACE_PERIOD_DAYS", "3"))
+
 WEBHOOK_PROCESSING_TIMEOUT_MINUTES = int(os.environ.get("WEBHOOK_PROCESSING_TIMEOUT_MINUTES", "10"))
 
 EVENT_HANDLERS = {
@@ -369,7 +369,6 @@ class WebhookService:
         updateData = {
             "subscriptionStatus": "active",
             "subscriptionExpiry": str(expiry),
-            "gracePeriodEnd": None,
         }
         daysLeft = (expiry.date() - datetime.datetime.utcnow().date()).days
         updateData["subscriptionDaysLeft"] = max(daysLeft, 0)
@@ -458,17 +457,16 @@ class WebhookService:
         """
         Handle the subscription.halted webhook event.
 
-        Sets subscription status to halted and initiates grace period.
+        Sets subscription status to expired immediately (no grace period).
 
         Args:
             event (dict): The Razorpay webhook event.
         """
         subscriptionId = self._extractSubscriptionId(event)
         user = self._requireUserBySubscriptionId(subscriptionId, "subscription.halted")
-        gracePeriodEnd = datetime.datetime.utcnow() + datetime.timedelta(days=GRACE_PERIOD_DAYS)
         self.client.table("Users").update({
-            "subscriptionStatus": "halted",
-            "gracePeriodEnd": str(gracePeriodEnd),
+            "subscriptionStatus": "expired",
+            "subscriptionDaysLeft": -1,
         }).eq("userId", user["userId"]).execute()
         pendingAdditions = user.get("pendingAdditions") or []
         failedAny = False
@@ -496,10 +494,10 @@ class WebhookService:
                         logger.error(f"DomainChangeLog insert failed for halted pending addition: {logErr}")
         self._auditLog(
             user["userId"], "subscription.halted",
-            subscriptionId=subscriptionId, status="halted"
+            subscriptionId=subscriptionId, status="expired"
         )
         self._sendPaymentFailureEmail(user["email"], user["fullName"], "subscription_halted")
-        logger.info(f"Subscription halted for user {user['userId']}, grace period until {gracePeriodEnd}")
+        logger.info(f"Subscription expired immediately for user {user['userId']} (halted, no grace period)")
 
     def _handleSubscriptionCancelled(self, event: dict) -> None:
         """
