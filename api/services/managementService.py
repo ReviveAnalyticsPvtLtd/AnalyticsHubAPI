@@ -918,7 +918,6 @@ class ManagementService:
                     "subscribedExperts",
                     "subscriptionStatus",
                     "subscriptionExpiry",
-                    "billingAnchorDate",
                     "domainCount",
                     "pendingRemovals",
                     "pendingAdditions"
@@ -946,6 +945,10 @@ class ManagementService:
                     subscriptionDaysLeft = max(0, delta)
                 except (ValueError, TypeError):
                     subscriptionDaysLeft = 0
+            currentStatus = record.get("subscriptionStatus")
+            nextBilling = None
+            if currentStatus in ("ACTIVE", "PENDING_CANCELLATION") and expiryStr:
+                nextBilling = expiryStr
             profileResponse = {
                 "userId": record.get("userId"),
                 "userName": record.get("fullName"),
@@ -956,9 +959,9 @@ class ManagementService:
                 "bio": record.get("profileBio"),
                 "plan": {
                     "planType": record.get("subscriptionPlan"),
-                    "status": record.get("subscriptionStatus"),
+                    "status": currentStatus,
                     "planExpire": record.get("subscriptionExpiry"),
-                    "nextBilling": record.get("billingAnchorDate"),
+                    "nextBilling": nextBilling,
                     "subscribedExperts": aiExpertsList,
                     "domainCount": record.get("domainCount") or len(aiExpertsList),
                     "pendingRemovals": record.get("pendingRemovals") or [],
@@ -1057,7 +1060,6 @@ class ManagementService:
                     "subscribedExperts",
                     "subscriptionStatus",
                     "subscriptionExpiry",
-                    "billingAnchorDate",
                     "domainCount",
                     "pendingRemovals",
                     "pendingAdditions"
@@ -1079,6 +1081,10 @@ class ManagementService:
                     subscriptionDaysLeft = max(0, delta)
                 except (ValueError, TypeError):
                     subscriptionDaysLeft = 0
+            currentStatus = record.get("subscriptionStatus")
+            nextBilling = None
+            if currentStatus in ("ACTIVE", "PENDING_CANCELLATION") and expiryStr:
+                nextBilling = expiryStr
             profileResponse = {
                 "userId": record.get("userId"),
                 "userName": record.get("fullName"),
@@ -1089,9 +1095,9 @@ class ManagementService:
                 "bio": record.get("profileBio"),
                 "plan": {
                     "planType": record.get("subscriptionPlan"),
-                    "status": record.get("subscriptionStatus"),
+                    "status": currentStatus,
                     "planExpire": record.get("subscriptionExpiry"),
-                    "nextBilling": record.get("billingAnchorDate"),
+                    "nextBilling": nextBilling,
                     "subscribedExperts": aiExpertsList,
                     "domainCount": record.get("domainCount") or len(aiExpertsList),
                     "pendingRemovals": record.get("pendingRemovals") or [],
