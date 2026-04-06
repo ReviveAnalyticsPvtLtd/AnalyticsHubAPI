@@ -938,6 +938,8 @@ class ManagementService:
                 aiExpertsList = []
             subscriptionDaysLeft = 0
             expiryStr = record.get("subscriptionExpiry")
+            if expiryStr == "None":
+                expiryStr = None
             if expiryStr:
                 try:
                     expiry = datetime.datetime.fromisoformat(expiryStr)

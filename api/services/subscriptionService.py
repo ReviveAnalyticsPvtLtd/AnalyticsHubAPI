@@ -200,10 +200,10 @@ class SubscriptionService:
             updateData = {
                 "subscriptionPlan": "free",
                 "subscriptionStatus": "TRIAL",
-                "subscriptionStart": str(currentTime),
-                "subscriptionExpiry": str(
+                "subscriptionStart": currentTime.isoformat(),
+                "subscriptionExpiry": (
                     currentTime + datetime.timedelta(days=trialDurationDays)
-                ),
+                ).isoformat(),
                 "subscribedExperts": "banking, manufacturing, supplychain, telecom"
             }
             records = self.client.table("Users").update(updateData).eq("userId", userId).execute()
@@ -250,7 +250,7 @@ class SubscriptionService:
             self._auditLog(
                 userId, "subscription.created",
                 subscriptionId=subscription["id"],
-                status=subscription["status"],
+                status=subscription["status"].upper(),
                 metadata={"domains": normalizedDomains, "quantity": quantity}
             )
             return {
@@ -308,8 +308,8 @@ class SubscriptionService:
                 "razorpaySubscriptionId": subscriptionId,
                 "subscriptionPlan": "pro",
                 "subscriptionStatus": "ACTIVE",
-                "subscriptionStart": str(currentTime),
-                "subscriptionExpiry": str(expiry),
+                "subscriptionStart": currentTime.isoformat(),
+                "subscriptionExpiry": expiry.isoformat(),
                 "subscribedExperts": ", ".join(normalizedDomains),
                 "domainCount": len(normalizedDomains),
                 "pendingRemovals": []
@@ -425,7 +425,7 @@ class SubscriptionService:
             self._auditLog(
                 userId, "domain.add_requested",
                 subscriptionId=subscriptionId,
-                status=upgradeState,
+                status=upgradeState.upper(),
                 metadata={
                     "domain": normalizedDomain,
                     "previousQuantity": domainCount,
@@ -726,7 +726,7 @@ class SubscriptionService:
                 subscriptionId=subscriptionId,
                 amount=amount or payment.get("amount"),
                 currency=payment.get("currency", "INR"),
-                status="initiated"
+                status="INITIATED"
             )
             logger.info(f"Refund initiated for payment {paymentId}, user {userId}")
             return result
@@ -754,7 +754,7 @@ class SubscriptionService:
                 "razorpayPaymentId": invoiceData.get("payment_id"),
                 "amount": invoiceData.get("amount", 0),
                 "currency": invoiceData.get("currency", "INR"),
-                "status": invoiceData.get("status", "paid"),
+                "status": invoiceData.get("status", "paid").upper(),
                 "billingStart": str(datetime.datetime.utcfromtimestamp(billingStart)) if billingStart else None,
                 "billingEnd": str(datetime.datetime.utcfromtimestamp(billingEnd)) if billingEnd else None,
                 "paidAt": str(datetime.datetime.utcfromtimestamp(paidAt)) if paidAt else None,

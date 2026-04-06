@@ -337,7 +337,7 @@ class WebhookService:
         currentTime = datetime.datetime.utcnow()
         self.client.table("Users").update({
             "subscriptionStatus": "ACTIVE",
-            "subscriptionStart": str(currentTime),
+            "subscriptionStart": currentTime.isoformat(),
         }).eq("userId", user["userId"]).execute()
         self._auditLog(
             user["userId"], "subscription.activated",
@@ -367,7 +367,7 @@ class WebhookService:
             expiry = datetime.datetime.utcnow() + datetime.timedelta(days=30)
         updateData = {
             "subscriptionStatus": "ACTIVE",
-            "subscriptionExpiry": str(expiry),
+            "subscriptionExpiry": expiry.isoformat(),
         }
         daysLeft = (expiry.date() - datetime.datetime.utcnow().date()).days
         updateData["subscriptionDaysLeft"] = max(daysLeft, 0)
@@ -381,7 +381,7 @@ class WebhookService:
             paymentId=paymentEntity.get("id"),
             amount=paymentEntity.get("amount"),
             currency=paymentEntity.get("currency", "INR"),
-            status="charged"
+            status="CHARGED"
         )
         pendingRemovals = user.get("pendingRemovals") or []
         if pendingRemovals:
@@ -443,7 +443,7 @@ class WebhookService:
                 "razorpayPaymentId": invoiceData.get("payment_id"),
                 "amount": invoiceData.get("amount", 0),
                 "currency": invoiceData.get("currency", "INR"),
-                "status": invoiceData.get("status", "paid"),
+                "status": invoiceData.get("status", "paid").upper(),
                 "billingStart": str(datetime.datetime.utcfromtimestamp(billingStart)) if billingStart else None,
                 "billingEnd": str(datetime.datetime.utcfromtimestamp(billingEnd)) if billingEnd else None,
                 "paidAt": str(datetime.datetime.utcfromtimestamp(paidAt)) if paidAt else None,
@@ -656,7 +656,7 @@ class WebhookService:
         self._auditLog(
             user["userId"], "subscription.updated",
             subscriptionId=subscriptionId,
-            status="updated",
+            status="UPDATED",
             metadata={"new_quantity": newQuantity, "activation_count": max(activationCount, 0) if pendingAdditions else 0}
         )
         logger.info(f"Subscription updated for user {user['userId']}, quantity: {newQuantity}")
@@ -678,7 +678,7 @@ class WebhookService:
             subscriptionId=subscriptionId,
             amount=paymentEntity.get("amount"),
             currency=paymentEntity.get("currency", "INR"),
-            status="authorized"
+            status="AUTHORIZED"
         )
         logger.info(f"Payment authorized: {paymentEntity.get('id')}")
 
@@ -699,7 +699,7 @@ class WebhookService:
             subscriptionId=subscriptionId,
             amount=paymentEntity.get("amount"),
             currency=paymentEntity.get("currency", "INR"),
-            status="captured"
+            status="CAPTURED"
         )
         logger.info(f"Payment captured: {paymentEntity.get('id')}")
 
@@ -723,7 +723,7 @@ class WebhookService:
             subscriptionId=subscriptionId,
             amount=paymentEntity.get("amount"),
             currency=paymentEntity.get("currency", "INR"),
-            status="failed",
+            status="FAILED",
             metadata={"error_code": errorMeta, "error_description": paymentEntity.get("error_description", "")}
         )
         if user:
@@ -791,7 +791,7 @@ class WebhookService:
             paymentId=invoiceEntity.get("payment_id"),
             amount=invoiceEntity.get("amount"),
             currency=invoiceEntity.get("currency", "INR"),
-            status="paid"
+            status="PAID"
         )
         logger.info(f"Invoice paid stored for user {user['userId']}")
     def _handleRefundProcessed(self, event: dict) -> None:

@@ -214,8 +214,8 @@ class AuthenticationService:
                 "onboarded": int(dataSlice["onboarded"]),
                 "currentWorkspaceId": dataSlice["currentWorkspaceId"],
                 "subscriptionStatus": subscriptionStatus,
-                "subscriptionStart": str(dataSlice["subscriptionStart"]),
-                "subscriptionExpiry": str(dataSlice["subscriptionExpiry"]),
+                "subscriptionStart": dataSlice["subscriptionStart"],
+                "subscriptionExpiry": dataSlice["subscriptionExpiry"],
                 "subscriptionPlan": dataSlice["subscriptionPlan"]
             }
         except CustomException:
@@ -274,11 +274,9 @@ class AuthenticationService:
                 subscriptionPlan = "unclaimedFreeSubscription"
                 userId = str(uuid.uuid4())
                 workspaceId = str(uuid.uuid4())
-                # Generate a consistent hash for provider users (acts as password)
                 passwordString = f"{loginDetails.sub}{loginDetails.id}{loginDetails.nodeId}{os.environ['SECRET_KEY']}"
                 hashedPassword = hashlib.md5(passwordString.encode("utf-8")).hexdigest()
                 
-                # Start Free Trial Immediately (12 days)
                 subscriptionStart = sessionStartTime
                 subscriptionExpiry = sessionStartTime + datetime.timedelta(days=12)
                 userData = {
