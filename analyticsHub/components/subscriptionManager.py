@@ -74,7 +74,8 @@ def recalculateSubscriptionDays() -> None:
         deltaDays = (expiry.date() - now.date()).days
         if deltaDays < 0:
             newDaysLeft = -1
-            if user.get("subscriptionStatus") != "EXPIRED":
+            st = user.get("subscriptionStatus")
+            if st not in ("EXPIRED", "CANCELLED", "PAUSED"):
                 client.table("Users").update({
                     "subscriptionStatus": "EXPIRED"
                 }).eq("userId", user["userId"]).execute()

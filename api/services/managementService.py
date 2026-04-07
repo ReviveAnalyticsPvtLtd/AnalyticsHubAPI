@@ -28,6 +28,8 @@ from api.models import (
 from jose import jwt
 import pandas as pd
 import datetime
+from datetime import timezone
+from analyticsHub.components.subscriptionStatus import resolve_subscription_status
 import orjson
 import json
 import uuid
@@ -947,7 +949,12 @@ class ManagementService:
                     subscriptionDaysLeft = max(0, delta)
                 except (ValueError, TypeError):
                     subscriptionDaysLeft = 0
-            currentStatus = record.get("subscriptionStatus")
+            now = datetime.datetime.now(timezone.utc)
+            currentStatus = resolve_subscription_status(
+                record.get("subscriptionStatus"),
+                record.get("subscriptionExpiry"),
+                now,
+            )
             nextBilling = None
             if currentStatus in ("ACTIVE", "PENDING_CANCELLATION") and expiryStr:
                 nextBilling = expiryStr
@@ -1083,7 +1090,12 @@ class ManagementService:
                     subscriptionDaysLeft = max(0, delta)
                 except (ValueError, TypeError):
                     subscriptionDaysLeft = 0
-            currentStatus = record.get("subscriptionStatus")
+            now = datetime.datetime.now(timezone.utc)
+            currentStatus = resolve_subscription_status(
+                record.get("subscriptionStatus"),
+                record.get("subscriptionExpiry"),
+                now,
+            )
             nextBilling = None
             if currentStatus in ("ACTIVE", "PENDING_CANCELLATION") and expiryStr:
                 nextBilling = expiryStr

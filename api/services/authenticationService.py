@@ -27,7 +27,13 @@ from api.models import (
 from jose import jwt
 import pandas as pd
 import datetime
+from datetime import timezone
 import hashlib
+from analyticsHub.components.subscriptionStatus import (
+    coerce_subscription_expiry,
+    parse_expiry_utc,
+    resolve_subscription_status,
+)
 import uuid
 import os
 
@@ -175,7 +181,7 @@ class AuthenticationService:
                 self.client.table("Users")
                 .select("userId", "email", "password", "onboarded",
                         "currentWorkspaceId", "subscriptionStart",
-                        "subscriptionExpiry", "subscriptionPlan")
+                        "subscriptionExpiry", "subscriptionPlan", "subscriptionStatus")
                 .execute().data
             )
             dataSlice = allData[allData["email"] == loginDetails.email].iloc[0]
@@ -199,13 +205,12 @@ class AuthenticationService:
                 "sessionStartTime": str(sessionStartTime),
                 "lastActivity": str(sessionStartTime)
             }).execute()
-            if dataSlice["subscriptionExpiry"]:
-                if datetime.datetime.utcnow() <= datetime.datetime.strptime(dataSlice["subscriptionExpiry"], "%Y-%m-%dT%H:%M:%S.%f"):
-                    subscriptionStatus = "ACTIVE"
-                else:
-                    subscriptionStatus = "NONE"
-            else:
-                subscriptionStatus = "NONE"
+            now = datetime.datetime.now(timezone.utc)
+            subscriptionStatus = resolve_subscription_status(
+                dataSlice.get("subscriptionStatus"),
+                dataSlice.get("subscriptionExpiry"),
+                now,
+            )
             return {
                 "status": "SUCCESS",
                 "userId": dataSlice["userId"],
@@ -259,16 +264,20 @@ class AuthenticationService:
 
             if response.data:
                 userData = response.data[0]
-                if userData["subscriptionExpiry"]:
-                    if datetime.datetime.utcnow() <= datetime.datetime.strptime(userData["subscriptionExpiry"], "%Y-%m-%dT%H:%M:%S.%f"):
-                        subscriptionStatus = "ACTIVE"
-                        subscriptionPlan = userData["subscriptionPlan"]
-                    else:
-                        subscriptionStatus = "NONE"
-                        subscriptionPlan = "EXPIRED"
+                now = datetime.datetime.now(timezone.utc)
+                subscriptionStatus = resolve_subscription_status(
+                    userData.get("subscriptionStatus"),
+                    userData.get("subscriptionExpiry"),
+                    now,
+                )
+                exp_str = coerce_subscription_expiry(userData.get("subscriptionExpiry"))
+                if exp_str is None:
+                    subscriptionPlan = userData.get("subscriptionPlan") or "unclaimedFreeSubscription"
                 else:
-                    subscriptionStatus = "NONE"
-                    subscriptionPlan = "unclaimedFreeSubscription"
+                    subscriptionPlan = userData.get("subscriptionPlan")
+                    exp_dt = parse_expiry_utc(exp_str)
+                    if not subscriptionPlan and exp_dt and exp_dt <= now:
+                        subscriptionPlan = "EXPIRED"
             else:
                 subscriptionStatus = "NONE"
                 subscriptionPlan = "unclaimedFreeSubscription"
