@@ -93,7 +93,9 @@ class AuthenticationService:
                 "userId": response.user.id,
                 "email": signupDetails.email,
                 "password": hashedPassword,
-                "currentWorkspaceId": workspaceId
+                "currentWorkspaceId": workspaceId,
+                "subscriptionPlan": "none",
+                "subscriptionStatus": "NONE"
             }).execute()
             self.client.table("Workspaces").insert({
                 "id": workspaceId,
@@ -221,7 +223,7 @@ class AuthenticationService:
                 "subscriptionStatus": subscriptionStatus,
                 "subscriptionStart": dataSlice["subscriptionStart"],
                 "subscriptionExpiry": dataSlice["subscriptionExpiry"],
-                "subscriptionPlan": dataSlice["subscriptionPlan"]
+                "subscriptionPlan": dataSlice.get("subscriptionPlan") or "none"
             }
         except CustomException:
             raise
@@ -272,7 +274,7 @@ class AuthenticationService:
                 )
                 exp_str = coerce_subscription_expiry(userData.get("subscriptionExpiry"))
                 if exp_str is None:
-                    subscriptionPlan = userData.get("subscriptionPlan") or "unclaimedFreeSubscription"
+                    subscriptionPlan = userData.get("subscriptionPlan") or "none"
                 else:
                     subscriptionPlan = userData.get("subscriptionPlan")
                     exp_dt = parse_expiry_utc(exp_str)
@@ -280,7 +282,7 @@ class AuthenticationService:
                         subscriptionPlan = "EXPIRED"
             else:
                 subscriptionStatus = "NONE"
-                subscriptionPlan = "unclaimedFreeSubscription"
+                subscriptionPlan = "none"
                 userId = str(uuid.uuid4())
                 workspaceId = str(uuid.uuid4())
                 passwordString = f"{loginDetails.sub}{loginDetails.id}{loginDetails.nodeId}{os.environ['SECRET_KEY']}"
@@ -294,7 +296,9 @@ class AuthenticationService:
                     "password": hashedPassword,
                     "createdAt": str(sessionStartTime),
                     "onboarded": False,
-                    "currentWorkspaceId": workspaceId
+                    "currentWorkspaceId": workspaceId,
+                    "subscriptionPlan": "none",
+                    "subscriptionStatus": "NONE"
                 }
                 self.client.table("Users").insert(userData).execute()
                 self.client.table("Workspaces").insert({
