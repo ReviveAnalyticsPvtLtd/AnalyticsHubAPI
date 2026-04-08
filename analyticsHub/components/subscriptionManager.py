@@ -102,7 +102,7 @@ def syncSubscriptionStatuses() -> None:
 
     Fetches all users with a Razorpay subscription ID and compares their local
     subscriptionStatus against the actual status from Razorpay API. Updates
-    mismatches and logs discrepancies to the PaymentAuditLog table.
+    mismatches and logs discrepancies to the SubscriptionLog table.
 
     Returns:
         None
@@ -130,12 +130,12 @@ def syncSubscriptionStatuses() -> None:
                 client.table("Users").update({
                     "subscriptionStatus": mappedStatus
                 }).eq("userId", user["userId"]).execute()
-                client.table("PaymentAuditLog").insert({
+                client.table("SubscriptionLog").insert({
                     "userId": user["userId"],
-                    "action": "manual_sync",
-                    "razorpaySubscriptionId": subscriptionId,
+                    "eventType": "subscription.manual_sync",
                     "status": mappedStatus,
                     "metadata": {
+                        "razorpaySubscriptionId": subscriptionId,
                         "previousStatus": localStatus,
                         "razorpayStatus": razorpayStatus
                     }

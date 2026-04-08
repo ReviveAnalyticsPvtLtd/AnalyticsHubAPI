@@ -286,30 +286,39 @@ class WebhookService:
             )
         return user
 
-    def _auditLog(self, userId: str, action: str, **kwargs) -> None:
+    def _auditLog(self, userId: str, eventType: str, **kwargs) -> None:
         """
-        Insert a row into the PaymentAuditLog table.
+        Insert a row into the SubscriptionLog table.
 
         Args:
-            userId (str): The user ID associated with this audit entry.
-            action (str): The action being logged.
-            **kwargs: Optional fields — paymentId, subscriptionId, invoiceId,
-                      amount, currency, status, metadata.
+            userId (str): The user ID associated with this log entry.
+            eventType (str): The event type (e.g. 'subscription.created', 'domain.add_requested').
+            **kwargs: Optional fields — status, plus any key-value pairs to store in metadata.
+                      Reserved keys: paymentId, subscriptionId, invoiceId, amount, currency
+                      are auto-mapped into metadata with 'razorpay' prefix where applicable.
         """
         try:
-            self.client.table("PaymentAuditLog").insert({
+            status = kwargs.pop("status", None)
+            existingMeta = kwargs.pop("metadata", None) or {}
+
+            metaFields = {}
+            razorpayPrefixed = {"paymentId", "subscriptionId", "invoiceId"}
+            for key in ("paymentId", "subscriptionId", "invoiceId", "amount", "currency"):
+                val = kwargs.pop(key, None)
+                if val is not None:
+                    metaKey = f"razorpay{key[0].upper()}{key[1:]}" if key in razorpayPrefixed else key
+                    metaFields[metaKey] = val
+
+            metadata = {**metaFields, **existingMeta, **kwargs}
+
+            self.client.table("SubscriptionLog").insert({
                 "userId": userId,
-                "action": action,
-                "razorpayPaymentId": kwargs.get("paymentId"),
-                "razorpaySubscriptionId": kwargs.get("subscriptionId"),
-                "razorpayInvoiceId": kwargs.get("invoiceId"),
-                "amount": kwargs.get("amount"),
-                "currency": kwargs.get("currency", "INR"),
-                "status": kwargs.get("status"),
-                "metadata": kwargs.get("metadata"),
+                "eventType": eventType,
+                "status": status,
+                "metadata": metadata if metadata else None,
             }).execute()
         except Exception as e:
-            logger.error(f"Audit log insert failed for user {userId}, action {action}: {e}")
+            logger.error(f"SubscriptionLog insert failed for user {userId}, event {eventType}: {e}")
 
     def _extractSubscriptionId(self, event: dict) -> str:
         """
@@ -480,17 +489,19 @@ class WebhookService:
             for item in pendingAdditions:
                 if item.get("state") == "failed":
                     try:
-                        self.client.table("DomainChangeLog").insert({
-                            "userId": user["userId"],
-                            "action": "add_failed",
-                            "domain": item["domain"],
-                            "previousQuantity": item.get("currentQuantity", 0),
-                            "newQuantity": item.get("currentQuantity", 0),
-                            "proratedAmount": 0,
-                            "effectiveAt": "none"
-                        }).execute()
+                        self._auditLog(
+                            user["userId"], "domain.add_failed",
+                            status="FAILED",
+                            metadata={
+                                "domain": item["domain"],
+                                "previousQuantity": item.get("currentQuantity", 0),
+                                "newQuantity": item.get("currentQuantity", 0),
+                                "proratedAmount": 0,
+                                "effectiveAt": "none"
+                            }
+                        )
                     except Exception as logErr:
-                        logger.error(f"DomainChangeLog insert failed for halted pending addition: {logErr}")
+                        logger.error(f"SubscriptionLog insert failed for halted pending addition: {logErr}")
         self._auditLog(
             user["userId"], "subscription.halted",
             subscriptionId=subscriptionId, status="EXPIRED"
@@ -621,17 +632,19 @@ class WebhookService:
             }).eq("userId", user["userId"]).execute()
             for domain in activatedDomains:
                 try:
-                    self.client.table("DomainChangeLog").insert({
-                        "userId": user["userId"],
-                        "action": "add_activated",
-                        "domain": domain,
-                        "previousQuantity": currentDomainCount,
-                        "newQuantity": updatedDomainCount,
-                        "proratedAmount": 0,
-                        "effectiveAt": "now"
-                    }).execute()
+                    self._auditLog(
+                        user["userId"], "domain.add_activated",
+                        status="ACTIVATED",
+                        metadata={
+                            "domain": domain,
+                            "previousQuantity": currentDomainCount,
+                            "newQuantity": updatedDomainCount,
+                            "proratedAmount": 0,
+                            "effectiveAt": "now"
+                        }
+                    )
                 except Exception as logErr:
-                    logger.error(f"DomainChangeLog insert failed for {domain}: {logErr}")
+                    logger.error(f"SubscriptionLog insert failed for activated domain {domain}: {logErr}")
             if pendingRemovals:
                 scheduledQuantity = updatedDomainCount - len(pendingRemovals)
                 if scheduledQuantity >= 1:
@@ -740,17 +753,19 @@ class WebhookService:
                 for item in pendingAdditions:
                     if item.get("state") == "failed":
                         try:
-                            self.client.table("DomainChangeLog").insert({
-                                "userId": user["userId"],
-                                "action": "add_failed",
-                                "domain": item["domain"],
-                                "previousQuantity": item.get("currentQuantity", 0),
-                                "newQuantity": item.get("currentQuantity", 0),
-                                "proratedAmount": 0,
-                                "effectiveAt": "none"
-                            }).execute()
+                            self._auditLog(
+                                user["userId"], "domain.add_failed",
+                                status="FAILED",
+                                metadata={
+                                    "domain": item["domain"],
+                                    "previousQuantity": item.get("currentQuantity", 0),
+                                    "newQuantity": item.get("currentQuantity", 0),
+                                    "proratedAmount": 0,
+                                    "effectiveAt": "none"
+                                }
+                            )
                         except Exception as logErr:
-                            logger.error(f"DomainChangeLog insert failed for failed pending addition: {logErr}")
+                            logger.error(f"SubscriptionLog insert failed for failed pending addition: {logErr}")
             self._sendPaymentFailureEmail(user["email"], user["fullName"], "payment_failed")
         logger.info(f"Payment failed: {paymentEntity.get('id')}")
 
