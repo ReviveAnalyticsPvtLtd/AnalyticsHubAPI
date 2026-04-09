@@ -1497,24 +1497,23 @@ dashboardNameGeneratorPrompt: |
     ## Rules
 
     1. The name must be **as short as possible**, ideally **3 to 4 words long**.
-    2. Words must be **hyphen-separated** (e.g., `Sales-Performance-Analytics`).
-    3. The name should reflect the **common theme, domain, or focus area** of the provided KPI queries.
-    4. Do **not** include generic words like "Dashboard", "Report", or "Overview".
-    5. Use **Title Case** formatting.
-    6. Return **only the dashboard name** — no explanations, no quotes, no extra punctuation, no extra text.
+    2. The name should reflect the **common theme, domain, or focus area** of the provided KPI queries.
+    3. Do **not** include generic words like "Dashboard", "Report", or "Overview".
+    4. Use **Title Case** formatting.
+    5. Return **only the dashboard name** — no explanations, no quotes, no extra punctuation, no extra text.
 
     ---
 
     ## Examples
 
     If the KPI queries are about revenue, sales trends, and order volumes:
-    → `Sales-Performance-Analytics`
+    → Sales Performance Analytics
 
     If the KPI queries are about customer churn, retention rate, and lifetime value:
-    → `Customer-Retention-Insights`
+    → Customer Retention Insights
 
     If the KPI queries are about inventory levels, stock turnover, and supplier lead times:
-    → `Inventory-Supply-Chain`
+    → Inventory Supply Chain
 
     ---
 

@@ -296,32 +296,50 @@ class ReportingService:
                 ]
                 responses = [f.result() for f in futures]
 
-            # Generate a dynamic dashboard name
-            dashboardNameChain = DashboardNameGenerator().getDashboardNameGeneratorChain()
-            dashboardName = dashboardNameChain.invoke({
-                "queries": "\n".join(uniqueQueries),
-                "metadata": json.dumps(metadata)
-            }).strip()
-
-            # Create a new dashboard page
-            pageId = str(uuid.uuid4())
-            if "dashboardConfig.json" in [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = details.projectId)]:
+            # Check if there is already an existing dashboard configuration
+            file_exists = "dashboardConfig.json" in [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = details.projectId)]
+            dashboardConfig = {}
+            if file_exists:
                 fileUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "dashboardConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
                 dashboardConfig = json.loads(urlopen(fileUrl).read())
-                dashboardConfig[pageId] = {"name": dashboardName, "widgets": []}
-            else:
-                dashboardConfig = {pageId: {"name": dashboardName, "widgets": []}}
+
+            # Find the existing automatic page
+            pageId = None
+            for pid, pdata in dashboardConfig.items():
+                if pdata.get("isAutomatic"):
+                    pageId = pid
+                    break
+
+            # Fallback for old automatic dashboard which didn't have the isAutomatic flag
+            if not pageId and dashboardConfig:
+                pageId = list(dashboardConfig.keys())[0]
+
+            if not pageId:
+                # Generate a dynamic dashboard name only if creating a new one
+                dashboardNameChain = DashboardNameGenerator().getDashboardNameGeneratorChain()
+                dashboardName = dashboardNameChain.invoke({
+                    "queries": "\n".join(uniqueQueries),
+                    "metadata": json.dumps(metadata)
+                }).strip()
+
+                # Create a new dashboard page
+                pageId = str(uuid.uuid4())
+                dashboardConfig[pageId] = {"name": dashboardName, "isAutomatic": True, "widgets": []}
 
             # Export to dashboard
             pageDict = dashboardConfig.get(pageId)
+            
+            # Find the max Y so we don't overlap with existing widgets
+            max_y = max([w.get("layout", {}).get("y", 0) + w.get("layout", {}).get("h", 0) for w in pageDict.get("widgets", [])] + [0])
+            
             cards, otherWidgets = list(), list()
             cardsWidth, otherWidgetsWidth = 0, 0
+            
             for widget in responses:
-                widgetId = str(uuid.uuid4())
                 if widget.get("finalOutput").get("chartType") == "card":
+                    widgetId = str(uuid.uuid4())
                     data = widget.get("finalOutput").get("data")
-                    if (isinstance(data, int) | isinstance(data, float)): data = float(f"{data:.2f}")
-                    else: pass
+                    if isinstance(data, (int, float)): data = float(f"{data:.2f}")
                     newWidget = {
                         "id": widgetId,
                         "chartType": widget.get("finalOutput").get("chartType"),
@@ -330,13 +348,21 @@ class ReportingService:
                         "xLabels": widget.get("finalOutput").get("xLabels"),
                         "yLabels": widget.get("finalOutput").get("yLabels"),
                         "data": data,
-                        "layout": {"x": cardsWidth, "y": 0, "w": 4, "h": 6},
+                        "layout": {"x": cardsWidth, "y": max_y, "w": 4, "h": 6},
                         "generatedCode": widget.get("generatedCode")
                     }
                     cardsWidth += 4
-                    if cardsWidth >= 12: cardsWidth = 0
+                    if cardsWidth >= 12:
+                        cardsWidth = 0
+                        max_y += 6
                     cards.append(newWidget)
-                else:
+                    
+            if cardsWidth > 0:
+                max_y += 6
+
+            for widget in responses:
+                if widget.get("finalOutput").get("chartType") != "card":
+                    widgetId = str(uuid.uuid4())
                     newWidget = {
                         "id": widgetId,
                         "chartType": widget.get("finalOutput").get("chartType"),
@@ -345,12 +371,15 @@ class ReportingService:
                         "xLabels": widget.get("finalOutput").get("xLabels"),
                         "yLabels": widget.get("finalOutput").get("yLabels"),
                         "data": widget.get("finalOutput").get("data"),
-                        "layout": {"x": otherWidgetsWidth, "y": 0, "w": 6, "h": 10},
+                        "layout": {"x": otherWidgetsWidth, "y": max_y, "w": 6, "h": 10},
                         "generatedCode": widget.get("generatedCode")
                     }
                     otherWidgetsWidth += 6
-                    if otherWidgetsWidth >= 12: otherWidgetsWidth = 0
+                    if otherWidgetsWidth >= 12:
+                        otherWidgetsWidth = 0
+                        max_y += 10
                     otherWidgets.append(newWidget)
+
             pageDict["widgets"].extend(cards)
             pageDict["widgets"].extend(otherWidgets)
             dashboardConfig[pageId] = pageDict
