@@ -161,6 +161,113 @@ class SubscriptionService:
         """
         return self._normalizeAndValidateDomains([domain])[0]
 
+    def _reconcilePendingAdditions(self, user: dict) -> dict:
+        """
+        Reconcile awaiting_payment entries against Razorpay Payment Link status.
+
+        Activates paid domains, removes expired link entries. Called at the start
+        of addDomains() and removeDomain() to resolve any missed activations.
+
+        Args:
+            user (dict): The user record with pendingAdditions.
+
+        Returns:
+            dict: The (possibly refreshed) user record.
+        """
+        pendingAdditions = user.get("pendingAdditions") or []
+        changed = False
+        for item in pendingAdditions:
+            if item.get("state") != "awaiting_payment":
+                continue
+            paymentLinkId = item.get("paymentLinkId")
+            if not paymentLinkId:
+                continue
+            try:
+                link = self.razorpayClient.payment_link.fetch(paymentLinkId)
+            except Exception as fetchErr:
+                logger.error(f"Failed to fetch payment link {paymentLinkId}: {fetchErr}")
+                continue
+            if link["status"] == "paid":
+                notes = link.get("notes", {})
+                self._activatePaidDomains(
+                    userId=user["userId"],
+                    domains=[d.strip() for d in notes.get("domains", "").split(",") if d.strip()],
+                    targetQuantity=int(notes.get("targetQuantity", 0)),
+                    paymentLinkId=paymentLinkId,
+                )
+                changed = True
+            elif link["status"] == "expired":
+                item["state"] = "expired"
+                changed = True
+        if changed:
+            cleanedPending = [item for item in pendingAdditions if item.get("state") != "expired"]
+            self.client.table("Users").update({
+                "pendingAdditions": cleanedPending
+            }).eq("userId", user["userId"]).execute()
+            user = self.client.table("Users").select("*") \
+                .eq("userId", user["userId"]).execute().data[0]
+        return user
+
+    def _activatePaidDomains(self, userId: str, domains: list[str], targetQuantity: int, paymentLinkId: str) -> None:
+        """
+        Activate domains after confirmed payment. Idempotent -- safe to call
+        multiple times for the same paymentLinkId.
+
+        DB is updated BEFORE Razorpay subscription.edit to prevent race conditions
+        with the subscription.updated webhook.
+
+        Args:
+            userId (str): The user ID.
+            domains (list[str]): Domain names to activate.
+            targetQuantity (int): The total subscription quantity after activation.
+            paymentLinkId (str): The Razorpay Payment Link ID for idempotency.
+        """
+        user = self.client.table("Users") \
+            .select("userId, subscribedExperts, domainCount, razorpaySubscriptionId, pendingAdditions, pendingRemovals") \
+            .eq("userId", userId).execute().data[0]
+        pendingAdditions = user.get("pendingAdditions") or []
+        linkEntries = [item for item in pendingAdditions if item.get("paymentLinkId") == paymentLinkId]
+        if linkEntries and all(item.get("state") == "activated" for item in linkEntries):
+            return
+        currentExperts = [e.strip() for e in (user.get("subscribedExperts") or "").split(",") if e.strip()]
+        activatedDomains = []
+        for domain in domains:
+            if domain not in currentExperts:
+                currentExperts.append(domain)
+                activatedDomains.append(domain)
+        for item in pendingAdditions:
+            if item.get("paymentLinkId") == paymentLinkId:
+                item["state"] = "activated"
+        pendingRemovals = user.get("pendingRemovals") or []
+        reconciledQuantity = targetQuantity - len(pendingRemovals)
+        updatedDomainCount = len(currentExperts)
+        self.client.table("Users").update({
+            "subscribedExperts": ", ".join(currentExperts),
+            "domainCount": updatedDomainCount,
+            "pendingAdditions": pendingAdditions,
+        }).eq("userId", userId).execute()
+        subscriptionId = user["razorpaySubscriptionId"]
+        if subscriptionId and reconciledQuantity >= 1:
+            try:
+                self.razorpayClient.subscription.edit(subscriptionId, {
+                    "quantity": reconciledQuantity,
+                    "schedule_change_at": "cycle_end"
+                })
+            except Exception as rzpErr:
+                logger.error(f"Failed to update Razorpay subscription quantity for user {userId}: {rzpErr}")
+        for domain in activatedDomains:
+            self._auditLog(
+                userId, "domain.add_activated",
+                subscriptionId=subscriptionId,
+                status="ACTIVATED",
+                metadata={
+                    "domain": domain,
+                    "paymentLinkId": paymentLinkId,
+                    "reconciledQuantity": reconciledQuantity,
+                }
+            )
+        logger.info(f"Activated domains {activatedDomains} for user {userId} via payment link {paymentLinkId}")
+
     @staticmethod
     def _sendFreeTrialEmail(email: str, name: str) -> None:
         """
@@ -335,119 +442,166 @@ class SubscriptionService:
             logger.error(exception)
             raise exception
 
-    def addDomain(self, domain: str, token: str) -> dict:
+    def addDomains(self, domains: list[str], token: str) -> dict:
         """
-        Initiate adding a domain to an active subscription.
+        Initiate adding one or more domains to an active subscription via
+        a Razorpay Payment Link for prorated charges.
 
-        Calls Razorpay to increase the subscription quantity but does NOT
-        grant immediate access. The domain is placed in pendingAdditions
-        and activated only after webhook reconciliation confirms payment.
+        No Razorpay subscription quantity change occurs at this stage. The
+        quantity is updated only after payment confirmation via the shared
+        _activatePaidDomains() function.
 
         Args:
-            domain (str): The domain expert name to add.
+            domains (list[str]): The domain expert names to add.
             token (str): Authorization token.
 
         Returns:
-            dict: Initiation state with upgradeState and checkoutUrl.
+            dict: Payment Link details including shortUrl for checkout.
         """
         try:
-            normalizedDomain = self._normalizeSingleDomain(domain)
+            normalizedDomains = self._normalizeAndValidateDomains(domains)
             decodedToken = jwt.decode(
                 token,
                 os.environ["SECRET_KEY"],
-                algorithms = ["HS256"]
+                algorithms=["HS256"]
             )
             userId = decodedToken.get("userId")
-            userRecord = self.client.table("Users") \
-                .select("subscribedExperts, domainCount, razorpaySubscriptionId, subscriptionStatus, pendingRemovals, pendingAdditions") \
+            userEmail = decodedToken.get("email")
+            user = self.client.table("Users") \
+                .select("userId, subscribedExperts, domainCount, razorpaySubscriptionId, "
+                        "subscriptionStatus, subscriptionStart, subscriptionExpiry, pendingAdditions, "
+                        "pendingRemovals, fullName, razorpayCustomerId") \
                 .eq("userId", userId) \
-                .execute()
-            if not userRecord.data:
+                .execute().data
+            if not user:
                 raise Exception("User not found")
-            user = userRecord.data[0]
+            user = user[0]
+            user = self._reconcilePendingAdditions(user)
             if user["subscriptionStatus"] != "ACTIVE":
-                raise Exception("Subscription must be active to add a domain")
-            currentExperts = [e.strip() for e in user["subscribedExperts"].split(",") if e.strip()]
-            if normalizedDomain in currentExperts:
-                raise Exception(f"Domain '{normalizedDomain}' is already in your subscription")
+                raise Exception("Subscription must be active to add domains")
+            currentExperts = [e.strip() for e in (user.get("subscribedExperts") or "").split(",") if e.strip()]
             pendingAdditions = user.get("pendingAdditions") or []
-            pendingDomains = [item["domain"] for item in pendingAdditions if item.get("state") not in ("failed", "activated")]
-            if normalizedDomain in pendingDomains:
-                raise Exception(f"Domain '{normalizedDomain}' already has a pending addition request")
+            activePending = [item["domain"] for item in pendingAdditions
+                             if item.get("state") not in ("failed", "activated")]
+            for d in normalizedDomains:
+                if d in currentExperts:
+                    raise Exception(f"Domain '{d}' is already in your subscription")
+                if d in activePending:
+                    raise Exception(f"Domain '{d}' already has a pending addition request")
             domainCount = user["domainCount"] or len(currentExperts)
-            totalWithPending = domainCount + len(pendingDomains)
-            if totalWithPending >= 4:
-                raise Exception("Maximum of 4 domains reached (including pending additions)")
+            totalAfterAdd = domainCount + len(activePending) + len(normalizedDomains)
+            if totalAfterAdd > 4:
+                raise Exception(f"Maximum of 4 domains. Current: {domainCount}, "
+                                f"pending: {len(activePending)}, requested: {len(normalizedDomains)}")
             subscriptionId = user["razorpaySubscriptionId"]
             if not subscriptionId:
                 raise Exception("No active subscription found for this user")
-            newQuantity = domainCount + len(pendingDomains) + 1
-            effectiveAt = "now"
-            upgradeState = "processing"
-            try:
-                self.razorpayClient.subscription.edit(subscriptionId, {
-                    "quantity": newQuantity,
-                    "schedule_change_at": "now"
+            plan = self.razorpayClient.plan.fetch(self.BASE_PLAN_ID)
+            perDomainAmount = plan["item"]["amount"]
+            cycleStart = datetime.datetime.fromisoformat(user["subscriptionStart"])
+            subscriptionExpiry = datetime.datetime.fromisoformat(user["subscriptionExpiry"])
+            now = datetime.datetime.utcnow()
+            daysInCycle = max((subscriptionExpiry - cycleStart).days, 1)
+            daysRemaining = max((subscriptionExpiry - now).days, 1)
+            perDomainProrated = int((perDomainAmount / daysInCycle) * daysRemaining)
+            totalProrated = perDomainProrated * len(normalizedDomains)
+            domainLabel = ", ".join(normalizedDomains)
+            paymentLink = self.razorpayClient.payment_link.create({
+                "amount": totalProrated,
+                "currency": "INR",
+                "description": f"Domain upgrade: {domainLabel} (prorated {daysRemaining} days)",
+                "customer": {
+                    "name": user.get("fullName") or userEmail,
+                    "email": userEmail,
+                },
+                "callback_url": f"{os.environ['API_BASE_URL']}/subscriptions/payment-callback",
+                "callback_method": "get",
+                "expire_by": int((now + datetime.timedelta(hours=24)).timestamp()),
+                "notes": {
+                    "userId": userId,
+                    "domains": domainLabel,
+                    "type": "domain_upgrade_proration",
+                    "currentQuantity": str(domainCount),
+                    "targetQuantity": str(totalAfterAdd),
+                }
+            })
+            for d in normalizedDomains:
+                pendingAdditions.append({
+                    "domain": d,
+                    "state": "awaiting_payment",
+                    "paymentLinkId": paymentLink["id"],
+                    "proratedAmount": perDomainProrated,
+                    "requestedAt": str(now),
                 })
-            except Exception as razorpayError:
-                if "minimum amount" in str(razorpayError).lower():
-                    self.razorpayClient.subscription.edit(subscriptionId, {
-                        "quantity": newQuantity,
-                        "schedule_change_at": "cycle_end"
-                    })
-                    effectiveAt = "cycle_end"
-                    upgradeState = "scheduled_cycle_end"
-                    logger.info(f"Prorated amount below minimum for user {userId}, falling back to cycle_end")
-                else:
-                    raise razorpayError
-            pendingItem = {
-                "domain": normalizedDomain,
-                "currentQuantity": domainCount,
-                "targetQuantity": newQuantity,
-                "state": upgradeState,
-                "checkoutUrl": None,
-                "requestedAt": str(datetime.datetime.utcnow()),
-                "invoiceId": None,
-                "paymentId": None,
-            }
-            pendingAdditions.append(pendingItem)
             self.client.table("Users").update({
                 "pendingAdditions": pendingAdditions
             }).eq("userId", userId).execute()
-            pendingRemovals = user.get("pendingRemovals") or []
-            if pendingRemovals and effectiveAt == "now":
-                scheduledQuantity = newQuantity - len(pendingRemovals)
-                self.razorpayClient.subscription.edit(subscriptionId, {
-                    "quantity": scheduledQuantity,
-                    "schedule_change_at": "cycle_end"
-                })
-                logger.info(f"Re-scheduled pending removals for user {userId}: qty {scheduledQuantity} at cycle_end")
             self._auditLog(
                 userId, "domain.add_requested",
                 subscriptionId=subscriptionId,
-                status=upgradeState.upper(),
+                amount=totalProrated,
+                status="AWAITING_PAYMENT",
                 metadata={
-                    "domain": normalizedDomain,
-                    "previousQuantity": domainCount,
-                    "newQuantity": newQuantity,
-                    "proratedAmount": 0,
-                    "effectiveAt": effectiveAt
+                    "domains": normalizedDomains,
+                    "perDomainProrated": perDomainProrated,
+                    "totalProrated": totalProrated,
+                    "daysRemaining": daysRemaining,
+                    "paymentLinkId": paymentLink["id"],
                 }
             )
-            logger.info(f"Domain '{normalizedDomain}' add requested for user {userId}, quantity {domainCount} -> {newQuantity}")
+            logger.info(f"Domain upgrade payment link created for user {userId}: {normalizedDomains}")
             return {
-                "domain": normalizedDomain,
+                "paymentLinkId": paymentLink["id"],
+                "shortUrl": paymentLink["short_url"],
+                "upgradeState": "awaiting_payment",
+                "domains": normalizedDomains,
+                "totalProratedAmount": totalProrated,
+                "perDomainProratedAmount": perDomainProrated,
                 "currentQuantity": domainCount,
-                "targetQuantity": newQuantity,
-                "effectiveAt": effectiveAt,
-                "upgradeState": upgradeState,
-                "checkoutUrl": None,
-                "pendingRemovals": pendingRemovals
+                "targetQuantity": totalAfterAdd,
+                "daysRemaining": daysRemaining,
             }
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
             raise exception
+
+    def handlePaymentCallback(self, razorpayPaymentLinkId: str, razorpayPaymentId: str,
+                               razorpayPaymentLinkStatus: str) -> str:
+        """
+        Handle Razorpay callback_url redirect after Payment Link payment.
+
+        Verifies payment status with Razorpay, activates domains if paid,
+        and returns a redirect URL for the frontend dashboard.
+
+        Args:
+            razorpayPaymentLinkId (str): The Payment Link ID from query params.
+            razorpayPaymentId (str): The Payment ID from query params.
+            razorpayPaymentLinkStatus (str): The Payment Link status from query params.
+
+        Returns:
+            str: The redirect URL for the frontend.
+        """
+        frontendUrl = os.environ.get("FRONTEND_URL", "")
+        try:
+            if razorpayPaymentLinkStatus != "paid":
+                return f"{frontendUrl}/dashboard?upgrade=failed"
+            link = self.razorpayClient.payment_link.fetch(razorpayPaymentLinkId)
+            if link.get("status") != "paid":
+                return f"{frontendUrl}/dashboard?upgrade=failed"
+            notes = link.get("notes", {})
+            if notes.get("type") != "domain_upgrade_proration":
+                return f"{frontendUrl}/dashboard"
+            self._activatePaidDomains(
+                userId=notes["userId"],
+                domains=[d.strip() for d in notes.get("domains", "").split(",") if d.strip()],
+                targetQuantity=int(notes.get("targetQuantity", 0)),
+                paymentLinkId=razorpayPaymentLinkId,
+            )
+            return f"{frontendUrl}/dashboard?upgrade=success"
+        except Exception as e:
+            logger.error(f"Payment callback handling failed for link {razorpayPaymentLinkId}: {e}")
+            return f"{frontendUrl}/dashboard?upgrade=failed"
 
     def removeDomain(self, domains: list[str], token: str) -> dict:
         """
@@ -473,12 +627,12 @@ class SubscriptionService:
             )
             userId = decodedToken.get("userId")
             userRecord = self.client.table("Users") \
-                .select("subscribedExperts, domainCount, razorpaySubscriptionId, subscriptionStatus, pendingRemovals") \
+                .select("userId, subscribedExperts, domainCount, razorpaySubscriptionId, subscriptionStatus, pendingRemovals, pendingAdditions") \
                 .eq("userId", userId) \
                 .execute()
             if not userRecord.data:
                 raise Exception("User not found")
-            user = userRecord.data[0]
+            user = self._reconcilePendingAdditions(userRecord.data[0])
             if user["subscriptionStatus"] != "ACTIVE":
                 raise Exception("Subscription must be active to remove a domain")
             currentExperts = [e.strip() for e in user["subscribedExperts"].split(",") if e.strip()]
@@ -538,8 +692,9 @@ class SubscriptionService:
         """
         Cancel a pending domain addition request.
 
-        Removes the domain from pendingAdditions and reverts the Razorpay
-        subscription quantity if the addition was still in progress.
+        For Payment Link items: cancels the Razorpay Payment Link (no quantity
+        revert needed since quantity was never changed at request time).
+        For legacy items: reverts the Razorpay subscription quantity.
 
         Args:
             domain (str): The domain to cancel.
@@ -553,7 +708,7 @@ class SubscriptionService:
             decodedToken = jwt.decode(
                 token,
                 os.environ["SECRET_KEY"],
-                algorithms = ["HS256"]
+                algorithms=["HS256"]
             )
             userId = decodedToken.get("userId")
             userRecord = self.client.table("Users") \
@@ -573,12 +728,18 @@ class SubscriptionService:
                     break
             if targetItem is None:
                 raise Exception(f"No cancellable pending addition found for domain '{normalizedDomain}'")
+            isPaymentLinkItem = targetItem.get("paymentLinkId") is not None
             shouldRevertQuantity = targetItem.get("state") in ("processing", "awaiting_payment", "scheduled_cycle_end")
             pendingAdditions.pop(targetIndex)
             self.client.table("Users").update({
                 "pendingAdditions": pendingAdditions
             }).eq("userId", userId).execute()
-            if shouldRevertQuantity:
+            if isPaymentLinkItem:
+                try:
+                    self.razorpayClient.payment_link.cancel(targetItem["paymentLinkId"])
+                except Exception as cancelErr:
+                    logger.error(f"Failed to cancel payment link {targetItem['paymentLinkId']}: {cancelErr}")
+            elif shouldRevertQuantity:
                 subscriptionId = user["razorpaySubscriptionId"]
                 if subscriptionId:
                     domainCount = user["domainCount"] or 0

@@ -10,10 +10,10 @@ __all__ = ["router"]
 
 
 from utils.exceptionHandler import CustomException, raiseHttpException
-from api.models import VerifySubscriptionRequest, CreateSubscriptionRequest, AddDomainRequest, RemoveDomainRequest, CancelPendingAdditionRequest, RefundRequest
+from api.models import VerifySubscriptionRequest, CreateSubscriptionRequest, AddDomainsRequest, RemoveDomainRequest, CancelPendingAdditionRequest, RefundRequest
 from api.services.subscriptionService import subscriptionService
-from fastapi.responses import ORJSONResponse
-from fastapi import APIRouter, Depends
+from fastapi.responses import ORJSONResponse, RedirectResponse
+from fastapi import APIRouter, Depends, Query
 from api.commons import verifyToken
 
 router = APIRouter()
@@ -94,30 +94,59 @@ async def verifySubscription(
         raiseHttpException(e)
 
 
-@router.post("/addDomain")
-async def addDomain(payload: AddDomainRequest, token=Depends(verifyToken)):
+@router.post("/addDomains")
+async def addDomains(payload: AddDomainsRequest, token=Depends(verifyToken)):
     """
-    Add a domain to the authenticated user's subscription with prorated billing.
+    Add one or more domains to the authenticated user's subscription
+    via a Razorpay Payment Link for prorated billing.
 
     Args:
-        payload (AddDomainRequest): Domain to add.
+        payload (AddDomainsRequest): Domains to add.
         token: Authorization token dependency.
 
     Returns:
-        ORJSONResponse: Updated subscription details.
+        ORJSONResponse: Payment Link details including shortUrl for checkout.
     """
     try:
-        result = subscriptionService.addDomain(domain=payload.domain, token=token)
+        result = subscriptionService.addDomains(domains=payload.domains, token=token)
         return ORJSONResponse(
             status_code=200,
             content={
                 "status": "SUCCESS",
-                "message": "Domain upgrade initiated.",
+                "message": "Domain upgrade payment link created.",
                 "data": result
             }
         )
     except CustomException as e:
         raiseHttpException(e)
+
+
+@router.get("/payment-callback")
+async def paymentCallback(
+    razorpay_payment_link_id: str = Query(...),
+    razorpay_payment_id: str = Query(...),
+    razorpay_payment_link_status: str = Query(...)
+):
+    """
+    Handle Razorpay Payment Link callback redirect after payment.
+
+    No authentication required -- Razorpay redirects the user's browser
+    here after payment. Verification is done via Razorpay API fetch.
+
+    Args:
+        razorpay_payment_link_id: Payment Link ID from Razorpay.
+        razorpay_payment_id: Payment ID from Razorpay.
+        razorpay_payment_link_status: Payment Link status from Razorpay.
+
+    Returns:
+        RedirectResponse: 302 redirect to frontend dashboard.
+    """
+    redirectUrl = subscriptionService.handlePaymentCallback(
+        razorpayPaymentLinkId=razorpay_payment_link_id,
+        razorpayPaymentId=razorpay_payment_id,
+        razorpayPaymentLinkStatus=razorpay_payment_link_status,
+    )
+    return RedirectResponse(url=redirectUrl, status_code=302)
 
 
 @router.post("/removeDomain")

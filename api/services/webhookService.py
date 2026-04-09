@@ -40,6 +40,7 @@ EVENT_HANDLERS = {
     "payment.captured": "_handlePaymentCaptured",
     "payment.failed": "_handlePaymentFailed",
     "invoice.paid": "_handleInvoicePaid",
+    "payment_link.paid": "_handlePaymentLinkPaid",
     "refund.processed": "_handleRefundProcessed",
 }
 
@@ -662,10 +663,6 @@ class WebhookService:
                     except Exception as rzpErr:
                         logger.error(f"Failed to re-schedule pending removals for user {user['userId']}: {rzpErr}")
             logger.info(f"Activated domains {activatedDomains} for user {user['userId']}, new count: {updatedDomainCount}")
-        else:
-            self.client.table("Users").update({
-                "domainCount": newQuantity,
-            }).eq("userId", user["userId"]).execute()
         self._auditLog(
             user["userId"], "subscription.updated",
             subscriptionId=subscriptionId,
@@ -782,23 +779,6 @@ class WebhookService:
         subscriptionId = invoiceEntity.get("subscription_id", "")
         user = self._requireUserBySubscriptionId(subscriptionId, "invoice.paid")
         self._upsertInvoiceRecord(userId=user["userId"], invoiceData=invoiceEntity)
-        pendingAdditions = user.get("pendingAdditions") or []
-        enriched = False
-        for item in pendingAdditions:
-            if item.get("state") == "processing":
-                item["invoiceId"] = invoiceEntity.get("id")
-                item["paymentId"] = invoiceEntity.get("payment_id")
-                shortUrl = invoiceEntity.get("short_url")
-                if shortUrl:
-                    item["checkoutUrl"] = shortUrl
-                    item["state"] = "awaiting_payment"
-                enriched = True
-                break
-        if enriched:
-            self.client.table("Users").update({
-                "pendingAdditions": pendingAdditions
-            }).eq("userId", user["userId"]).execute()
-            logger.info(f"Enriched pending addition with invoice data for user {user['userId']}")
         self._auditLog(
             user["userId"], "invoice.paid",
             invoiceId=invoiceEntity.get("id"),
@@ -809,6 +789,32 @@ class WebhookService:
             status="PAID"
         )
         logger.info(f"Invoice paid stored for user {user['userId']}")
+
+    def _handlePaymentLinkPaid(self, event: dict) -> None:
+        """
+        Handle the payment_link.paid webhook event.
+
+        Acts as a backup signal for domain activation. If the callback_url
+        already activated domains, this is safely skipped via the idempotent
+        _activatePaidDomains() function.
+
+        Args:
+            event (dict): The Razorpay webhook event.
+        """
+        paymentLink = event.get("payload", {}).get("payment_link", {}).get("entity", {})
+        notes = paymentLink.get("notes", {})
+        if notes.get("type") != "domain_upgrade_proration":
+            logger.info(f"Payment link paid but not a domain upgrade, skipping: {paymentLink.get('id')}")
+            return
+        from api.services.subscriptionService import subscriptionService
+        subscriptionService._activatePaidDomains(
+            userId=notes["userId"],
+            domains=[d.strip() for d in notes.get("domains", "").split(",") if d.strip()],
+            targetQuantity=int(notes.get("targetQuantity", 0)),
+            paymentLinkId=paymentLink["id"],
+        )
+        logger.info(f"Payment link paid webhook processed for user {notes.get('userId')}, link {paymentLink.get('id')}")
+
     def _handleRefundProcessed(self, event: dict) -> None:
         """
         Handle the refund.processed webhook event.

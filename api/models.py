@@ -156,6 +156,9 @@ class CreateSubscriptionRequest(BaseModel):
 class AddDomainRequest(BaseModel):
     domain: str
 
+class AddDomainsRequest(BaseModel):
+    domains: list[str]
+
 class RemoveDomainRequest(BaseModel):
     domains: list[str]
 
