@@ -5,7 +5,8 @@ Daily billing engine for the token-based recurring payment system.
 Runs as a Celery Beat task at midnight UTC.
 
 Queries users whose subscription expires within the next 48 hours and
-fires Razorpay's create_recurring_payment API against their saved token.
+creates a Razorpay Order followed by create_recurring_payment against
+their saved token.
 Razorpay and the issuing bank handle the RBI-mandated 24-hour pre-debit
 notification automatically. All post-payment state changes (expiry bump,
 invoice creation, dunning) are handled by the payment.captured and
@@ -95,20 +96,26 @@ class DailyBillingTask:
             try:
                 plan = self.razorpayClient.plan.fetch(self.BASE_PLAN_ID)
                 amount = plan["item"]["amount"]
-                self.redis.set(self._PRICE_CACHE_KEY, str(amount), ex=self._PRICE_CACHE_TTL)
+                self.redis.set(
+                    self._PRICE_CACHE_KEY, str(amount), ex=self._PRICE_CACHE_TTL
+                )
                 return amount
             except Exception as e:
                 lastError = e
-                logger.warning(f"Plan fetch attempt {attempt}/{self._PRICE_FETCH_RETRIES} failed: {e}")
+                logger.warning(
+                    f"Plan fetch attempt {attempt}/{self._PRICE_FETCH_RETRIES} failed: {e}"
+                )
                 if attempt < self._PRICE_FETCH_RETRIES:
-                    time.sleep(2 ** attempt)
+                    time.sleep(2**attempt)
 
         cached = self.redis.get(self._PRICE_CACHE_KEY)
         if cached:
             logger.warning(f"Using cached base price: {cached}")
             return int(cached)
 
-        raise RuntimeError(f"Cannot fetch base price and no cached value available: {lastError}")
+        raise RuntimeError(
+            f"Cannot fetch base price and no cached value available: {lastError}"
+        )
 
     def _auditLog(self, userId: str, eventType: str, **kwargs) -> None:
         """
@@ -123,23 +130,27 @@ class DailyBillingTask:
             status = kwargs.pop("status", None)
             metadata = kwargs.pop("metadata", None) or {}
             metadata.update(kwargs)
-            self.client.table("SubscriptionLog").insert({
-                "userId": userId,
-                "eventType": eventType,
-                "status": status,
-                "metadata": metadata if metadata else None,
-            }).execute()
+            self.client.table("SubscriptionLog").insert(
+                {
+                    "userId": userId,
+                    "eventType": eventType,
+                    "status": status,
+                    "metadata": metadata if metadata else None,
+                }
+            ).execute()
         except Exception as e:
-            logger.error(f"SubscriptionLog insert failed for user {userId}, event {eventType}: {e}")
+            logger.error(
+                f"SubscriptionLog insert failed for user {userId}, event {eventType}: {e}"
+            )
 
     def _chargeExecution(self) -> dict:
         """
         Queue recurring charges for users whose cycle ends within 48 hours.
 
-        Fires create_recurring_payment against each user's saved Razorpay
-        token. The actual payment settlement, DB updates, and dunning are
-        handled asynchronously by the payment.captured / payment.failed
-        webhook handlers.
+        Creates a Razorpay Order and then fires create_recurring_payment
+        against each user's saved Razorpay token. The actual payment
+        settlement, DB updates, and dunning are handled asynchronously by
+        the payment.captured / payment.failed webhook handlers.
 
         Returns:
             dict: Counts of queued charges and API-level errors.
@@ -147,16 +158,21 @@ class DailyBillingTask:
         now = datetime.datetime.now(datetime.timezone.utc)
         chargeWindowEnd = now + datetime.timedelta(hours=48)
 
-        users = self.client.table("Users") \
-            .select("userId, email, fullName, domainCount, razorpayTokenId, "
-                    "razorpayCustomerId, subscriptionExpiry, subscriptionAnchorDay, "
-                    "recurringFailures, pendingRemovals, subscribedExperts, subscriptionStatus, "
-                    "phoneNumber") \
-            .eq("subscriptionStatus", "ACTIVE") \
-            .gte("subscriptionExpiry", now.isoformat()) \
-            .lte("subscriptionExpiry", chargeWindowEnd.isoformat()) \
-            .not_.is_("razorpayTokenId", "null") \
-            .execute().data
+        users = (
+            self.client.table("Users")
+            .select(
+                "userId, email, fullName, domainCount, razorpayTokenId, "
+                "razorpayCustomerId, subscriptionExpiry, subscriptionAnchorDay, "
+                "recurringFailures, pendingRemovals, subscribedExperts, subscriptionStatus, "
+                "phoneNumber"
+            )
+            .eq("subscriptionStatus", "ACTIVE")
+            .gte("subscriptionExpiry", now.isoformat())
+            .lte("subscriptionExpiry", chargeWindowEnd.isoformat())
+            .not_.is_("razorpayTokenId", "null")
+            .execute()
+            .data
+        )
 
         if not users:
             logger.info("No users due for charge queuing")
@@ -170,18 +186,26 @@ class DailyBillingTask:
             userId = user["userId"]
             try:
                 if (user.get("recurringFailures") or 0) >= 3:
-                    logger.info(f"User {userId} has reached max recurring failures, skipping charge")
+                    logger.info(
+                        f"User {userId} has reached max recurring failures, skipping charge"
+                    )
                     continue
 
                 self._processPendingRemovals(user)
 
-                refreshed = self.client.table("Users") \
-                    .select("domainCount, subscribedExperts") \
-                    .eq("userId", userId).execute().data[0]
+                refreshed = (
+                    self.client.table("Users")
+                    .select("domainCount, subscribedExperts")
+                    .eq("userId", userId)
+                    .execute()
+                    .data[0]
+                )
                 domainCount = refreshed.get("domainCount") or 0
 
                 if domainCount < 1:
-                    logger.warning(f"User {userId} has 0 domains after removal processing, skipping charge")
+                    logger.warning(
+                        f"User {userId} has 0 domains after removal processing, skipping charge"
+                    )
                     continue
 
                 amount = domainCount * basePriceAmount
@@ -194,26 +218,49 @@ class DailyBillingTask:
                     lockKey, "1", nx=True, ex=self._CHARGE_LOCK_TTL_SECONDS
                 )
                 if not acquired:
-                    logger.info(f"User {userId} already has a charge lock for cycle {cycleKey}, skipping")
+                    logger.info(
+                        f"User {userId} already has a charge lock for cycle {cycleKey}, skipping"
+                    )
                     continue
 
+                receiptUser = (userId or "unknown")[-8:]
+                receiptCycle = now.strftime("%Y%m")
+                receipt = f"ren_{receiptUser}_{receiptCycle}_{int(time.time())}"
+
                 try:
-                    response = self.razorpayClient.payment.createRecurring({
-                        "email": user.get("email", ""),
-                        "contact": user.get("phoneNumber", "9999999999"),
-                        "type": "recurring",
-                        "amount": amount,
-                        "currency": "INR",
-                        "token": tokenId,
-                        "customer_id": customerId,
-                        "capture": 1,
-                        "description": f"Subscription renewal - {domainCount} domain(s)",
-                        "notes": {
-                            "type": "recurring_renewal",
-                            "userId": userId,
-                            "domainCount": str(domainCount),
-                        },
-                    })
+                    order = self.razorpayClient.order.create(
+                        {
+                            "amount": amount,
+                            "currency": "INR",
+                            "receipt": receipt,
+                            "payment_capture": True,
+                            "notes": {
+                                "type": "recurring_renewal",
+                                "userId": userId,
+                                "domainCount": str(domainCount),
+                            },
+                        }
+                    )
+                    orderId = order["id"]
+
+                    response = self.razorpayClient.payment.createRecurring(
+                        {
+                            "email": user.get("email", ""),
+                            "contact": user.get("phoneNumber", "9999999999"),
+                            "amount": amount,
+                            "currency": "INR",
+                            "order_id": orderId,
+                            "token": tokenId,
+                            "customer_id": customerId,
+                            "recurring": True,
+                            "description": f"Subscription renewal - {domainCount} domain(s)",
+                            "notes": {
+                                "type": "recurring_renewal",
+                                "userId": userId,
+                                "domainCount": str(domainCount),
+                            },
+                        }
+                    )
                 except Exception:
                     self.redis.delete(lockKey)
                     raise
@@ -221,17 +268,21 @@ class DailyBillingTask:
                 paymentId = response.get("razorpay_payment_id") or response.get("id")
 
                 self._auditLog(
-                    userId, "billing.renewal_queued",
+                    userId,
+                    "billing.renewal_queued",
                     status="QUEUED",
                     metadata={
                         "amount": amount,
                         "domainCount": domainCount,
                         "tokenId": tokenId,
+                        "orderId": orderId,
                         "razorpayPaymentId": paymentId,
-                    }
+                    },
                 )
                 queued += 1
-                logger.info(f"Recurring charge queued for user {userId}, amount={amount}")
+                logger.info(
+                    f"Recurring charge queued for user {userId}, amount={amount}"
+                )
 
             except Exception as e:
                 logger.error(f"Failed to queue recurring charge for user {userId}: {e}")
@@ -259,16 +310,20 @@ class DailyBillingTask:
         experts = user.get("subscribedExperts") or ""
         currentExperts = [e.strip() for e in experts.split(",") if e.strip()]
         updatedExperts = [e for e in currentExperts if e not in pendingRemovals]
-        self.client.table("Users").update({
-            "subscribedExperts": ", ".join(updatedExperts),
-            "domainCount": len(updatedExperts),
-            "pendingRemovals": [],
-        }).eq("userId", user["userId"]).execute()
-        logger.info(f"Processed pending removals for user {user['userId']}: {pendingRemovals}")
+        self.client.table("Users").update(
+            {
+                "subscribedExperts": ", ".join(updatedExperts),
+                "domainCount": len(updatedExperts),
+                "pendingRemovals": [],
+            }
+        ).eq("userId", user["userId"]).execute()
+        logger.info(
+            f"Processed pending removals for user {user['userId']}: {pendingRemovals}"
+        )
 
     def _handleChargeError(self, userId: str) -> None:
         """
-        Log an API-level error when the create_recurring_payment call fails.
+        Log an API-level error when order creation or recurring payment fails.
 
         This handles SDK / network errors only. Actual payment failures
         (insufficient funds, card declined, etc.) arrive via the
@@ -278,7 +333,8 @@ class DailyBillingTask:
             userId (str): The user ID.
         """
         self._auditLog(
-            userId, "billing.queue_error",
+            userId,
+            "billing.queue_error",
             status="ERROR",
-            metadata={"reason": "create_recurring_payment API call failed"}
+            metadata={"reason": "order/create_recurring_payment API flow failed"},
         )
