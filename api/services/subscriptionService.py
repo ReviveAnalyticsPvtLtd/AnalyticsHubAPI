@@ -83,7 +83,7 @@ class SubscriptionService:
         except Exception as e:
             logger.error(f"SubscriptionLog insert failed for user {userId}, event {eventType}: {e}")
 
-    def _getOrCreateRazorpayCustomer(self, userId: str, email: str, name: str) -> str:
+    def _getOrCreateRazorpayCustomer(self, userId: str, email: str, name: str, contact: str = "") -> str:
         """
         Retrieve existing or create a new Razorpay Customer for the user.
 
@@ -91,6 +91,7 @@ class SubscriptionService:
             userId (str): The internal user ID.
             email (str): The user's email address.
             name (str): The user's full name.
+            contact (str): The user's phone number.
 
         Returns:
             str: The Razorpay Customer ID.
@@ -102,7 +103,7 @@ class SubscriptionService:
         customer = self.razorpayClient.customer.create({
             "name": name,
             "email": email,
-            "contact": "9179109006",
+            "contact": contact,
             "fail_existing": 0
         })
         customerId = customer["id"]
@@ -350,7 +351,7 @@ class SubscriptionService:
             userEmail = decodedToken.get("email")
             userRecord = self.client.table("Users").select("fullName").eq("userId", userId).execute()
             fullName = userRecord.data[0]["fullName"] if userRecord.data else userEmail
-            customerId = self._getOrCreateRazorpayCustomer(userId, userEmail, fullName)
+            customerId = self._getOrCreateRazorpayCustomer(userId, userEmail, fullName, contact)
             self.client.table("Users").update({"phoneNumber": contact}).eq("userId", userId).execute()
             quantity = len(normalizedDomains)
             plan = self.razorpayClient.plan.fetch(self.BASE_PLAN_ID)
@@ -436,6 +437,30 @@ class SubscriptionService:
                 raise Exception("Invalid Razorpay signature")
             payment = self.razorpayClient.payment.fetch(paymentId)
             tokenId = payment.get("token_id")
+            if not tokenId:
+                raise Exception("Payment did not produce a recurring token (token_id is missing)")
+            userRecord = self.client.table("Users").select("razorpayCustomerId").eq("userId", userId).execute()
+            customerId = userRecord.data[0].get("razorpayCustomerId") if userRecord.data else None
+            if not customerId:
+                raise Exception("No Razorpay customer found — cannot validate token")
+            tokenEntity = self.razorpayClient.token.fetch(customerId, tokenId)
+            recurringDetails = tokenEntity.get("recurring_details") or {}
+            recurringStatus = recurringDetails.get("status", "")
+            isRecurring = tokenEntity.get("recurring", False)
+            UNUSABLE_STATES = {"cancelled", "expired", "rejected"}
+            if recurringStatus in UNUSABLE_STATES:
+                raise Exception(
+                    f"Token {tokenId} is not usable for recurring payments "
+                    f"(recurring_details.status={recurringStatus})"
+                )
+            if not isRecurring:
+                raise Exception(
+                    f"Token {tokenId} is not recurring-enabled (recurring={isRecurring})"
+                )
+            logger.info(
+                f"Token {tokenId} validated for user {userId}: "
+                f"recurring={isRecurring}, recurring_details.status={recurringStatus}"
+            )
             currentTime = datetime.datetime.utcnow()
             anchorDay = currentTime.day
             expiry = currentTime + relativedelta(months=1)
@@ -461,6 +486,7 @@ class SubscriptionService:
                 metadata={
                     "orderId": orderId,
                     "tokenId": tokenId,
+                    "tokenRecurringStatus": recurringStatus,
                     "domains": normalizedDomains,
                     "quantity": len(normalizedDomains),
                     "anchorDay": anchorDay,

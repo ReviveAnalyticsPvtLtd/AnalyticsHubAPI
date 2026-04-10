@@ -232,6 +232,7 @@ class DailyBillingTask:
                         {
                             "amount": amount,
                             "currency": "INR",
+                            "customer_id": customerId,
                             "receipt": receipt,
                             "payment_capture": True,
                             "notes": {
@@ -286,7 +287,7 @@ class DailyBillingTask:
 
             except Exception as e:
                 logger.error(f"Failed to queue recurring charge for user {userId}: {e}")
-                self._handleChargeError(userId)
+                self._handleChargeError(userId, error=e, tokenId=tokenId, customerId=customerId)
                 errors += 1
 
             time.sleep(0.5)
@@ -321,7 +322,8 @@ class DailyBillingTask:
             f"Processed pending removals for user {user['userId']}: {pendingRemovals}"
         )
 
-    def _handleChargeError(self, userId: str) -> None:
+    def _handleChargeError(self, userId: str, error: Exception = None,
+                           tokenId: str = "", customerId: str = "") -> None:
         """
         Log an API-level error when order creation or recurring payment fails.
 
@@ -331,10 +333,18 @@ class DailyBillingTask:
 
         Args:
             userId (str): The user ID.
+            error (Exception): The exception that caused the failure.
+            tokenId (str): The Razorpay token ID used for the charge attempt.
+            customerId (str): The Razorpay customer ID.
         """
         self._auditLog(
             userId,
             "billing.queue_error",
             status="ERROR",
-            metadata={"reason": "order/create_recurring_payment API flow failed"},
+            metadata={
+                "reason": str(error) if error else "unknown",
+                "errorType": type(error).__name__ if error else "unknown",
+                "tokenId": tokenId,
+                "customerId": customerId,
+            },
         )
