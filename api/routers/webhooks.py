@@ -44,7 +44,8 @@ async def razorpayWebhook(request: Request):
             event = json.loads(body)
         except (json.JSONDecodeError, UnicodeDecodeError):
             raise HTTPException(status_code=400, detail="Malformed webhook JSON payload")
-        webhookService.processEvent(event)
+        eventId = request.headers.get("X-Razorpay-Event-Id", "")
+        webhookService.processEvent(event, eventId=eventId)
         return ORJSONResponse(
             status_code=200,
             content={"status": "ok"}

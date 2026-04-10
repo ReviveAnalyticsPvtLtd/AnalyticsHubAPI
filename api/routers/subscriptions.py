@@ -10,10 +10,10 @@ __all__ = ["router"]
 
 
 from utils.exceptionHandler import CustomException, raiseHttpException
-from api.models import VerifySubscriptionRequest, CreateSubscriptionRequest, AddDomainsRequest, RemoveDomainRequest, CancelPendingAdditionRequest, RefundRequest
+from api.models import VerifySubscriptionRequest, CreateSubscriptionRequest, AddDomainsRequest, VerifyDomainUpgradeRequest, RemoveDomainRequest, CancelPendingAdditionRequest, RefundRequest
 from api.services.subscriptionService import subscriptionService
-from fastapi.responses import ORJSONResponse, RedirectResponse
-from fastapi import APIRouter, Depends, Query
+from fastapi.responses import ORJSONResponse
+from fastapi import APIRouter, Depends
 from api.commons import verifyToken
 
 router = APIRouter()
@@ -50,7 +50,7 @@ async def activateFreeTrial(token=Depends(verifyToken)):
 @router.post("/createSubscription")
 async def createSubscription(request: CreateSubscriptionRequest, token=Depends(verifyToken)):
     """
-    Create a Razorpay subscription for the given domains.
+    Create a Razorpay order with tokenization for the given domains.
 
     Args:
         request (CreateSubscriptionRequest): Domains to subscribe.
@@ -60,7 +60,7 @@ async def createSubscription(request: CreateSubscriptionRequest, token=Depends(v
         ORJSONResponse: Subscription details required for checkout.
     """
     try:
-        result = subscriptionService.createSubscription(domains=request.domains, token=token)
+        result = subscriptionService.createSubscription(domains=request.domains, contact=request.contact, token=token)
         return ORJSONResponse(status_code=200, content=result)
     except CustomException as e:
         raiseHttpException(e)
@@ -72,7 +72,7 @@ async def verifySubscription(
     token=Depends(verifyToken)
 ):
     """
-    Verify Razorpay subscription checkout signature.
+    Verify Razorpay order checkout signature and activate token.
 
     Args:
         payload (VerifySubscriptionRequest): Razorpay checkout response payload.
@@ -98,14 +98,14 @@ async def verifySubscription(
 async def addDomains(payload: AddDomainsRequest, token=Depends(verifyToken)):
     """
     Add one or more domains to the authenticated user's subscription
-    via a Razorpay Payment Link for prorated billing.
+    via a Razorpay Order for prorated billing.
 
     Args:
         payload (AddDomainsRequest): Domains to add.
         token: Authorization token dependency.
 
     Returns:
-        ORJSONResponse: Payment Link details including shortUrl for checkout.
+        ORJSONResponse: Order details required for embedded checkout.
     """
     try:
         result = subscriptionService.addDomains(domains=payload.domains, token=token)
@@ -113,7 +113,7 @@ async def addDomains(payload: AddDomainsRequest, token=Depends(verifyToken)):
             status_code=200,
             content={
                 "status": "SUCCESS",
-                "message": "Domain upgrade payment link created.",
+                "message": "Domain upgrade order created.",
                 "data": result
             }
         )
@@ -121,32 +121,32 @@ async def addDomains(payload: AddDomainsRequest, token=Depends(verifyToken)):
         raiseHttpException(e)
 
 
-@router.get("/payment-callback")
-async def paymentCallback(
-    razorpay_payment_link_id: str = Query(...),
-    razorpay_payment_id: str = Query(...),
-    razorpay_payment_link_status: str = Query(...)
+@router.post("/verifyDomainUpgrade")
+async def verifyDomainUpgrade(
+    payload: VerifyDomainUpgradeRequest,
+    token=Depends(verifyToken)
 ):
     """
-    Handle Razorpay Payment Link callback redirect after payment.
-
-    No authentication required -- Razorpay redirects the user's browser
-    here after payment. Verification is done via Razorpay API fetch.
+    Verify Razorpay Order checkout signature and activate added domains.
 
     Args:
-        razorpay_payment_link_id: Payment Link ID from Razorpay.
-        razorpay_payment_id: Payment ID from Razorpay.
-        razorpay_payment_link_status: Payment Link status from Razorpay.
+        payload (VerifyDomainUpgradeRequest): Razorpay checkout response payload.
+        token: Authorization token dependency.
 
     Returns:
-        RedirectResponse: 302 redirect to frontend dashboard.
+        ORJSONResponse: Verification result.
     """
-    redirectUrl = subscriptionService.handlePaymentCallback(
-        razorpayPaymentLinkId=razorpay_payment_link_id,
-        razorpayPaymentId=razorpay_payment_id,
-        razorpayPaymentLinkStatus=razorpay_payment_link_status,
-    )
-    return RedirectResponse(url=redirectUrl, status_code=302)
+    try:
+        subscriptionService.verifyDomainUpgrade(payload=payload.dict(), token=token)
+        return ORJSONResponse(
+            status_code=200,
+            content={
+                "status": "SUCCESS",
+                "message": "Domain upgrade verified and activated."
+            }
+        )
+    except CustomException as e:
+        raiseHttpException(e)
 
 
 @router.post("/removeDomain")
@@ -203,7 +203,7 @@ async def cancelPendingAddition(payload: CancelPendingAdditionRequest, token=Dep
 @router.post("/cancelSubscription")
 async def cancelSubscription(token=Depends(verifyToken)):
     """
-    Cancel the authenticated user's Razorpay subscription at the end
+    Cancel the authenticated user's subscription at the end
     of the current billing cycle.
 
     Args:

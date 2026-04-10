@@ -11,6 +11,8 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["celeryApp"]
 
 from analyticsHub.triggers.tasks.generateForecasts import GenerateForecasts
+from analyticsHub.triggers.tasks.billingTask import DailyBillingTask
+from celery.schedules import crontab
 from celery import Celery
 import os
 
@@ -66,11 +68,23 @@ class CeleryWrapper:
         """
         Register Celery tasks with the application.
 
-        This method defines and registers the 'generateForecasts' task,
-        which triggers the GenerateForecasts workflow.
+        Registers generateForecasts and dailyBilling tasks, and configures
+        the Beat schedule for automated daily billing at midnight UTC.
         """
-        @self._app.task(name = f"{self.name}.generateForecasts")
+        @self._app.task(name=f"{self.name}.generateForecasts")
         def sendForecasts():
             return GenerateForecasts().generateAndSendForecasts()
+
+        @self._app.task(name=f"{self.name}.dailyBilling")
+        def runDailyBilling():
+            return DailyBillingTask().execute()
+
+        self._app.conf.beat_schedule = {
+            "daily-billing-midnight": {
+                "task": f"{self.name}.dailyBilling",
+                "schedule": crontab(minute=0, hour=0),
+            },
+        }
+        self._app.conf.timezone = "UTC"
 
 celeryApp = CeleryWrapper("AnalyticsHub").app

@@ -3,7 +3,7 @@ subscriptionService.py
 
 This module provides the SubscriptionService class, which encapsulates
 all business logic related to user subscriptions, including free trials,
-Razorpay subscription checkout verification, customer management,
+Razorpay token-based recurring payment management, customer management,
 and payment audit logging.
 """
 
@@ -12,6 +12,7 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["subscriptionService"]
 
 
+from dateutil.relativedelta import relativedelta
 from utils.exceptionHandler import CustomException
 from utils.logger import logger
 from api.commons import client
@@ -29,7 +30,7 @@ class SubscriptionService:
     """
     Service class for user subscription management.
 
-    Handles free trials, Razorpay subscription creation,
+    Handles free trials, Razorpay token-based recurring payments,
     and checkout signature verification.
     """
 
@@ -56,7 +57,7 @@ class SubscriptionService:
             userId (str): The user ID associated with this log entry.
             eventType (str): The event type (e.g. 'subscription.created', 'domain.add_requested').
             **kwargs: Optional fields — status, plus any key-value pairs to store in metadata.
-                      Reserved keys: paymentId, subscriptionId, invoiceId, amount, currency
+                      Reserved keys: paymentId, invoiceId, amount, currency
                       are auto-mapped into metadata with 'razorpay' prefix where applicable.
         """
         try:
@@ -64,8 +65,8 @@ class SubscriptionService:
             existingMeta = kwargs.pop("metadata", None) or {}
 
             metaFields = {}
-            razorpayPrefixed = {"paymentId", "subscriptionId", "invoiceId"}
-            for key in ("paymentId", "subscriptionId", "invoiceId", "amount", "currency"):
+            razorpayPrefixed = {"paymentId", "invoiceId"}
+            for key in ("paymentId", "invoiceId", "amount", "currency"):
                 val = kwargs.pop(key, None)
                 if val is not None:
                     metaKey = f"razorpay{key[0].upper()}{key[1:]}" if key in razorpayPrefixed else key
@@ -101,6 +102,7 @@ class SubscriptionService:
         customer = self.razorpayClient.customer.create({
             "name": name,
             "email": email,
+            "contact": "9179109006",
             "fail_existing": 0
         })
         customerId = customer["id"]
@@ -163,9 +165,9 @@ class SubscriptionService:
 
     def _reconcilePendingAdditions(self, user: dict) -> dict:
         """
-        Reconcile awaiting_payment entries against Razorpay Payment Link status.
+        Reconcile awaiting_payment entries against Razorpay Order status.
 
-        Activates paid domains, removes expired link entries. Called at the start
+        Activates paid domains, removes expired entries. Called at the start
         of addDomains() and removeDomain() to resolve any missed activations.
 
         Args:
@@ -179,28 +181,28 @@ class SubscriptionService:
         for item in pendingAdditions:
             if item.get("state") != "awaiting_payment":
                 continue
-            paymentLinkId = item.get("paymentLinkId")
-            if not paymentLinkId:
+            orderId = item.get("orderId")
+            if not orderId:
                 continue
             try:
-                link = self.razorpayClient.payment_link.fetch(paymentLinkId)
+                order = self.razorpayClient.order.fetch(orderId)
             except Exception as fetchErr:
-                logger.error(f"Failed to fetch payment link {paymentLinkId}: {fetchErr}")
+                logger.error(f"Failed to fetch order {orderId}: {fetchErr}")
                 continue
-            if link["status"] == "paid":
-                notes = link.get("notes", {})
+            if order["status"] == "paid":
+                notes = order.get("notes", {})
                 self._activatePaidDomains(
                     userId=user["userId"],
                     domains=[d.strip() for d in notes.get("domains", "").split(",") if d.strip()],
                     targetQuantity=int(notes.get("targetQuantity", 0)),
-                    paymentLinkId=paymentLinkId,
+                    referenceId=orderId,
                 )
                 changed = True
-            elif link["status"] == "expired":
+            elif order["status"] in ("expired", "cancelled"):
                 item["state"] = "expired"
                 changed = True
         if changed:
-            cleanedPending = [item for item in pendingAdditions if item.get("state") != "expired"]
+            cleanedPending = [item for item in pendingAdditions if item.get("state") not in ("expired", "activated")]
             self.client.table("Users").update({
                 "pendingAdditions": cleanedPending
             }).eq("userId", user["userId"]).execute()
@@ -208,26 +210,27 @@ class SubscriptionService:
                 .eq("userId", user["userId"]).execute().data[0]
         return user
 
-    def _activatePaidDomains(self, userId: str, domains: list[str], targetQuantity: int, paymentLinkId: str) -> None:
+    def _activatePaidDomains(self, userId: str, domains: list[str], targetQuantity: int, referenceId: str) -> None:
         """
         Activate domains after confirmed payment. Idempotent -- safe to call
-        multiple times for the same paymentLinkId.
+        multiple times for the same referenceId (order ID or legacy payment link ID).
 
-        DB is updated BEFORE Razorpay subscription.edit to prevent race conditions
-        with the subscription.updated webhook.
+        The billing engine picks up the updated domainCount at renewal, so no
+        Razorpay API call is needed here.
 
         Args:
             userId (str): The user ID.
             domains (list[str]): Domain names to activate.
-            targetQuantity (int): The total subscription quantity after activation.
-            paymentLinkId (str): The Razorpay Payment Link ID for idempotency.
+            targetQuantity (int): The expected total domain count after activation.
+            referenceId (str): The Razorpay Order ID (or legacy Payment Link ID) for idempotency.
         """
         user = self.client.table("Users") \
-            .select("userId, subscribedExperts, domainCount, razorpaySubscriptionId, pendingAdditions, pendingRemovals") \
+            .select("userId, subscribedExperts, domainCount, pendingAdditions") \
             .eq("userId", userId).execute().data[0]
         pendingAdditions = user.get("pendingAdditions") or []
-        linkEntries = [item for item in pendingAdditions if item.get("paymentLinkId") == paymentLinkId]
-        if linkEntries and all(item.get("state") == "activated" for item in linkEntries):
+        matchKey = "orderId" if any(item.get("orderId") == referenceId for item in pendingAdditions) else "paymentLinkId"
+        matchEntries = [item for item in pendingAdditions if item.get(matchKey) == referenceId]
+        if matchEntries and all(item.get("state") == "activated" for item in matchEntries):
             return
         currentExperts = [e.strip() for e in (user.get("subscribedExperts") or "").split(",") if e.strip()]
         activatedDomains = []
@@ -236,37 +239,25 @@ class SubscriptionService:
                 currentExperts.append(domain)
                 activatedDomains.append(domain)
         for item in pendingAdditions:
-            if item.get("paymentLinkId") == paymentLinkId:
+            if item.get(matchKey) == referenceId:
                 item["state"] = "activated"
-        pendingRemovals = user.get("pendingRemovals") or []
-        reconciledQuantity = targetQuantity - len(pendingRemovals)
         updatedDomainCount = len(currentExperts)
         self.client.table("Users").update({
             "subscribedExperts": ", ".join(currentExperts),
             "domainCount": updatedDomainCount,
             "pendingAdditions": pendingAdditions,
         }).eq("userId", userId).execute()
-        subscriptionId = user["razorpaySubscriptionId"]
-        if subscriptionId and reconciledQuantity >= 1:
-            try:
-                self.razorpayClient.subscription.edit(subscriptionId, {
-                    "quantity": reconciledQuantity,
-                    "schedule_change_at": "cycle_end"
-                })
-            except Exception as rzpErr:
-                logger.error(f"Failed to update Razorpay subscription quantity for user {userId}: {rzpErr}")
         for domain in activatedDomains:
             self._auditLog(
                 userId, "domain.add_activated",
-                subscriptionId=subscriptionId,
                 status="ACTIVATED",
                 metadata={
                     "domain": domain,
-                    "paymentLinkId": paymentLinkId,
-                    "reconciledQuantity": reconciledQuantity,
+                    "referenceId": referenceId,
+                    "newDomainCount": updatedDomainCount,
                 }
             )
-        logger.info(f"Activated domains {activatedDomains} for user {userId} via payment link {paymentLinkId}")
+        logger.info(f"Activated domains {activatedDomains} for user {userId} via {referenceId}")
 
     @staticmethod
     def _sendFreeTrialEmail(email: str, name: str) -> None:
@@ -320,7 +311,8 @@ class SubscriptionService:
                 "subscriptionExpiry": (
                     currentTime + datetime.timedelta(days=trialDurationDays)
                 ).isoformat(),
-                "subscribedExperts": "banking, manufacturing, supplychain, telecom"
+                "subscriptionDaysLeft": trialDurationDays,
+                "subscribedExperts": "banking, manufacturing, supplychain, telecom",
             }
             records = self.client.table("Users").update(updateData).eq("userId", userId).execute()
             name = records.data[0]["fullName"]
@@ -332,12 +324,16 @@ class SubscriptionService:
             logger.error(exception)
             raise exception
 
-    def createSubscription(self, domains: list[str], token: str) -> dict:
+    def createSubscription(self, domains: list[str], contact: str, token: str) -> dict:
         """
-        Create a Razorpay subscription for the given domains using quantity billing.
+        Create a Razorpay Order for tokenization-based subscription checkout.
+
+        The Order captures the user's card details and creates a saved mandate
+        (token) for future recurring charges by the billing engine.
 
         Args:
             domains (list[str]): Domain expert names the user is subscribing to.
+            contact (str): User's phone number for Razorpay checkout and RBI compliance.
             token (str): Authorization token.
 
         Returns:
@@ -348,36 +344,56 @@ class SubscriptionService:
             decodedToken = jwt.decode(
                 token,
                 os.environ["SECRET_KEY"],
-                algorithms = ["HS256"]
+                algorithms=["HS256"]
             )
             userId = decodedToken.get("userId")
             userEmail = decodedToken.get("email")
             userRecord = self.client.table("Users").select("fullName").eq("userId", userId).execute()
             fullName = userRecord.data[0]["fullName"] if userRecord.data else userEmail
             customerId = self._getOrCreateRazorpayCustomer(userId, userEmail, fullName)
+            self.client.table("Users").update({"phoneNumber": contact}).eq("userId", userId).execute()
             quantity = len(normalizedDomains)
-            subscription = self.razorpayClient.subscription.create({
-                "plan_id": self.BASE_PLAN_ID,
-                "customer_notify": 1,
-                "total_count": 12,
-                "quantity": quantity,
-                "customer_id": customerId
+            plan = self.razorpayClient.plan.fetch(self.BASE_PLAN_ID)
+            perDomainAmount = plan["item"]["amount"]
+            totalAmount = perDomainAmount * quantity
+            farFutureEpoch = int((datetime.datetime.utcnow() + datetime.timedelta(days=365 * 10)).timestamp())
+            order = self.razorpayClient.order.create({
+                "amount": totalAmount,
+                "currency": "INR",
+                "customer_id": customerId,
+                "method": "card",
+                "token": {
+                    "max_amount": 1500000,
+                    "expire_at": farFutureEpoch,
+                    "frequency": "monthly",
+                },
+                "notes": {
+                    "userId": userId,
+                    "type": "initial_subscription",
+                    "domains": ", ".join(normalizedDomains),
+                },
             })
             self._auditLog(
                 userId, "subscription.created",
-                subscriptionId=subscription["id"],
-                status=subscription["status"].upper(),
-                metadata={"domains": normalizedDomains, "quantity": quantity}
+                status="CREATED",
+                metadata={
+                    "orderId": order["id"],
+                    "domains": normalizedDomains,
+                    "quantity": quantity,
+                    "amount": totalAmount,
+                }
             )
             return {
                 "userId": userId,
                 "userEmail": userEmail,
+                "userContact": contact,
+                "userName": fullName,
                 "razorpayKey": os.environ["RAZORPAY_KEY_ID"],
-                "subscriptionId": subscription["id"],
-                "shortUrl": subscription["short_url"],
-                "status": subscription["status"],
+                "orderId": order["id"],
+                "customerId": customerId,
+                "status": order["status"],
                 "quantity": quantity,
-                "domains": normalizedDomains
+                "domains": normalizedDomains,
             }
         except Exception as e:
             exception = CustomException(e)
@@ -386,11 +402,11 @@ class SubscriptionService:
         
     def verifySubscription(self, payload: dict, token: str) -> None:
         """
-        Verify Razorpay subscription checkout signature.
+        Verify Razorpay Order checkout signature and activate the subscription.
 
-        This method performs official HMAC SHA256 verification
-        using Razorpay API secret. On success, stores the domain
-        count and sets the subscription plan to 'pro'.
+        Performs HMAC SHA256 verification using Razorpay API secret. On success,
+        extracts the saved token (mandate) from the payment entity, sets cycle
+        dates using the Anchor Date strategy, and activates the subscription.
 
         Args:
             payload (dict): Razorpay checkout response payload.
@@ -400,17 +416,17 @@ class SubscriptionService:
             decodedToken = jwt.decode(
                 token,
                 os.environ["SECRET_KEY"],
-                algorithms = ["HS256"]
+                algorithms=["HS256"]
             )
             userId = decodedToken.get("userId")
             paymentId = payload.get("razorpayPaymentId")
-            subscriptionId = payload.get("razorpaySubscriptionId")
+            orderId = payload.get("razorpayOrderId")
             signature = payload.get("razorpaySignature")
             domains = payload.get("domains")
-            if not all([paymentId, subscriptionId, signature, userId, domains]):
+            if not all([paymentId, orderId, signature, userId, domains]):
                 raise Exception("Missing Razorpay verification fields")
             normalizedDomains = self._normalizeAndValidateDomains(domains)
-            message = f"{paymentId}|{subscriptionId}"
+            message = f"{orderId}|{paymentId}"
             expectedSignature = hmac.new(
                 os.environ["RAZORPAY_KEY_SECRET"].encode(),
                 message.encode(),
@@ -418,24 +434,37 @@ class SubscriptionService:
             ).hexdigest()
             if not hmac.compare_digest(expectedSignature, signature):
                 raise Exception("Invalid Razorpay signature")
+            payment = self.razorpayClient.payment.fetch(paymentId)
+            tokenId = payment.get("token_id")
             currentTime = datetime.datetime.utcnow()
-            expiry = currentTime + datetime.timedelta(days=30)
+            anchorDay = currentTime.day
+            expiry = currentTime + relativedelta(months=1)
+            daysLeft = (expiry.date() - currentTime.date()).days
             self.client.table("Users").update({
-                "razorpaySubscriptionId": subscriptionId,
+                "razorpayTokenId": tokenId,
+                "subscriptionAnchorDay": anchorDay,
                 "subscriptionPlan": "pro",
                 "subscriptionStatus": "ACTIVE",
                 "subscriptionStart": currentTime.isoformat(),
                 "subscriptionExpiry": expiry.isoformat(),
+                "subscriptionDaysLeft": daysLeft,
                 "subscribedExperts": ", ".join(normalizedDomains),
                 "domainCount": len(normalizedDomains),
-                "pendingRemovals": []
+                "recurringFailures": 0,
+                "pendingRemovals": [],
+                "pendingAdditions": [],
             }).eq("userId", userId).execute()
             self._auditLog(
                 userId, "subscription.verified",
                 paymentId=paymentId,
-                subscriptionId=subscriptionId,
                 status="ACTIVE",
-                metadata={"domains": normalizedDomains, "quantity": len(normalizedDomains)}
+                metadata={
+                    "orderId": orderId,
+                    "tokenId": tokenId,
+                    "domains": normalizedDomains,
+                    "quantity": len(normalizedDomains),
+                    "anchorDay": anchorDay,
+                }
             )
         except Exception as e:
             exception = CustomException(e)
@@ -445,18 +474,17 @@ class SubscriptionService:
     def addDomains(self, domains: list[str], token: str) -> dict:
         """
         Initiate adding one or more domains to an active subscription via
-        a Razorpay Payment Link for prorated charges.
+        a Razorpay Order for prorated charges.
 
-        No Razorpay subscription quantity change occurs at this stage. The
-        quantity is updated only after payment confirmation via the shared
-        _activatePaidDomains() function.
+        Domains are activated only after payment confirmation via the
+        verifyDomainUpgrade() method.
 
         Args:
             domains (list[str]): The domain expert names to add.
             token (str): Authorization token.
 
         Returns:
-            dict: Payment Link details including shortUrl for checkout.
+            dict: Order details required for Razorpay embedded checkout.
         """
         try:
             normalizedDomains = self._normalizeAndValidateDomains(domains)
@@ -468,7 +496,7 @@ class SubscriptionService:
             userId = decodedToken.get("userId")
             userEmail = decodedToken.get("email")
             user = self.client.table("Users") \
-                .select("userId, subscribedExperts, domainCount, razorpaySubscriptionId, "
+                .select("userId, subscribedExperts, domainCount, razorpayTokenId, "
                         "subscriptionStatus, subscriptionStart, subscriptionExpiry, pendingAdditions, "
                         "pendingRemovals, fullName, razorpayCustomerId") \
                 .eq("userId", userId) \
@@ -493,8 +521,7 @@ class SubscriptionService:
             if totalAfterAdd > 4:
                 raise Exception(f"Maximum of 4 domains. Current: {domainCount}, "
                                 f"pending: {len(activePending)}, requested: {len(normalizedDomains)}")
-            subscriptionId = user["razorpaySubscriptionId"]
-            if not subscriptionId:
+            if not user.get("razorpayTokenId"):
                 raise Exception("No active subscription found for this user")
             plan = self.razorpayClient.plan.fetch(self.BASE_PLAN_ID)
             perDomainAmount = plan["item"]["amount"]
@@ -506,30 +533,23 @@ class SubscriptionService:
             perDomainProrated = int((perDomainAmount / daysInCycle) * daysRemaining)
             totalProrated = perDomainProrated * len(normalizedDomains)
             domainLabel = ", ".join(normalizedDomains)
-            paymentLink = self.razorpayClient.payment_link.create({
+            order = self.razorpayClient.order.create({
                 "amount": totalProrated,
                 "currency": "INR",
-                "description": f"Domain upgrade: {domainLabel} (prorated {daysRemaining} days)",
-                "customer": {
-                    "name": user.get("fullName") or userEmail,
-                    "email": userEmail,
-                },
-                "callback_url": f"{os.environ['API_BASE_URL']}/subscriptions/payment-callback",
-                "callback_method": "get",
-                "expire_by": int((now + datetime.timedelta(hours=24)).timestamp()),
+                "customer_id": user.get("razorpayCustomerId"),
                 "notes": {
                     "userId": userId,
                     "domains": domainLabel,
                     "type": "domain_upgrade_proration",
                     "currentQuantity": str(domainCount),
                     "targetQuantity": str(totalAfterAdd),
-                }
+                },
             })
             for d in normalizedDomains:
                 pendingAdditions.append({
                     "domain": d,
                     "state": "awaiting_payment",
-                    "paymentLinkId": paymentLink["id"],
+                    "orderId": order["id"],
                     "proratedAmount": perDomainProrated,
                     "requestedAt": str(now),
                 })
@@ -538,7 +558,6 @@ class SubscriptionService:
             }).eq("userId", userId).execute()
             self._auditLog(
                 userId, "domain.add_requested",
-                subscriptionId=subscriptionId,
                 amount=totalProrated,
                 status="AWAITING_PAYMENT",
                 metadata={
@@ -546,13 +565,14 @@ class SubscriptionService:
                     "perDomainProrated": perDomainProrated,
                     "totalProrated": totalProrated,
                     "daysRemaining": daysRemaining,
-                    "paymentLinkId": paymentLink["id"],
+                    "orderId": order["id"],
                 }
             )
-            logger.info(f"Domain upgrade payment link created for user {userId}: {normalizedDomains}")
+            logger.info(f"Domain upgrade order created for user {userId}: {normalizedDomains}")
             return {
-                "paymentLinkId": paymentLink["id"],
-                "shortUrl": paymentLink["short_url"],
+                "razorpayKey": os.environ["RAZORPAY_KEY_ID"],
+                "orderId": order["id"],
+                "currency": order["currency"],
                 "upgradeState": "awaiting_payment",
                 "domains": normalizedDomains,
                 "totalProratedAmount": totalProrated,
@@ -566,50 +586,78 @@ class SubscriptionService:
             logger.error(exception)
             raise exception
 
-    def handlePaymentCallback(self, razorpayPaymentLinkId: str, razorpayPaymentId: str,
-                               razorpayPaymentLinkStatus: str) -> str:
+    def verifyDomainUpgrade(self, payload: dict, token: str) -> None:
         """
-        Handle Razorpay callback_url redirect after Payment Link payment.
+        Verify Razorpay Order checkout signature and activate the added domains.
 
-        Verifies payment status with Razorpay, activates domains if paid,
-        and returns a redirect URL for the frontend dashboard.
+        Performs HMAC SHA256 verification using Razorpay API secret. On success,
+        activates the paid domains via the idempotent _activatePaidDomains().
 
         Args:
-            razorpayPaymentLinkId (str): The Payment Link ID from query params.
-            razorpayPaymentId (str): The Payment ID from query params.
-            razorpayPaymentLinkStatus (str): The Payment Link status from query params.
-
-        Returns:
-            str: The redirect URL for the frontend.
+            payload (dict): Razorpay checkout response payload.
+            token (str): Authorization token.
         """
-        frontendUrl = os.environ.get("FRONTEND_URL", "")
         try:
-            if razorpayPaymentLinkStatus != "paid":
-                return f"{frontendUrl}/dashboard?upgrade=failed"
-            link = self.razorpayClient.payment_link.fetch(razorpayPaymentLinkId)
-            if link.get("status") != "paid":
-                return f"{frontendUrl}/dashboard?upgrade=failed"
-            notes = link.get("notes", {})
-            if notes.get("type") != "domain_upgrade_proration":
-                return f"{frontendUrl}/dashboard"
-            self._activatePaidDomains(
-                userId=notes["userId"],
-                domains=[d.strip() for d in notes.get("domains", "").split(",") if d.strip()],
-                targetQuantity=int(notes.get("targetQuantity", 0)),
-                paymentLinkId=razorpayPaymentLinkId,
+            decodedToken = jwt.decode(
+                token,
+                os.environ["SECRET_KEY"],
+                algorithms=["HS256"]
             )
-            return f"{frontendUrl}/dashboard?upgrade=success"
+            userId = decodedToken.get("userId")
+            paymentId = payload.get("razorpayPaymentId")
+            orderId = payload.get("razorpayOrderId")
+            signature = payload.get("razorpaySignature")
+            domains = payload.get("domains")
+            if not all([paymentId, orderId, signature, userId, domains]):
+                raise Exception("Missing Razorpay verification fields")
+            normalizedDomains = self._normalizeAndValidateDomains(domains)
+            message = f"{orderId}|{paymentId}"
+            expectedSignature = hmac.new(
+                os.environ["RAZORPAY_KEY_SECRET"].encode(),
+                message.encode(),
+                hashlib.sha256
+            ).hexdigest()
+            if not hmac.compare_digest(expectedSignature, signature):
+                raise Exception("Invalid Razorpay signature")
+            user = self.client.table("Users") \
+                .select("userId, domainCount, pendingAdditions") \
+                .eq("userId", userId).execute().data
+            if not user:
+                raise Exception("User not found")
+            user = user[0]
+            pendingAdditions = user.get("pendingAdditions") or []
+            targetQuantity = 0
+            for item in pendingAdditions:
+                if item.get("orderId") == orderId:
+                    targetQuantity += 1
+            currentCount = user.get("domainCount") or 0
+            self._activatePaidDomains(
+                userId=userId,
+                domains=normalizedDomains,
+                targetQuantity=currentCount + targetQuantity,
+                referenceId=orderId,
+            )
+            self._auditLog(
+                userId, "domain.upgrade_verified",
+                paymentId=paymentId,
+                status="VERIFIED",
+                metadata={
+                    "orderId": orderId,
+                    "domains": normalizedDomains,
+                }
+            )
         except Exception as e:
-            logger.error(f"Payment callback handling failed for link {razorpayPaymentLinkId}: {e}")
-            return f"{frontendUrl}/dashboard?upgrade=failed"
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception
 
     def removeDomain(self, domains: list[str], token: str) -> dict:
         """
         Schedule one or more domain removals at the end of the current billing cycle.
 
-        The user retains access to all removed domains until cycle end. Razorpay is
-        told to reduce quantity at cycle_end so no refund is issued. At least one
-        domain must remain active after the operation.
+        Purely a DB operation -- the billing engine reads the reduced domainCount
+        at renewal. The user retains access until cycle end. At least one domain
+        must remain active.
 
         Args:
             domains (list[str]): The domain expert names to remove.
@@ -623,11 +671,11 @@ class SubscriptionService:
             decodedToken = jwt.decode(
                 token,
                 os.environ["SECRET_KEY"],
-                algorithms = ["HS256"]
+                algorithms=["HS256"]
             )
             userId = decodedToken.get("userId")
             userRecord = self.client.table("Users") \
-                .select("userId, subscribedExperts, domainCount, razorpaySubscriptionId, subscriptionStatus, pendingRemovals, pendingAdditions") \
+                .select("userId, subscribedExperts, domainCount, subscriptionStatus, pendingRemovals, pendingAdditions") \
                 .eq("userId", userId) \
                 .execute()
             if not userRecord.data:
@@ -645,40 +693,26 @@ class SubscriptionService:
             activeDomains = [d for d in currentExperts if d not in pendingRemovals]
             if len(activeDomains) - len(normalizedDomains) < 1:
                 raise Exception("Cannot remove all domains. At least one must remain active. Use cancel subscription instead.")
-            subscriptionId = user["razorpaySubscriptionId"]
-            if not subscriptionId:
-                raise Exception("No active subscription found for this user")
-            domainCount = user["domainCount"] or len(currentExperts)
-            activeCount = domainCount - len(pendingRemovals)
-            newQuantity = activeCount - len(normalizedDomains)
-            if newQuantity < 1:
-                raise Exception("Cannot remove all domains. At least one must remain active. Use cancel subscription instead.")
-            self.razorpayClient.subscription.edit(subscriptionId, {
-                "quantity": newQuantity,
-                "schedule_change_at": "cycle_end"
-            })
             pendingRemovals.extend(normalizedDomains)
             self.client.table("Users").update({
                 "pendingRemovals": pendingRemovals
             }).eq("userId", userId).execute()
+            domainCount = user["domainCount"] or len(currentExperts)
             for domain in normalizedDomains:
                 self._auditLog(
                     userId, "domain.remove_scheduled",
-                    subscriptionId=subscriptionId,
                     status="ACTIVE",
                     metadata={
                         "domain": domain,
-                        "previousQuantity": domainCount,
-                        "newQuantity": newQuantity,
-                        "proratedAmount": 0,
-                        "effectiveAt": "cycle_end"
+                        "currentDomainCount": domainCount,
+                        "effectiveAt": "cycle_end",
                     }
                 )
             logger.info(f"Domains {normalizedDomains} scheduled for removal at cycle_end for user {userId}")
             return {
                 "currentDomains": currentExperts,
                 "pendingRemovals": pendingRemovals,
-                "effectiveAt": "cycle_end"
+                "effectiveAt": "cycle_end",
             }
         except Exception as e:
             exception = CustomException(e)
@@ -692,9 +726,8 @@ class SubscriptionService:
         """
         Cancel a pending domain addition request.
 
-        For Payment Link items: cancels the Razorpay Payment Link (no quantity
-        revert needed since quantity was never changed at request time).
-        For legacy items: reverts the Razorpay subscription quantity.
+        Removes the pending entry from the DB. Razorpay Orders cannot be
+        programmatically cancelled; they expire naturally.
 
         Args:
             domain (str): The domain to cancel.
@@ -712,7 +745,7 @@ class SubscriptionService:
             )
             userId = decodedToken.get("userId")
             userRecord = self.client.table("Users") \
-                .select("pendingAdditions, domainCount, razorpaySubscriptionId, pendingRemovals") \
+                .select("pendingAdditions, domainCount") \
                 .eq("userId", userId) \
                 .execute()
             if not userRecord.data:
@@ -728,46 +761,17 @@ class SubscriptionService:
                     break
             if targetItem is None:
                 raise Exception(f"No cancellable pending addition found for domain '{normalizedDomain}'")
-            isPaymentLinkItem = targetItem.get("paymentLinkId") is not None
-            shouldRevertQuantity = targetItem.get("state") in ("processing", "awaiting_payment", "scheduled_cycle_end")
             pendingAdditions.pop(targetIndex)
             self.client.table("Users").update({
                 "pendingAdditions": pendingAdditions
             }).eq("userId", userId).execute()
-            if isPaymentLinkItem:
-                try:
-                    self.razorpayClient.payment_link.cancel(targetItem["paymentLinkId"])
-                except Exception as cancelErr:
-                    logger.error(f"Failed to cancel payment link {targetItem['paymentLinkId']}: {cancelErr}")
-            elif shouldRevertQuantity:
-                subscriptionId = user["razorpaySubscriptionId"]
-                if subscriptionId:
-                    domainCount = user["domainCount"] or 0
-                    activePendingCount = len([
-                        item for item in pendingAdditions
-                        if item.get("state") not in ("failed", "activated")
-                    ])
-                    revertQuantity = domainCount + activePendingCount
-                    pendingRemovals = user.get("pendingRemovals") or []
-                    if pendingRemovals:
-                        revertQuantity = revertQuantity - len(pendingRemovals)
-                    try:
-                        self.razorpayClient.subscription.edit(subscriptionId, {
-                            "quantity": max(revertQuantity, 1),
-                            "schedule_change_at": "now"
-                        })
-                    except Exception as rzpError:
-                        logger.error(f"Failed to revert Razorpay quantity for user {userId}: {rzpError}")
             self._auditLog(
                 userId, "domain.add_cancelled",
-                subscriptionId=user.get("razorpaySubscriptionId"),
                 status="CANCELLED",
                 metadata={
                     "domain": normalizedDomain,
-                    "previousQuantity": targetItem.get("targetQuantity", 0),
-                    "newQuantity": (user["domainCount"] or 0),
-                    "proratedAmount": 0,
-                    "effectiveAt": "immediate"
+                    "currentDomainCount": user["domainCount"] or 0,
+                    "effectiveAt": "immediate",
                 }
             )
             logger.info(f"Pending addition cancelled for domain '{normalizedDomain}', user {userId}")
@@ -779,46 +783,44 @@ class SubscriptionService:
 
     def cancelSubscription(self, token: str) -> dict:
         """
-        Cancel a user's Razorpay subscription at the end of the current billing cycle.
+        Schedule cancellation at the end of the current billing cycle.
 
-        The user retains full access until the cycle ends. The actual status
-        transition to 'cancelled' is handled by the subscription.cancelled webhook.
+        Sets subscriptionStatus to PENDING_CANCELLATION. The billing engine
+        skips users with this status at renewal, and resolve_subscription_status()
+        transitions them to EXPIRED once subscriptionExpiry passes.
 
         Args:
             token (str): Authorization token.
 
         Returns:
-            dict: The Razorpay cancellation response.
+            dict: Cancellation confirmation with effective timing.
         """
         try:
             decodedToken = jwt.decode(
                 token,
                 os.environ["SECRET_KEY"],
-                algorithms = ["HS256"]
+                algorithms=["HS256"]
             )
             userId = decodedToken.get("userId")
             userRecord = self.client.table("Users") \
-                .select("razorpaySubscriptionId") \
+                .select("subscriptionStatus") \
                 .eq("userId", userId) \
                 .execute()
-            subscriptionId = userRecord.data[0].get("razorpaySubscriptionId") if userRecord.data else None
-            if not subscriptionId:
+            if not userRecord.data:
+                raise Exception("User not found")
+            currentStatus = userRecord.data[0].get("subscriptionStatus")
+            if currentStatus not in ("ACTIVE", "TRIAL"):
                 raise Exception("No active subscription found for this user")
-            result = self.razorpayClient.subscription.cancel(
-                subscriptionId,
-                {"cancel_at_cycle_end": 1}
-            )
             self.client.table("Users").update({
                 "subscriptionStatus": "PENDING_CANCELLATION",
             }).eq("userId", userId).execute()
             self._auditLog(
                 userId, "subscription.cancellation_scheduled",
-                subscriptionId=subscriptionId,
                 status="PENDING_CANCELLATION",
                 metadata={"cancel_at_cycle_end": True}
             )
-            logger.info(f"Subscription {subscriptionId} scheduled for cancellation at cycle end for user {userId}")
-            return result
+            logger.info(f"Subscription scheduled for cancellation at cycle end for user {userId}")
+            return {"cancelled": True, "effectiveAt": "cycle_end"}
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
@@ -850,13 +852,12 @@ class SubscriptionService:
             if not userId:
                 raise Exception("Invalid token payload")
             userRecord = self.client.table("Users") \
-                .select("razorpayCustomerId, razorpaySubscriptionId") \
+                .select("razorpayCustomerId") \
                 .eq("userId", userId) \
                 .execute()
             if not userRecord.data:
                 raise Exception("User not found")
             customerId = userRecord.data[0].get("razorpayCustomerId")
-            subscriptionId = userRecord.data[0].get("razorpaySubscriptionId")
             if not customerId:
                 raise Exception("No Razorpay customer found for this user")
             payment = self.razorpayClient.payment.fetch(paymentId)
@@ -864,9 +865,6 @@ class SubscriptionService:
             if not paymentCustomerId or paymentCustomerId != customerId:
                 logger.warning(f"Unauthorized refund attempt blocked for user {userId}, payment {paymentId}")
                 raise Exception("Payment does not belong to this user")
-            if subscriptionId and payment.get("subscription_id") != subscriptionId:
-                logger.warning(f"Subscription ownership mismatch on refund attempt for user {userId}, payment {paymentId}")
-                raise Exception("Payment does not belong to this user's subscription")
             refundParams = {}
             if amount is not None:
                 refundParams["amount"] = amount
@@ -874,7 +872,6 @@ class SubscriptionService:
             self._auditLog(
                 userId, "refund.initiated",
                 paymentId=paymentId,
-                subscriptionId=subscriptionId,
                 amount=amount or payment.get("amount"),
                 currency=payment.get("currency", "INR"),
                 status="INITIATED"

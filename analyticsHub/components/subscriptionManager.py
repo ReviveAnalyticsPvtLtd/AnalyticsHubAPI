@@ -1,37 +1,21 @@
 """
 analyticsHub/components/subscriptionManager.py
 
-This module provides utility functions for managing user subscription expiry calculations,
-Razorpay subscription status synchronization, and sending warning emails when subscriptions
-are about to expire.
+This module provides utility functions for managing user subscription expiry
+calculations and sending warning emails when subscriptions are about to expire.
 """
 
 __version__ = "1.0.0"
 __author__ = "Rauhan Ahmed Siddiqui"
-__all__ = ["recalculateSubscriptionDays", "syncSubscriptionStatuses"]
+__all__ = ["recalculateSubscriptionDays"]
 
 
 from supabase import create_client
 from datetime import datetime, timezone
 from dateutil import parser
 from loguru import logger
-import razorpay
 import requests
-import time
 import os
-
-
-RAZORPAY_STATUS_MAP = {
-    "created": None,
-    "authenticated": None,
-    "active": "ACTIVE",
-    "halted": "EXPIRED",
-    "cancelled": "CANCELLED",
-    "paused": "PAUSED",
-    "completed": "EXPIRED",
-    "expired": "EXPIRED",
-    "pending": None,
-}
 
 
 def _getSupabaseClient():
@@ -96,59 +80,6 @@ def recalculateSubscriptionDays() -> None:
     return
 
 
-def syncSubscriptionStatuses() -> None:
-    """
-    Synchronize local subscription statuses with Razorpay as the source of truth.
-
-    Fetches all users with a Razorpay subscription ID and compares their local
-    subscriptionStatus against the actual status from Razorpay API. Updates
-    mismatches and logs discrepancies to the SubscriptionLog table.
-
-    Returns:
-        None
-    """
-    client = _getSupabaseClient()
-    razorpayKeyId = os.environ.get("RAZORPAY_KEY_ID")
-    razorpayKeySecret = os.environ.get("RAZORPAY_KEY_SECRET")
-    if not razorpayKeyId or not razorpayKeySecret:
-        logger.warning("Razorpay credentials not configured, skipping subscription status sync.")
-        return
-    razorpayClient = razorpay.Client(auth=(razorpayKeyId, razorpayKeySecret))
-    users = client.table("Users") \
-        .select("userId, razorpaySubscriptionId, subscriptionStatus") \
-        .not_.is_("razorpaySubscriptionId", "null") \
-        .execute().data
-    syncCount = 0
-    for user in users:
-        subscriptionId = user["razorpaySubscriptionId"]
-        localStatus = user.get("subscriptionStatus", "NONE")
-        try:
-            subscription = razorpayClient.subscription.fetch(subscriptionId)
-            razorpayStatus = subscription.get("status", "")
-            mappedStatus = RAZORPAY_STATUS_MAP.get(razorpayStatus, razorpayStatus)
-            if mappedStatus and mappedStatus != localStatus:
-                client.table("Users").update({
-                    "subscriptionStatus": mappedStatus
-                }).eq("userId", user["userId"]).execute()
-                client.table("SubscriptionLog").insert({
-                    "userId": user["userId"],
-                    "eventType": "subscription.manual_sync",
-                    "status": mappedStatus,
-                    "metadata": {
-                        "razorpaySubscriptionId": subscriptionId,
-                        "previousStatus": localStatus,
-                        "razorpayStatus": razorpayStatus
-                    }
-                }).execute()
-                syncCount += 1
-                logger.info(f"Synced user {user['userId']}: {localStatus} -> {mappedStatus}")
-        except Exception as e:
-            logger.error(f"Failed to sync subscription {subscriptionId} for user {user['userId']}: {e}")
-        time.sleep(0.2)
-    logger.info(f"Subscription status sync completed. {syncCount} users updated.")
-    return
-
-
 def _sendSubscriptionWarningMail(edgeFunctionUrl: str, email: str, fullName: str, subscriptionStart: str) -> None:
     """
     Sends a warning email to a user when their subscription is about to expire.
@@ -183,4 +114,3 @@ def _sendSubscriptionWarningMail(edgeFunctionUrl: str, email: str, fullName: str
 
 if __name__ == "__main__":
     recalculateSubscriptionDays()
-    syncSubscriptionStatuses()

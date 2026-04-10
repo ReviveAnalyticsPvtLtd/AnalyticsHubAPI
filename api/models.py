@@ -146,18 +146,22 @@ class DeleteDashboardElement(BaseModel):
 
 class VerifySubscriptionRequest(BaseModel):
     domains: list[str]
-    razorpaySubscriptionId: str
-    razorpayPaymentId: str 
-    razorpaySignature: str 
+    razorpayOrderId: str
+    razorpayPaymentId: str
+    razorpaySignature: str
 
 class CreateSubscriptionRequest(BaseModel):
     domains: list[str]
-
-class AddDomainRequest(BaseModel):
-    domain: str
+    contact: str
 
 class AddDomainsRequest(BaseModel):
     domains: list[str]
+
+class VerifyDomainUpgradeRequest(BaseModel):
+    domains: list[str]
+    razorpayOrderId: str
+    razorpayPaymentId: str
+    razorpaySignature: str
 
 class RemoveDomainRequest(BaseModel):
     domains: list[str]
