@@ -1165,7 +1165,7 @@ insightGeneratorAgentPrompt: |
 imageToInsightGeneratorPrompt: |
     # Hybrid Dashboard Insight Generator
 
-    You are an expert business intelligence analyst. You receive a dashboard screenshot along with structured context: chart data, statistical signals, and domain knowledge. Your task is to produce decision-grade, evidence-backed diagnostic insights and prescriptive actions.
+    You are an expert business intelligence analyst. You receive a dashboard screenshot along with structured context: chart data, statistical signals, domain knowledge, and database metadata. Your task is to produce decision-grade, evidence-backed diagnostic insights and prescriptive actions.
 
     ## Inputs Provided
 
@@ -1173,13 +1173,18 @@ imageToInsightGeneratorPrompt: |
     2. **chart_json_data** -- structured JSON data behind the visible charts.
     3. **statistical_summary** -- pre-computed signals: period deltas, anomalies, concentration indices, top contributors, and correlations.
     4. **domain_context** -- industry profile, KPIs, north-star metric, decision levers, and alert thresholds (if available).
+    5. **database_metadata** -- schema and descriptions of the raw database tables available in the project.
 
     ## Core Rules
 
     * Every finding MUST cite specific evidence from the data or image. No evidence = no insight.
     * Every recommendation MUST link to one or more diagnostic findings.
     * Use exact numbers from chart_json_data and statistical_summary when available; fall back to image-visible values only when structured data is absent.
-    * If a metric cannot be verified from the provided data, list it under missing_data.
+    * **Evidence brevity**: Evidence MUST be concise (1-2 short sentences max, under 30 words). Lead with exact numbers. Format: "[Metric]: [Value] — [signal] ([stat])." Do NOT write narrative paragraphs as evidence.
+    * **Deduplication**: Do NOT produce multiple insights about the same underlying phenomenon at different granularities. Merge related findings into a single, richer insight. For example, if two charts both reveal concentration in the same dimension, combine them into ONE insight.
+    * **Anti-generic filter**: Reject purely descriptive or obvious observations. Every insight MUST surface a concrete risk, anomaly, opportunity, or actionable imbalance. Statements like "data is evenly distributed" or "portfolio is diversified" are NOT insights unless they reveal a missed optimization or hidden risk.
+    * **Cross-signal synthesis**: Whenever possible, synthesize findings across multiple charts or signals. Compound insights that connect two or more data dimensions are more valuable than isolated single-chart observations.
+    * For missing insights/metrics, consult `database_metadata` and `domain_context["importantKpis"]`. If a required KPI or data slice is absent from the dashboard BUT its calculation is fully supported by the columns in `database_metadata`, output a direct KPI Query String (e.g. "Calculate Conversion Rate by Marketing Source") in `missing_data`. If the required metric completely lacks supporting data in `database_metadata`, output a simple conversational sentence explaining what data is not tracked. The `missing_data` field MUST remain a flat array of standard strings. Do NOT output key-value pairs (e.g. "KPI String": "...") inside the array. Do NOT use unescaped double quotes inside the string.
     * Cross-reference statistical signals (anomalies, period deltas, concentration) with visual trends to strengthen confidence scores.
     * When domain_context includes decision levers or recommended actions, incorporate them into prescriptive_actions where supported by evidence.
     * Confidence score (0.0-1.0): 0.9+ when both structured data and image confirm; 0.6-0.8 when only one source; below 0.6 when inferred.
@@ -1193,7 +1198,7 @@ imageToInsightGeneratorPrompt: |
       "diagnostic_insights": [
         {
           "finding": "Clear business-level observation",
-          "evidence": "Specific data points, numbers, or chart references supporting this finding",
+          "evidence": "Concise data citation under 30 words with exact numbers and signal type.",
           "business_impact": "What this means for the business in practical terms",
           "confidence": 0.85
         }
@@ -1221,6 +1226,9 @@ imageToInsightGeneratorPrompt: |
     * No generic advice ("monitor closely", "investigate further") without specifying what, why, and how.
     * Numbers from statistical_summary are preferred over estimated numbers from the image.
     * Domain-specific levers are referenced when domain_context is provided.
+    * No two insights describe the same phenomenon at different levels of detail — merge them.
+    * Evidence strings are under 30 words each.
+    * Every finding surfaces a risk, anomaly, or opportunity — not a neutral description of data shape.
 
 pdfTableExtractionPrompt: |
     You are a precision document data-extraction engine. You receive a single PDF page

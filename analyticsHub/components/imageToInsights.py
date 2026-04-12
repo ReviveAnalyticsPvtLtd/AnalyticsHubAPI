@@ -86,6 +86,10 @@ class ImageToInsights:
         if domain:
             sections.append(f"## domain_context\n{json.dumps(domain, default=str, indent=2)}")
 
+        metadata = context.get("metadata", {})
+        if metadata:
+            sections.append(f"## database_metadata\n{json.dumps(metadata, default=str, indent=2)}")
+
         return "\n\n".join(sections)
 
     def getInsights(self, b64String: str, context: dict | None = None) -> dict | str:
