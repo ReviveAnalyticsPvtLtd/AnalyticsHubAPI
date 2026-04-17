@@ -195,12 +195,52 @@ class ReportingService:
                 "data": orjson.loads(pivotData)
             }
         elif chartType == "geoMap":
+            zip_col = kwargs.get("zipCodeColumn")
+            points = []
+            has_zip = zip_col and zip_col not in ["None", ""]
+            
+            if has_zip:
+                import pgeocode
+                import math
+                nomi_us = pgeocode.Nominatim("us")
+                nomi_in = pgeocode.Nominatim("in")
+                
+            for _, row in finalResult.iterrows():
+                lat = None
+                lon = None
+                
+                if xAxis in finalResult.columns and yAxis in finalResult.columns:
+                    lat_ex = row[xAxis]
+                    lon_ex = row[yAxis]
+                    if pd.notna(lat_ex) and pd.notna(lon_ex):
+                        lat = lat_ex
+                        lon = lon_ex
+                
+                if (lat is None or lon is None) and has_zip:
+                    z = str(row.get(zip_col, ""))
+                    if z and z != "nan":
+                        res = nomi_us.query_postal_code(z)
+                        lat_c, lon_c = res.latitude, res.longitude
+                        if pd.isna(lat_c) or pd.isna(lon_c):
+                            res = nomi_in.query_postal_code(z)
+                            lat_c, lon_c = res.latitude, res.longitude
+                        if pd.notna(lat_c) and pd.notna(lon_c):
+                            lat = lat_c
+                            lon = lon_c
+                            
+                if lat is not None and lon is not None:
+                    points.append({
+                        "id": "".join(random.choice(string.ascii_letters + string.digits) for i in range(16)),
+                        "lat": lat,
+                        "long": lon
+                    })
+
             response = {
                 "chartType": "geoMap",
                 "map": {
                     "mapType": "scatterMap",
                     "data": {
-                        "points": [{"id": "".join(random.choice(string.ascii_letters + string.digits) for i in range(16)), "lat": lat, "long": long} for lat, long in zip(finalResult[xAxis].tolist(), finalResult[yAxis].tolist())]
+                        "points": points
                     }
                 }
             }
@@ -437,7 +477,8 @@ class ReportingService:
                     selectedColumns=panelChartDetails.selectedColumns,
                     mapType=panelChartDetails.mapType,
                     isFilterApplied=panelChartDetails.isFilterApplied,
-                    filters=panelChartDetails.filters
+                    filters=panelChartDetails.filters,
+                    zipCodeColumn=panelChartDetails.zipCodeColumn
                 )
                 generatedCodeTemplate = string.Template(self.codeTemplates.get("panelChartWithoutBlend"))
                 generatedCode = generatedCodeTemplate.substitute(
@@ -454,7 +495,8 @@ class ReportingService:
                     selectedColumns=panelChartDetails.selectedColumns,
                     mapType=panelChartDetails.mapType,
                     isFilterApplied=panelChartDetails.isFilterApplied,
-                    filters=panelChartDetails.filters
+                    filters=panelChartDetails.filters,
+                    zipCodeColumn='"{}"'.format(panelChartDetails.zipCodeColumn) if panelChartDetails.zipCodeColumn else "None"
                 )
             elif "blendConfig.json" in allFiles:
                 blendConfigUrl = os.environ["FILE_URL"].format(projectId = panelChartDetails.projectId, fileName = "blendConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
@@ -478,7 +520,8 @@ class ReportingService:
                     selectedColumns=panelChartDetails.selectedColumns,
                     mapType=panelChartDetails.mapType,
                     isFilterApplied=panelChartDetails.isFilterApplied,
-                    filters=panelChartDetails.filters
+                    filters=panelChartDetails.filters,
+                    zipCodeColumn=panelChartDetails.zipCodeColumn
                 )
                 generatedCodeTemplate = string.Template(self.codeTemplates.get("panelChartWithBlend"))
                 generatedCode = generatedCodeTemplate.substitute(
@@ -497,7 +540,8 @@ class ReportingService:
                     selectedColumns=panelChartDetails.selectedColumns,
                     mapType=panelChartDetails.mapType,
                     isFilterApplied=panelChartDetails.isFilterApplied,
-                    filters=panelChartDetails.filters
+                    filters=panelChartDetails.filters,
+                    zipCodeColumn='"{}"'.format(panelChartDetails.zipCodeColumn) if panelChartDetails.zipCodeColumn else "None"
                 )
             else:
                 pass
