@@ -164,12 +164,17 @@ class SubscriptionService:
         """
         return self._normalizeAndValidateDomains([domain])[0]
 
+    _STALE_ORDER_THRESHOLD_MINUTES = 30
+
     def _reconcilePendingAdditions(self, user: dict) -> dict:
         """
         Reconcile awaiting_payment entries against Razorpay Order status.
 
-        Activates paid domains, removes expired entries. Called at the start
-        of addDomains() and removeDomain() to resolve any missed activations.
+        Activates paid domains, removes expired entries, and cleans up
+        stale orders older than _STALE_ORDER_THRESHOLD_MINUTES that the
+        user abandoned (closed the checkout without paying). Called at
+        the start of addDomains() and removeDomain() to resolve any
+        missed activations.
 
         Args:
             user (dict): The user record with pendingAdditions.
@@ -202,6 +207,21 @@ class SubscriptionService:
             elif order["status"] in ("expired", "cancelled"):
                 item["state"] = "expired"
                 changed = True
+            elif order["status"] == "created":
+                # Order still unpaid — expire if older than threshold
+                requestedAt = item.get("requestedAt")
+                if requestedAt:
+                    try:
+                        age = datetime.datetime.utcnow() - datetime.datetime.fromisoformat(requestedAt)
+                        if age > datetime.timedelta(minutes=self._STALE_ORDER_THRESHOLD_MINUTES):
+                            item["state"] = "expired"
+                            changed = True
+                            logger.info(
+                                f"Expired stale awaiting_payment order {orderId} "
+                                f"for user {user['userId']} (age: {age})"
+                            )
+                    except (ValueError, TypeError):
+                        pass
         if changed:
             cleanedPending = [item for item in pendingAdditions if item.get("state") not in ("expired", "activated")]
             self.client.table("Users").update({
@@ -541,7 +561,61 @@ class SubscriptionService:
                 if d in currentExperts:
                     raise Exception(f"Domain '{d}' is already in your subscription")
                 if d in activePending:
-                    raise Exception(f"Domain '{d}' already has a pending addition request")
+                    # Self-healing: resolve the stale entry instead of blocking
+                    staleItem = next(
+                        (item for item in pendingAdditions
+                         if item["domain"] == d and item.get("state") == "awaiting_payment"),
+                        None
+                    )
+                    if staleItem:
+                        staleOrderId = staleItem.get("orderId")
+                        staleOrderStatus = None
+                        if staleOrderId:
+                            try:
+                                staleOrder = self.razorpayClient.order.fetch(staleOrderId)
+                                staleOrderStatus = staleOrder["status"]
+                            except Exception:
+                                staleOrderStatus = "fetch_failed"
+                        if staleOrderStatus == "paid":
+                            # Payment went through but activation was missed — activate now
+                            notes = staleOrder.get("notes", {})
+                            self._activatePaidDomains(
+                                userId=userId,
+                                domains=[x.strip() for x in notes.get("domains", "").split(",") if x.strip()],
+                                targetQuantity=int(notes.get("targetQuantity", 0)),
+                                referenceId=staleOrderId,
+                            )
+                            # Refresh state after activation
+                            user = self.client.table("Users") \
+                                .select("userId, subscribedExperts, domainCount, razorpayTokenId, "
+                                        "subscriptionStatus, subscriptionStart, subscriptionExpiry, pendingAdditions, "
+                                        "pendingRemovals, fullName, razorpayCustomerId") \
+                                .eq("userId", userId).execute().data[0]
+                            currentExperts = [e.strip() for e in (user.get("subscribedExperts") or "").split(",") if e.strip()]
+                            pendingAdditions = user.get("pendingAdditions") or []
+                            if d in currentExperts:
+                                # Already activated — skip this domain
+                                continue
+                        else:
+                            # Order is unpaid / expired / fetch failed — remove stale entry
+                            pendingAdditions.remove(staleItem)
+                            activePending = [item["domain"] for item in pendingAdditions
+                                             if item.get("state") not in ("failed", "activated")]
+                            self._auditLog(
+                                userId, "domain.stale_pending_cleared",
+                                status="CLEARED",
+                                metadata={
+                                    "domain": d,
+                                    "staleOrderId": staleOrderId,
+                                    "staleOrderStatus": staleOrderStatus,
+                                }
+                            )
+                            logger.info(
+                                f"Cleared stale pending addition for domain '{d}', "
+                                f"order {staleOrderId} (status={staleOrderStatus})"
+                            )
+                    else:
+                        raise Exception(f"Domain '{d}' already has a pending addition request")
             domainCount = user["domainCount"] or len(currentExperts)
             totalAfterAdd = domainCount + len(activePending) + len(normalizedDomains)
             if totalAfterAdd > 4:
