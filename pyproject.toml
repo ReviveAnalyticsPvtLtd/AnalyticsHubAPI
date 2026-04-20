@@ -163,5 +163,5 @@ dependencies = [
     "ydata-profiling==4.16.1",
     "zstandard==0.23.0",
     "langchain-google-genai>=2.1.9",
-    "pgeocode==0.3.0",
+    "geopy>=2.4.0",
 ]

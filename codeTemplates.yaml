@@ -130,38 +130,35 @@ panelChartWithBlend: |
                 "data": orjson.loads(pivotData)
             }
         elif chartType == "geoMap":
-            zip_col = kwargs.get("zipCodeColumn")
+            zipCol = kwargs.get("zipCodeColumn")
             points = []
-            has_zip = zip_col and zip_col not in ["None", ""]
-            
-            if has_zip:
-                import pgeocode
+            hasZip = zipCol and zipCol not in ["None", ""]
+
+            if hasZip:
+                from geopy.geocoders import Nominatim
                 import math
-                nomi_us = pgeocode.Nominatim("us")
-                nomi_in = pgeocode.Nominatim("in")
-                
+                geolocator = Nominatim(user_agent="AnalyticsHub")
+
             for _, row in finalResult.iterrows():
                 lat = None
                 lon = None
-                
+
                 if xAxis in finalResult.columns and yAxis in finalResult.columns:
-                    lat_ex = row[xAxis]
-                    lon_ex = row[yAxis]
-                    if pd.notna(lat_ex) and pd.notna(lon_ex):
-                        lat = lat_ex
-                        lon = lon_ex
-                
-                if (lat is None or lon is None) and has_zip:
-                    z = str(row.get(zip_col, ""))
+                    latEx = row[xAxis]
+                    lonEx = row[yAxis]
+                    if pd.notna(latEx) and pd.notna(lonEx):
+                        lat = latEx
+                        lon = lonEx
+
+                if (lat is None or lon is None) and hasZip:
+                    z = str(row.get(zipCol, ""))
                     if z and z != "nan":
-                        res = nomi_us.query_postal_code(z)
-                        lat_c, lon_c = res.latitude, res.longitude
-                        if pd.isna(lat_c) or pd.isna(lon_c):
-                            res = nomi_in.query_postal_code(z)
-                            lat_c, lon_c = res.latitude, res.longitude
-                        if pd.notna(lat_c) and pd.notna(lon_c):
-                            lat = lat_c
-                            lon = lon_c
+                        res = geolocator.geocode(z)
+                        if res:
+                            latC, lonC = res.latitude, res.longitude
+                            if pd.notna(latC) and pd.notna(lonC):
+                                lat = latC
+                                lon = lonC
                             
                 if lat is not None and lon is not None:
                     points.append({
@@ -325,38 +322,35 @@ panelChartWithoutBlend: |
                 "data": orjson.loads(pivotData)
             }
         elif chartType == "geoMap":
-            zip_col = kwargs.get("zipCodeColumn")
+            zipCol = kwargs.get("zipCodeColumn")
             points = []
-            has_zip = zip_col and zip_col not in ["None", ""]
-            
-            if has_zip:
-                import pgeocode
+            hasZip = zipCol and zipCol not in ["None", ""]
+
+            if hasZip:
+                from geopy.geocoders import Nominatim
                 import math
-                nomi_us = pgeocode.Nominatim("us")
-                nomi_in = pgeocode.Nominatim("in")
-                
+                geolocator = Nominatim(user_agent="AnalyticsHub")
+
             for _, row in finalResult.iterrows():
                 lat = None
                 lon = None
-                
+
                 if xAxis in finalResult.columns and yAxis in finalResult.columns:
-                    lat_ex = row[xAxis]
-                    lon_ex = row[yAxis]
-                    if pd.notna(lat_ex) and pd.notna(lon_ex):
-                        lat = lat_ex
-                        lon = lon_ex
-                
-                if (lat is None or lon is None) and has_zip:
-                    z = str(row.get(zip_col, ""))
+                    latEx = row[xAxis]
+                    lonEx = row[yAxis]
+                    if pd.notna(latEx) and pd.notna(lonEx):
+                        lat = latEx
+                        lon = lonEx
+
+                if (lat is None or lon is None) and hasZip:
+                    z = str(row.get(zipCol, ""))
                     if z and z != "nan":
-                        res = nomi_us.query_postal_code(z)
-                        lat_c, lon_c = res.latitude, res.longitude
-                        if pd.isna(lat_c) or pd.isna(lon_c):
-                            res = nomi_in.query_postal_code(z)
-                            lat_c, lon_c = res.latitude, res.longitude
-                        if pd.notna(lat_c) and pd.notna(lon_c):
-                            lat = lat_c
-                            lon = lon_c
+                        res = geolocator.geocode(z)
+                        if res:
+                            latC, lonC = res.latitude, res.longitude
+                            if pd.notna(latC) and pd.notna(lonC):
+                                lat = latC
+                                lon = lonC
                             
                 if lat is not None and lon is not None:
                     points.append({
