@@ -131,8 +131,45 @@ class BlendService:
                 blendConfig = json.loads(urlopen(blendConfigUrl).read())
                 allFields = list()
                 tablesUsed = blendConfig[details.tableName].get("tables")
+                blendOn = blendConfig[details.tableName].get("blendOn")
+
+                # Collect column info for each table
+                tableColumns = []
                 for table in tablesUsed:
-                    allFields.extend(metadata[table]["columns"])
+                    cols = [{"name": col["name"], "type": col["type"]} for col in metadata[table]["columns"]]
+                    tableColumns.append(cols)
+
+                # Simulate merge to determine final column names with suffixes
+                resultColumns = list(tableColumns[0])  # Start with first table's columns
+                resultColNames = {col["name"] for col in resultColumns}
+
+                for i in range(len(tablesUsed) - 1):
+                    joinKeys = blendOn[i] if isinstance(blendOn[i], list) else [blendOn[i]]
+                    rightColumns = tableColumns[i + 1]
+                    rightColNames = {col["name"] for col in rightColumns}
+
+                    # Find overlapping columns (excluding join keys)
+                    overlapping = resultColNames & rightColNames - set(joinKeys)
+
+                    newResultColumns = []
+                    for col in resultColumns:
+                        if col["name"] in overlapping:
+                            newResultColumns.append({"name": col["name"] + "_left", "type": col["type"]})
+                        else:
+                            newResultColumns.append(col)
+
+                    for col in rightColumns:
+                        if col["name"] in joinKeys:
+                            newResultColumns.append(col)
+                        elif col["name"] in overlapping:
+                            newResultColumns.append({"name": col["name"] + "_right", "type": col["type"]})
+                        else:
+                            newResultColumns.append(col)
+
+                    resultColumns = newResultColumns
+                    resultColNames = {col["name"] for col in resultColumns}
+
+                allFields = resultColumns
             else:
                 pass
             numericals = ["int64", "float64", "float32", "int32"]

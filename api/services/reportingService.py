@@ -220,7 +220,8 @@ class ReportingService:
                     if z and z != "nan":
                         res = geolocator.geocode(z)
                         if res:
-                            latC, lonC = res.latitude, res.longitude
+                            latC = res.latitude
+                            lonC = res.longitude
                             if pd.notna(latC) and pd.notna(lonC):
                                 lat = latC
                                 lon = lonC
