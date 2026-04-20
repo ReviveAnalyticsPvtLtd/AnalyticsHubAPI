@@ -79,22 +79,38 @@ class ReportingService:
         """
         filters = kwargs.get("filters")
         hasFilters = filters and len(filters) > 0
-        if (not chartType == "geoMap") and (not hasFilters):
-            if isinstance(tablesUsed, list):
-                allTables = [fetch_data(projectId, x) for x in tablesUsed]
-                result = allTables[0]
-                for i in range(len(joinTypes)):
-                    result = pd.merge(left = result, right = allTables[i+1], on = blendOn[i], how = joinTypes[i], suffixes = ['_left', '_right'])
-            else:
-                result = fetch_data(projectId, tablesUsed)
+        
+        if isinstance(tablesUsed, list):
+            allTables = [fetch_data(projectId, x) for x in tablesUsed]
+            result = allTables[0]
+            for i in range(len(joinTypes)):
+                result = pd.merge(left = result, right = allTables[i+1], on = blendOn[i], how = joinTypes[i], suffixes = ['_left', '_right'])
         else:
-            if isinstance(tablesUsed, list):
-                allTables = [fetch_data(projectId = projectId, tableName = x, baseFilters = filters) for x in tablesUsed]
-                result = allTables[0]
-                for i in range(len(joinTypes)):
-                    result = pd.merge(left = result, right = allTables[i+1], on = blendOn[i], how = joinTypes[i], suffixes = ['_left', '_right'])
-            else:
-                result = fetch_data(projectId = projectId, tableName = tablesUsed, baseFilters = filters)
+            result = fetch_data(projectId, tablesUsed)
+
+        if hasFilters:
+            for filter_item in filters:
+                for column_path, condition in filter_item.items():
+                    column = column_path.split(".")[-1]
+                    if column not in result.columns:
+                        continue
+                    if isinstance(condition, dict):
+                        if result[column].dtype == "object":
+                            if "contains" in condition:
+                                result = result[result[column].str.contains(condition["contains"], case=False, na=False)]
+                            if "startswith" in condition:
+                                result = result[result[column].str.startswith(condition["startswith"], na=False)]
+                            if "endswith" in condition:
+                                result = result[result[column].str.endswith(condition["endswith"], na=False)]
+                        else:
+                            if "min" in condition:
+                                result = result[result[column] >= condition["min"]]
+                            if "max" in condition:
+                                result = result[result[column] <= condition["max"]]
+                    elif isinstance(condition, (list, tuple, set)):
+                        result = result[result[column].isin(condition)]
+                    else:
+                        result = result[result[column] == condition]
         if chartType != "pivot":
             if aggregationMetric == "sum":
                 finalResult = result.groupby(xAxis)[yAxis].sum().reset_index()
