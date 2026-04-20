@@ -77,7 +77,9 @@ class ReportingService:
         Returns:
             dict: Chart-ready data structure suitable for frontend rendering.
         """
-        if (not chartType == "geoMap") and (not kwargs.get("isFilterApplied")):
+        filters = kwargs.get("filters")
+        hasFilters = filters and len(filters) > 0
+        if (not chartType == "geoMap") and (not hasFilters):
             if isinstance(tablesUsed, list):
                 allTables = [fetch_data(projectId, x) for x in tablesUsed]
                 result = allTables[0]
@@ -87,12 +89,12 @@ class ReportingService:
                 result = fetch_data(projectId, tablesUsed)
         else:
             if isinstance(tablesUsed, list):
-                allTables = [fetch_data(projectId = projectId, tableName = x, baseFilters = kwargs.get("filters")) for x in tablesUsed]
+                allTables = [fetch_data(projectId = projectId, tableName = x, baseFilters = filters) for x in tablesUsed]
                 result = allTables[0]
                 for i in range(len(joinTypes)):
                     result = pd.merge(left = result, right = allTables[i+1], on = blendOn[i], how = joinTypes[i], suffixes = ['_left', '_right'])
             else:
-                result = fetch_data(projectId = projectId, tableName = tablesUsed, baseFilters = kwargs.get("filters"))
+                result = fetch_data(projectId = projectId, tableName = tablesUsed, baseFilters = filters)
         if chartType != "pivot":
             if aggregationMetric == "sum":
                 finalResult = result.groupby(xAxis)[yAxis].sum().reset_index()
@@ -202,7 +204,7 @@ class ReportingService:
             if hasZip:
                 from geopy.geocoders import Nominatim
                 import math
-                geolocator = Nominatim(user_agent="AnalyticsHub")
+                geolocator = Nominatim(user_agent="AnalyticsHub", timeout=10)
 
             for _, row in finalResult.iterrows():
                 lat = None
