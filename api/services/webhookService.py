@@ -18,6 +18,7 @@ from utils.webhookExceptions import RetryableWebhookError
 from utils.logger import logger
 from api.commons import client
 import datetime
+from dateutil import parser
 import hashlib
 import requests
 import json
@@ -238,7 +239,7 @@ class WebhookService:
             return True
         try:
             normalized = lastAttemptAt.replace("Z", "+00:00")
-            lastAttempt = datetime.datetime.fromisoformat(normalized)
+            lastAttempt = parser.isoparse(normalized)
             if lastAttempt.tzinfo is not None:
                 lastAttempt = lastAttempt.astimezone(datetime.timezone.utc).replace(tzinfo=None)
             delta = nowTime - lastAttempt
@@ -387,7 +388,7 @@ class WebhookService:
                 return
             previousExpiry = user.get("subscriptionExpiry")
             if previousExpiry:
-                expiryDt = datetime.datetime.fromisoformat(previousExpiry.replace("Z", "+00:00"))
+                expiryDt = parser.isoparse(previousExpiry.replace("Z", "+00:00"))
                 if expiryDt.tzinfo is not None:
                     expiryDt = expiryDt.replace(tzinfo=None)
             else:

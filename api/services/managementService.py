@@ -28,6 +28,7 @@ from api.models import (
 from jose import jwt
 import pandas as pd
 import datetime
+from dateutil import parser
 from datetime import timezone
 from analyticsHub.components.subscriptionStatus import resolve_subscription_status
 import orjson
@@ -944,7 +945,7 @@ class ManagementService:
                 expiryStr = None
             if expiryStr:
                 try:
-                    expiry = datetime.datetime.fromisoformat(expiryStr)
+                    expiry = parser.isoparse(expiryStr)
                     delta = (expiry - datetime.datetime.utcnow()).days
                     subscriptionDaysLeft = max(0, delta)
                 except (ValueError, TypeError):
@@ -1085,7 +1086,7 @@ class ManagementService:
             expiryStr = record.get("subscriptionExpiry")
             if expiryStr:
                 try:
-                    expiry = datetime.datetime.fromisoformat(expiryStr)
+                    expiry = parser.isoparse(expiryStr)
                     delta = (expiry - datetime.datetime.utcnow()).days
                     subscriptionDaysLeft = max(0, delta)
                 except (ValueError, TypeError):

@@ -20,6 +20,7 @@ from jose import jwt
 import requests
 import razorpay
 import datetime
+from dateutil import parser
 import hashlib
 import hmac
 import json
@@ -212,7 +213,7 @@ class SubscriptionService:
                 requestedAt = item.get("requestedAt")
                 if requestedAt:
                     try:
-                        age = datetime.datetime.utcnow() - datetime.datetime.fromisoformat(requestedAt)
+                        age = datetime.datetime.utcnow() - parser.isoparse(requestedAt)
                         if age > datetime.timedelta(minutes=self._STALE_ORDER_THRESHOLD_MINUTES):
                             item["state"] = "expired"
                             changed = True
@@ -625,8 +626,8 @@ class SubscriptionService:
                 raise Exception("No active subscription found for this user")
             plan = self.razorpayClient.plan.fetch(self.BASE_PLAN_ID)
             perDomainAmount = plan["item"]["amount"]
-            cycleStart = datetime.datetime.fromisoformat(user["subscriptionStart"])
-            subscriptionExpiry = datetime.datetime.fromisoformat(user["subscriptionExpiry"])
+            cycleStart = parser.isoparse(user["subscriptionStart"])
+            subscriptionExpiry = parser.isoparse(user["subscriptionExpiry"])
             now = datetime.datetime.utcnow()
             daysInCycle = max((subscriptionExpiry - cycleStart).days, 1)
             daysRemaining = max((subscriptionExpiry - now).days, 1)

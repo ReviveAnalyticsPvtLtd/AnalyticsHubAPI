@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timezone
+from dateutil import parser
 from typing import Any
 
 __version__ = "1.0.0"
@@ -42,7 +43,7 @@ def parse_expiry_utc(expiry_str: str | None) -> datetime | None:
     if s.endswith("Z"):
         s = s[:-1] + "+00:00"
     try:
-        dt = datetime.fromisoformat(s)
+        dt = parser.isoparse(s)
     except ValueError:
         return None
     if dt.tzinfo is None:
