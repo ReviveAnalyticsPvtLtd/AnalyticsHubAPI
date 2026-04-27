@@ -790,7 +790,11 @@ class SubscriptionService:
                 if domain not in currentExperts:
                     raise Exception(f"Domain '{domain}' is not in your active domains")
                 if domain in pendingRemovals:
-                    raise Exception(f"Domain '{domain}' is already scheduled for removal")
+                    raise CustomException(
+                        ValueError(f"Domain '{domain}' is already scheduled for removal"),
+                        statusCode=409,
+                        uiMessage=f"Domain '{domain}' is already scheduled for removal."
+                    )
             activeDomains = [d for d in currentExperts if d not in pendingRemovals]
             if len(activeDomains) - len(normalizedDomains) < 1:
                 raise Exception("Cannot remove all domains. At least one must remain active. Use cancel subscription instead.")
@@ -815,6 +819,8 @@ class SubscriptionService:
                 "pendingRemovals": pendingRemovals,
                 "effectiveAt": "cycle_end",
             }
+        except CustomException:
+            raise
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
