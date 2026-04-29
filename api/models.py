@@ -75,6 +75,7 @@ class PanelChartDetails(BaseModel):
     xAxis: str | None = None
     yAxis: str | None = None
     zipCodeColumn: str | None = None
+    cityColumn: str | None = None
     dataSource: str
     aggregationMetric: str | None = None
     index: list[str] | None = None

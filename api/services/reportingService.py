@@ -214,13 +214,29 @@ class ReportingService:
             }
         elif chartType == "geoMap":
             zipCol = kwargs.get("zipCodeColumn")
+            cityCol = kwargs.get("cityColumn")
             points = []
             hasZip = zipCol and zipCol not in ["None", ""]
+            hasCity = cityCol and cityCol not in ["None", ""]
 
-            if hasZip:
+            geocode_cache = {}
+
+            if hasZip or hasCity:
                 from geopy.geocoders import Nominatim
+                from geopy.extra.rate_limiter import RateLimiter
                 import math
                 geolocator = Nominatim(user_agent="AnalyticsHub", timeout=10)
+                rate_limited_geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1.0)
+
+            def geocode_with_cache(value, geocode_func):
+                if value in geocode_cache:
+                    return geocode_cache[value]
+                try:
+                    res = geocode_func(value)
+                    geocode_cache[value] = res
+                except Exception:
+                    geocode_cache[value] = None
+                return geocode_cache[value]
 
             for _, row in finalResult.iterrows():
                 lat = None
@@ -236,14 +252,25 @@ class ReportingService:
                 if (lat is None or lon is None) and hasZip:
                     z = str(row.get(zipCol, ""))
                     if z and z != "nan":
-                        res = geolocator.geocode(z)
+                        res = geocode_with_cache(z, rate_limited_geocode)
                         if res:
                             latC = res.latitude
                             lonC = res.longitude
                             if pd.notna(latC) and pd.notna(lonC):
                                 lat = latC
                                 lon = lonC
-                            
+
+                if (lat is None or lon is None) and hasCity:
+                    c = str(row.get(cityCol, ""))
+                    if c and c != "nan":
+                        res = geocode_with_cache(c, rate_limited_geocode)
+                        if res:
+                            latC = res.latitude
+                            lonC = res.longitude
+                            if pd.notna(latC) and pd.notna(lonC):
+                                lat = latC
+                                lon = lonC
+
                 if lat is not None and lon is not None:
                     points.append({
                         "id": "".join(random.choice(string.ascii_letters + string.digits) for i in range(16)),
@@ -494,7 +521,8 @@ class ReportingService:
                     mapType=panelChartDetails.mapType,
                     isFilterApplied=panelChartDetails.isFilterApplied,
                     filters=panelChartDetails.filters,
-                    zipCodeColumn=panelChartDetails.zipCodeColumn
+                    zipCodeColumn=panelChartDetails.zipCodeColumn,
+                    cityColumn=panelChartDetails.cityColumn
                 )
                 generatedCodeTemplate = string.Template(self.codeTemplates.get("panelChartWithoutBlend"))
                 generatedCode = generatedCodeTemplate.substitute(
@@ -512,7 +540,8 @@ class ReportingService:
                     mapType=panelChartDetails.mapType,
                     isFilterApplied=panelChartDetails.isFilterApplied,
                     filters=panelChartDetails.filters,
-                    zipCodeColumn='"{}"'.format(panelChartDetails.zipCodeColumn) if panelChartDetails.zipCodeColumn else "None"
+                    zipCodeColumn='"{}"'.format(panelChartDetails.zipCodeColumn) if panelChartDetails.zipCodeColumn else "None",
+                    cityColumn='"{}"'.format(panelChartDetails.cityColumn) if panelChartDetails.cityColumn else "None"
                 )
             elif "blendConfig.json" in allFiles:
                 blendConfigUrl = os.environ["FILE_URL"].format(projectId = panelChartDetails.projectId, fileName = "blendConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
@@ -537,7 +566,8 @@ class ReportingService:
                     mapType=panelChartDetails.mapType,
                     isFilterApplied=panelChartDetails.isFilterApplied,
                     filters=panelChartDetails.filters,
-                    zipCodeColumn=panelChartDetails.zipCodeColumn
+                    zipCodeColumn=panelChartDetails.zipCodeColumn,
+                    cityColumn=panelChartDetails.cityColumn
                 )
                 generatedCodeTemplate = string.Template(self.codeTemplates.get("panelChartWithBlend"))
                 generatedCode = generatedCodeTemplate.substitute(
@@ -557,7 +587,8 @@ class ReportingService:
                     mapType=panelChartDetails.mapType,
                     isFilterApplied=panelChartDetails.isFilterApplied,
                     filters=panelChartDetails.filters,
-                    zipCodeColumn='"{}"'.format(panelChartDetails.zipCodeColumn) if panelChartDetails.zipCodeColumn else "None"
+                    zipCodeColumn='"{}"'.format(panelChartDetails.zipCodeColumn) if panelChartDetails.zipCodeColumn else "None",
+                    cityColumn='"{}"'.format(panelChartDetails.cityColumn) if panelChartDetails.cityColumn else "None"
                 )
             else:
                 pass
