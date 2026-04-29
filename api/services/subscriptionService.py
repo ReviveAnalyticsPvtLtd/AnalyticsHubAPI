@@ -114,6 +114,110 @@ class SubscriptionService:
         logger.info(f"Razorpay customer created for user {userId}: {customerId}")
         return customerId
 
+    def _normalizePhone(self, phone: str) -> str:
+        """
+        Normalize a phone number to E.164-style format for Razorpay compatibility.
+
+        Strips formatting characters (spaces, dashes, parentheses) and
+        attempts to prefix +91 for 10-digit Indian numbers. Returns the
+        original value with a warning log if the format is unrecognized.
+
+        Args:
+            phone (str): Raw phone number input.
+
+        Returns:
+            str: Normalized phone number string, or empty string if input is empty.
+        """
+        if not phone or not isinstance(phone, str):
+            return ""
+        cleaned = phone.strip().replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+        if not cleaned:
+            return ""
+        if cleaned.startswith("+"):
+            return cleaned
+        digitsOnly = "".join(c for c in cleaned if c.isdigit())
+        if not digitsOnly:
+            logger.warning(f"Phone normalization failed — no digits found in input, returning as-is")
+            return phone.strip()
+        if len(digitsOnly) == 10:
+            return f"+91{digitsOnly}"
+        if len(digitsOnly) == 12 and digitsOnly.startswith("91"):
+            return f"+{digitsOnly}"
+        logger.warning(f"Phone normalization — unrecognized format, returning cleaned value")
+        return cleaned
+
+    def _resolveCheckoutIdentity(self, userId: str, tokenEmail: str) -> dict:
+        """
+        Resolve the canonical identity for checkout from the Users table.
+
+        The DB record is the single source of truth for email, name, and
+        phone. The token email is used as fallback only when the DB email
+        field is empty.
+
+        Args:
+            userId (str): The internal user ID.
+            tokenEmail (str): The email from the decoded JWT token (fallback).
+
+        Returns:
+            dict: Canonical identity with keys 'email', 'name', 'contact'.
+        """
+        record = self.client.table("Users") \
+            .select("email, fullName, phoneNumber") \
+            .eq("userId", userId).execute()
+        if not record.data:
+            return {"email": tokenEmail, "name": tokenEmail, "contact": ""}
+        user = record.data[0]
+        canonicalEmail = user.get("email") or tokenEmail
+        canonicalName = user.get("fullName") or canonicalEmail
+        rawPhone = user.get("phoneNumber") or ""
+        canonicalContact = self._normalizePhone(rawPhone)
+        return {
+            "email": canonicalEmail,
+            "name": canonicalName,
+            "contact": canonicalContact,
+        }
+
+    def _syncRazorpayCustomerIdentity(self, customerId: str, canonicalIdentity: dict) -> bool:
+        """
+        Sync the Razorpay customer object with canonical identity if drift is detected.
+
+        Fetches the current Razorpay customer and compares email, name, and
+        contact against canonical values. Updates only the fields that have
+        drifted. Failures are logged but do not propagate — checkout can
+        proceed even if the sync fails.
+
+        Args:
+            customerId (str): The Razorpay customer ID.
+            canonicalIdentity (dict): Canonical identity with 'email', 'name', 'contact'.
+
+        Returns:
+            bool: True if a sync update was performed, False otherwise.
+        """
+        try:
+            customer = self.razorpayClient.customer.fetch(customerId)
+        except Exception as e:
+            logger.warning(f"Failed to fetch Razorpay customer {customerId} for identity sync: {e}")
+            return False
+        updates = {}
+        if canonicalIdentity["email"] and customer.get("email") != canonicalIdentity["email"]:
+            updates["email"] = canonicalIdentity["email"]
+        if canonicalIdentity["name"] and customer.get("name") != canonicalIdentity["name"]:
+            updates["name"] = canonicalIdentity["name"]
+        if canonicalIdentity["contact"] and customer.get("contact") != canonicalIdentity["contact"]:
+            updates["contact"] = canonicalIdentity["contact"]
+        if not updates:
+            return False
+        try:
+            self.razorpayClient.customer.edit(customerId, updates)
+            logger.info(
+                f"Razorpay customer {customerId} identity synced: "
+                f"fields updated = {list(updates.keys())}"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to sync Razorpay customer {customerId}: {e}")
+            return False
+
     def _normalizeAndValidateDomains(self, domains: list[str]) -> list[str]:
         """
         Normalize and validate domain input for subscription workflows.
@@ -369,11 +473,23 @@ class SubscriptionService:
                 algorithms=["HS256"]
             )
             userId = decodedToken.get("userId")
-            userEmail = decodedToken.get("email")
-            userRecord = self.client.table("Users").select("fullName").eq("userId", userId).execute()
-            fullName = userRecord.data[0]["fullName"] if userRecord.data else userEmail
-            customerId = self._getOrCreateRazorpayCustomer(userId, userEmail, fullName, contact)
-            self.client.table("Users").update({"phoneNumber": contact}).eq("userId", userId).execute()
+            tokenEmail = decodedToken.get("email")
+            normalizedContact = self._normalizePhone(contact)
+            self.client.table("Users").update({"phoneNumber": normalizedContact}).eq("userId", userId).execute()
+            identity = self._resolveCheckoutIdentity(userId, tokenEmail)
+            customerId = self._getOrCreateRazorpayCustomer(
+                userId, identity["email"], identity["name"], identity["contact"]
+            )
+            synced = self._syncRazorpayCustomerIdentity(customerId, identity)
+            self._auditLog(
+                userId, "identity.checkout_resolved",
+                status="SYNCED" if synced else "CURRENT",
+                metadata={
+                    "flow": "createSubscription",
+                    "customerId": customerId,
+                    "synced": synced,
+                }
+            )
             quantity = len(normalizedDomains)
             plan = self.razorpayClient.plan.fetch(self.BASE_PLAN_ID)
             perDomainAmount = plan["item"]["amount"]
@@ -407,9 +523,9 @@ class SubscriptionService:
             )
             return {
                 "userId": userId,
-                "userEmail": userEmail,
-                "userContact": contact,
-                "userName": fullName,
+                "userEmail": identity["email"],
+                "userContact": identity["contact"],
+                "userName": identity["name"],
                 "razorpayKey": os.environ["RAZORPAY_KEY_ID"],
                 "orderId": order["id"],
                 "customerId": customerId,
@@ -541,7 +657,7 @@ class SubscriptionService:
                 algorithms=["HS256"]
             )
             userId = decodedToken.get("userId")
-            userEmail = decodedToken.get("email")
+            tokenEmail = decodedToken.get("email")
             user = self.client.table("Users") \
                 .select("userId, subscribedExperts, domainCount, razorpayTokenId, "
                         "subscriptionStatus, subscriptionStart, subscriptionExpiry, pendingAdditions, "
@@ -624,6 +740,19 @@ class SubscriptionService:
                                 f"pending: {len(activePending)}, requested: {len(normalizedDomains)}")
             if not user.get("razorpayTokenId"):
                 raise Exception("No active subscription found for this user")
+            identity = self._resolveCheckoutIdentity(userId, tokenEmail)
+            customerId = user.get("razorpayCustomerId")
+            if customerId:
+                synced = self._syncRazorpayCustomerIdentity(customerId, identity)
+                self._auditLog(
+                    userId, "identity.checkout_resolved",
+                    status="SYNCED" if synced else "CURRENT",
+                    metadata={
+                        "flow": "addDomains",
+                        "customerId": customerId,
+                        "synced": synced,
+                    }
+                )
             plan = self.razorpayClient.plan.fetch(self.BASE_PLAN_ID)
             perDomainAmount = plan["item"]["amount"]
             cycleStart = parser.isoparse(user["subscriptionStart"])
@@ -681,6 +810,10 @@ class SubscriptionService:
                 "currentQuantity": domainCount,
                 "targetQuantity": totalAfterAdd,
                 "daysRemaining": daysRemaining,
+                "userEmail": identity["email"],
+                "userName": identity["name"],
+                "userContact": identity["contact"],
+                "customerId": customerId,
             }
         except Exception as e:
             exception = CustomException(e)
