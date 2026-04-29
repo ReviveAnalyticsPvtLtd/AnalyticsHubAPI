@@ -150,15 +150,13 @@ panelChartWithBlend: |
                 "data": orjson.loads(pivotData)
             }
         elif chartType == "geoMap":
-            zipCol = kwargs.get("zipCodeColumn")
-            cityCol = kwargs.get("cityColumn")
+            geoCodeCol = kwargs.get("geoCodeColumn")
             points = []
-            hasZip = zipCol and zipCol not in ["None", ""]
-            hasCity = cityCol and cityCol not in ["None", ""]
+            hasGeoCode = geoCodeCol and geoCodeCol not in ["None", ""]
 
             geocode_cache = {}
 
-            if hasZip or hasCity:
+            if hasGeoCode:
                 from geopy.geocoders import Nominatim
                 from geopy.extra.rate_limiter import RateLimiter
                 import math
@@ -186,21 +184,10 @@ panelChartWithBlend: |
                         lat = latEx
                         lon = lonEx
 
-                if (lat is None or lon is None) and hasZip:
-                    z = str(row.get(zipCol, ""))
-                    if z and z != "nan":
-                        res = geocode_with_cache(z, rate_limited_geocode)
-                        if res:
-                            latC = res.latitude
-                            lonC = res.longitude
-                            if pd.notna(latC) and pd.notna(lonC):
-                                lat = latC
-                                lon = lonC
-
-                if (lat is None or lon is None) and hasCity:
-                    c = str(row.get(cityCol, ""))
-                    if c and c != "nan":
-                        res = geocode_with_cache(c, rate_limited_geocode)
+                if (lat is None or lon is None) and hasGeoCode:
+                    g = str(row.get(geoCodeCol, ""))
+                    if g and g != "nan":
+                        res = geocode_with_cache(g, rate_limited_geocode)
                         if res:
                             latC = res.latitude
                             lonC = res.longitude
@@ -242,8 +229,7 @@ panelChartWithBlend: |
         mapType = "$mapType",
         isFilterApplied = $isFilterApplied,
         filters = $filters,
-        zipCodeColumn = $zipCodeColumn,
-        cityColumn = $cityColumn
+        geoCodeColumn = $geoCodeColumn
     )
     ```
 
@@ -394,15 +380,13 @@ panelChartWithoutBlend: |
                 "data": orjson.loads(pivotData)
             }
         elif chartType == "geoMap":
-            zipCol = kwargs.get("zipCodeColumn")
-            cityCol = kwargs.get("cityColumn")
+            geoCodeCol = kwargs.get("geoCodeColumn")
             points = []
-            hasZip = zipCol and zipCol not in ["None", ""]
-            hasCity = cityCol and cityCol not in ["None", ""]
+            hasGeoCode = geoCodeCol and geoCodeCol not in ["None", ""]
 
             geocode_cache = {}
 
-            if hasZip or hasCity:
+            if hasGeoCode:
                 from geopy.geocoders import Nominatim
                 from geopy.extra.rate_limiter import RateLimiter
                 import math
@@ -430,21 +414,10 @@ panelChartWithoutBlend: |
                         lat = latEx
                         lon = lonEx
 
-                if (lat is None or lon is None) and hasZip:
-                    z = str(row.get(zipCol, ""))
-                    if z and z != "nan":
-                        res = geocode_with_cache(z, rate_limited_geocode)
-                        if res:
-                            latC = res.latitude
-                            lonC = res.longitude
-                            if pd.notna(latC) and pd.notna(lonC):
-                                lat = latC
-                                lon = lonC
-
-                if (lat is None or lon is None) and hasCity:
-                    c = str(row.get(cityCol, ""))
-                    if c and c != "nan":
-                        res = geocode_with_cache(c, rate_limited_geocode)
+                if (lat is None or lon is None) and hasGeoCode:
+                    g = str(row.get(geoCodeCol, ""))
+                    if g and g != "nan":
+                        res = geocode_with_cache(g, rate_limited_geocode)
                         if res:
                             latC = res.latitude
                             lonC = res.longitude
@@ -484,7 +457,6 @@ panelChartWithoutBlend: |
         mapType = "$mapType",
         isFilterApplied = $isFilterApplied,
         filters = $filters,
-        zipCodeColumn = $zipCodeColumn,
-        cityColumn = $cityColumn
+        geoCodeColumn = $geoCodeColumn
     )
     ```
