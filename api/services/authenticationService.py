@@ -136,7 +136,7 @@ class AuthenticationService:
             "type": "signup",
             "email": email,
             "options": {
-                "email_redirect_to": "https://localhost:3000/login"
+                "email_redirect_to": "https://www.nubrixai.com/login"
             }
             })
             return 
@@ -386,7 +386,7 @@ class AuthenticationService:
             self.client.auth.reset_password_for_email(
                 emailId,
                 {
-                    "redirect_to": "http://localhost:3000/login/create-new-password"
+                    "redirect_to": "https://www.nubrixai.com/login/create-new-password"
                 }
             )
             return 
