@@ -922,8 +922,7 @@ class ManagementService:
                     "subscriptionStatus",
                     "subscriptionExpiry",
                     "domainCount",
-                    "pendingRemovals",
-                    "pendingAdditions"
+                    "pendingRemovals"
                 ) \
                 .eq("userId", userId) \
                 .execute().data
@@ -975,7 +974,6 @@ class ManagementService:
                     "subscribedExperts": aiExpertsList,
                     "domainCount": record.get("domainCount") or len(aiExpertsList),
                     "pendingRemovals": record.get("pendingRemovals") or [],
-                    "pendingAdditions": record.get("pendingAdditions") or [],
                     "subscriptionDaysLeft": subscriptionDaysLeft
                 }
             }
