@@ -10,7 +10,7 @@ __all__ = ["router"]
 
 
 from utils.exceptionHandler import CustomException, raiseHttpException
-from api.models import VerifySubscriptionRequest, CreateSubscriptionRequest, AddDomainsRequest, VerifyDomainUpgradeRequest, RemoveDomainRequest, CancelPendingAdditionRequest, RefundRequest
+from api.models import VerifySubscriptionRequest, CreateSubscriptionRequest, AddDomainsRequest, VerifyDomainUpgradeRequest, RemoveDomainRequest, CancelPendingAdditionRequest, CancelSubscriptionRequest, RefundRequest
 from api.services.subscriptionService import subscriptionService
 from fastapi.responses import ORJSONResponse
 from fastapi import APIRouter, Depends
@@ -201,19 +201,20 @@ async def cancelPendingAddition(payload: CancelPendingAdditionRequest, token=Dep
         raiseHttpException(e)
 
 @router.post("/cancelSubscription")
-async def cancelSubscription(token=Depends(verifyToken)):
+async def cancelSubscription(payload: CancelSubscriptionRequest, token=Depends(verifyToken)):
     """
     Cancel the authenticated user's subscription at the end
     of the current billing cycle.
 
     Args:
+        payload (CancelSubscriptionRequest): Cancellation reason.
         token: Authorization token dependency.
 
     Returns:
         ORJSONResponse: Cancellation result.
     """
     try:
-        result = subscriptionService.cancelSubscription(token=token)
+        result = subscriptionService.cancelSubscription(reason=payload.reason, token=token)
         return ORJSONResponse(
             status_code=200,
             content={

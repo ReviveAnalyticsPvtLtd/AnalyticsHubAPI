@@ -1021,21 +1021,26 @@ class SubscriptionService:
             logger.error(exception)
             raise exception
 
-    def cancelSubscription(self, token: str) -> dict:
+    def cancelSubscription(self, reason: str, token: str) -> dict:
         """
         Schedule cancellation at the end of the current billing cycle.
 
-        Sets subscriptionStatus to PENDING_CANCELLATION. The billing engine
-        skips users with this status at renewal, and resolve_subscription_status()
+        Sets subscriptionStatus to PENDING_CANCELLATION and stores the
+        user-provided cancellation reason. The billing engine skips users
+        with this status at renewal, and resolve_subscription_status()
         transitions them to EXPIRED once subscriptionExpiry passes.
 
         Args:
+            reason (str): User-selected reason for cancellation.
             token (str): Authorization token.
 
         Returns:
             dict: Cancellation confirmation with effective timing.
         """
         try:
+            if not reason or not isinstance(reason, str) or not reason.strip():
+                raise Exception("Cancellation reason is required")
+            reason = reason.strip()
             decodedToken = jwt.decode(
                 token,
                 os.environ["SECRET_KEY"],
@@ -1053,14 +1058,15 @@ class SubscriptionService:
                 raise Exception("No active subscription found for this user")
             self.client.table("Users").update({
                 "subscriptionStatus": "PENDING_CANCELLATION",
+                "cancellationReason": reason,
             }).eq("userId", userId).execute()
             self._auditLog(
                 userId, "subscription.cancellation_scheduled",
                 status="PENDING_CANCELLATION",
-                metadata={"cancel_at_cycle_end": True}
+                metadata={"cancel_at_cycle_end": True, "cancellationReason": reason}
             )
             logger.info(f"Subscription scheduled for cancellation at cycle end for user {userId}")
-            return {"cancelled": True, "effectiveAt": "cycle_end"}
+            return {"cancelled": True, "effectiveAt": "cycle_end", "cancellationReason": reason}
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)

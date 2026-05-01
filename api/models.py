@@ -170,6 +170,9 @@ class RemoveDomainRequest(BaseModel):
 class CancelPendingAdditionRequest(BaseModel):
     domain: str
 
+class CancelSubscriptionRequest(BaseModel):
+    reason: str
+
 class SubscriptionStatus(str, Enum):
     NONE = "NONE"
     TRIAL = "TRIAL"
