@@ -29,8 +29,6 @@ from jose import jwt
 import pandas as pd
 import datetime
 from dateutil import parser
-from datetime import timezone
-from analyticsHub.components.subscriptionStatus import resolve_subscription_status
 import orjson
 import json
 import uuid
@@ -884,6 +882,46 @@ class ManagementService:
             )
             logger.error(exception)
             raise exception
+
+    @staticmethod
+    def _mapSubscriptionStatusForProfile(status: str | None) -> str:
+        normalized = (status or "").strip().lower()
+        mapping = {
+            "active": "ACTIVE",
+            "renewal_upcoming": "ACTIVE",
+            "payment_pending": "ACTIVE",
+            "past_due": "PAUSED",
+            "suspended": "PAUSED",
+            "cancelled": "CANCELLED",
+            "expired": "EXPIRED",
+        }
+        return mapping.get(normalized, "NONE")
+
+    @staticmethod
+    def _mapBillingModeToPlanType(billingMode: str | None) -> str:
+        if billingMode == "monthly_recurring":
+            return "pro"
+        if billingMode == "annual_prepaid":
+            return "annual"
+        return "none"
+
+    def _getCanonicalSubscription(self, userId: str) -> dict:
+        subscription = self.client.table("subscriptions") \
+            .select(
+                "billing_mode, status, current_period_start, current_period_end, "
+                "renewal_due_at, payment_collection_mode"
+            ) \
+            .eq("user_id", userId) \
+            .order("updated_at", desc=True) \
+            .limit(1) \
+            .execute().data
+        if not subscription:
+            raise CustomException(
+                ValueError("Missing subscription row"),
+                statusCode=409,
+                uiMessage="Subscription data is not available. Please contact support."
+            )
+        return subscription[0]
         
     def getUserProfile(self, token: str) -> dict:
         """
@@ -917,10 +955,7 @@ class ManagementService:
                     "companyName",
                     "role",
                     "profileBio",
-                    "subscriptionPlan",
                     "subscribedExperts",
-                    "subscriptionStatus",
-                    "subscriptionExpiry",
                     "domainCount",
                     "pendingRemovals"
                 ) \
@@ -933,13 +968,14 @@ class ManagementService:
                     uiMessage="User profile not found."
                 )
             record = userRecord[0]
+            subscription = self._getCanonicalSubscription(userId)
             subscribedExperts = record.get("subscribedExperts")
             if subscribedExperts:
                 aiExpertsList = [x.strip() for x in subscribedExperts.split(",") if x.strip()]
             else:
                 aiExpertsList = []
             subscriptionDaysLeft = 0
-            expiryStr = record.get("subscriptionExpiry")
+            expiryStr = subscription.get("current_period_end")
             if expiryStr == "None":
                 expiryStr = None
             if expiryStr:
@@ -949,15 +985,10 @@ class ManagementService:
                     subscriptionDaysLeft = max(0, delta)
                 except (ValueError, TypeError):
                     subscriptionDaysLeft = 0
-            now = datetime.datetime.now(timezone.utc)
-            currentStatus = resolve_subscription_status(
-                record.get("subscriptionStatus"),
-                record.get("subscriptionExpiry"),
-                now,
-            )
+            currentStatus = self._mapSubscriptionStatusForProfile(subscription.get("status"))
             nextBilling = None
-            if currentStatus in ("ACTIVE", "PENDING_CANCELLATION") and expiryStr:
-                nextBilling = expiryStr
+            if currentStatus == "ACTIVE":
+                nextBilling = subscription.get("renewal_due_at") or expiryStr
             profileResponse = {
                 "userId": record.get("userId"),
                 "userName": record.get("fullName"),
@@ -967,17 +998,22 @@ class ManagementService:
                 "position": record.get("role"),
                 "bio": record.get("profileBio"),
                 "plan": {
-                    "planType": record.get("subscriptionPlan"),
+                    "planType": self._mapBillingModeToPlanType(subscription.get("billing_mode")),
                     "status": currentStatus,
-                    "planExpire": record.get("subscriptionExpiry"),
+                    "planExpire": expiryStr,
                     "nextBilling": nextBilling,
                     "subscribedExperts": aiExpertsList,
                     "domainCount": record.get("domainCount") or len(aiExpertsList),
                     "pendingRemovals": record.get("pendingRemovals") or [],
-                    "subscriptionDaysLeft": subscriptionDaysLeft
+                    "subscriptionDaysLeft": subscriptionDaysLeft,
+                    "billingMode": subscription.get("billing_mode"),
+                    "paymentCollectionMode": subscription.get("payment_collection_mode"),
+                    "renewalDueAt": subscription.get("renewal_due_at"),
                 }
             }
             return profileResponse
+        except CustomException:
+            raise
         except Exception as e:
             exception = CustomException(
                 e,
@@ -1064,23 +1100,21 @@ class ManagementService:
                     "companyName",
                     "role",
                     "profileBio",
-                    "subscriptionPlan",
                     "subscribedExperts",
-                    "subscriptionStatus",
-                    "subscriptionExpiry",
                     "domainCount",
                     "pendingRemovals"
                 ) \
                 .eq("userId", userId) \
                 .execute().data
             record = updatedUserRecord[0]
+            subscription = self._getCanonicalSubscription(userId)
             subscribedExperts = record.get("subscribedExperts")
             if subscribedExperts:
                 aiExpertsList = [x.strip() for x in subscribedExperts.split(",") if x.strip()]
             else:
                 aiExpertsList = []
             subscriptionDaysLeft = 0
-            expiryStr = record.get("subscriptionExpiry")
+            expiryStr = subscription.get("current_period_end")
             if expiryStr:
                 try:
                     expiry = parser.isoparse(expiryStr)
@@ -1088,15 +1122,10 @@ class ManagementService:
                     subscriptionDaysLeft = max(0, delta)
                 except (ValueError, TypeError):
                     subscriptionDaysLeft = 0
-            now = datetime.datetime.now(timezone.utc)
-            currentStatus = resolve_subscription_status(
-                record.get("subscriptionStatus"),
-                record.get("subscriptionExpiry"),
-                now,
-            )
+            currentStatus = self._mapSubscriptionStatusForProfile(subscription.get("status"))
             nextBilling = None
-            if currentStatus in ("ACTIVE", "PENDING_CANCELLATION") and expiryStr:
-                nextBilling = expiryStr
+            if currentStatus == "ACTIVE":
+                nextBilling = subscription.get("renewal_due_at") or expiryStr
             profileResponse = {
                 "userId": record.get("userId"),
                 "userName": record.get("fullName"),
@@ -1106,17 +1135,22 @@ class ManagementService:
                 "position": record.get("role"),
                 "bio": record.get("profileBio"),
                 "plan": {
-                    "planType": record.get("subscriptionPlan"),
+                    "planType": self._mapBillingModeToPlanType(subscription.get("billing_mode")),
                     "status": currentStatus,
-                    "planExpire": record.get("subscriptionExpiry"),
+                    "planExpire": expiryStr,
                     "nextBilling": nextBilling,
                     "subscribedExperts": aiExpertsList,
                     "domainCount": record.get("domainCount") or len(aiExpertsList),
                     "pendingRemovals": record.get("pendingRemovals") or [],
-                    "subscriptionDaysLeft": subscriptionDaysLeft
+                    "subscriptionDaysLeft": subscriptionDaysLeft,
+                    "billingMode": subscription.get("billing_mode"),
+                    "paymentCollectionMode": subscription.get("payment_collection_mode"),
+                    "renewalDueAt": subscription.get("renewal_due_at"),
                 }
             }
             return profileResponse
+        except CustomException:
+            raise
         except Exception as e:
             exception = CustomException(
                 e,

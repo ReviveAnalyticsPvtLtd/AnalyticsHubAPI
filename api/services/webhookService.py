@@ -258,10 +258,27 @@ class WebhookService:
             dict | None: The user record or None if not found.
         """
         result = self.client.table("Users") \
-            .select("userId, email, fullName, subscriptionExpiry, subscriptionStart, "
-                    "subscriptionAnchorDay, recurringFailures, razorpayCustomerId, "
+            .select("userId, email, fullName, subscriptionAnchorDay, recurringFailures, razorpayCustomerId, "
                     "pendingRemovals, pendingAdditions, subscribedExperts, domainCount") \
             .eq("userId", userId).execute()
+        return result.data[0] if result.data else None
+
+    def _findSubscriptionByUserId(self, userId: str) -> dict | None:
+        """
+        Look up canonical subscription row by internal user ID.
+
+        Args:
+            userId (str): The internal user ID.
+
+        Returns:
+            dict | None: The subscription record or None if not found.
+        """
+        result = self.client.table("subscriptions") \
+            .select("id, user_id, billing_mode, status, current_period_start, current_period_end, renewal_due_at") \
+            .eq("user_id", userId) \
+            .order("updated_at", desc=True) \
+            .limit(1) \
+            .execute()
         return result.data[0] if result.data else None
 
     def _findUserByCustomerId(self, customerId: str) -> dict | None:
@@ -386,7 +403,14 @@ class WebhookService:
             if not user:
                 logger.error(f"No user found for userId {userId} during payment.captured")
                 return
-            previousExpiry = user.get("subscriptionExpiry")
+            subscription = self._findSubscriptionByUserId(userId)
+            if not subscription:
+                logger.error(
+                    f"No canonical subscription row found for userId {userId} "
+                    f"during payment.captured"
+                )
+                return
+            previousExpiry = subscription.get("current_period_end")
             if previousExpiry:
                 expiryDt = parser.isoparse(previousExpiry.replace("Z", "+00:00"))
                 if expiryDt.tzinfo is not None:
@@ -394,13 +418,14 @@ class WebhookService:
             else:
                 expiryDt = datetime.datetime.utcnow()
             newExpiry = expiryDt + relativedelta(months=1)
-            daysLeft = max((newExpiry.date() - datetime.datetime.utcnow().date()).days, 0)
+            self.client.table("subscriptions").update({
+                "status": "active",
+                "current_period_start": expiryDt.isoformat(),
+                "current_period_end": newExpiry.isoformat(),
+                "renewal_due_at": newExpiry.isoformat(),
+            }).eq("id", subscription["id"]).execute()
             self.client.table("Users").update({
-                "subscriptionStatus": "ACTIVE",
-                "subscriptionStart": expiryDt.isoformat(),
-                "subscriptionExpiry": newExpiry.isoformat(),
                 "recurringFailures": 0,
-                "subscriptionDaysLeft": daysLeft,
             }).eq("userId", userId).execute()
             capturedAt = paymentEntity.get("captured_at") or paymentEntity.get("created_at")
             self._upsertInvoiceRecord(userId, {
@@ -487,8 +512,11 @@ class WebhookService:
             failures = (user.get("recurringFailures") or 0) + 1
             updateData = {"recurringFailures": failures}
             if failures >= 3:
-                updateData["subscriptionStatus"] = "EXPIRED"
-                updateData["subscriptionDaysLeft"] = -1
+                subscription = self._findSubscriptionByUserId(userId)
+                if subscription:
+                    self.client.table("subscriptions").update({
+                        "status": "suspended"
+                    }).eq("id", subscription["id"]).execute()
             self.client.table("Users").update(updateData).eq("userId", userId).execute()
             self._auditLog(
                 userId, "billing.renewal_failed",
@@ -500,7 +528,7 @@ class WebhookService:
                     "error_code": errorMeta,
                     "error_description": paymentEntity.get("error_description", ""),
                     "recurringFailures": failures,
-                    "expired": failures >= 3,
+                    "suspended": failures >= 3,
                 }
             )
             if user.get("email"):

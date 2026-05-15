@@ -50,6 +50,71 @@ class SubscriptionService:
         self.BASE_PLAN_ID = os.environ.get("RAZORPAY_PRO_PLAN_ID", "")
         self.VALID_DOMAINS = {"banking", "manufacturing", "supplychain", "telecom"}
 
+    def _getCanonicalSubscription(self, userId: str, required: bool = False) -> dict | None:
+        """
+        Fetch canonical subscription row for a user.
+
+        Args:
+            userId (str): Internal user ID.
+            required (bool): Whether to raise when row is missing.
+
+        Returns:
+            dict | None: Subscription row or None.
+        """
+        response = self.client.table("subscriptions") \
+            .select(
+                "id, user_id, billing_mode, status, current_period_start, "
+                "current_period_end, renewal_due_at, auto_renew_enabled, "
+                "payment_collection_mode"
+            ) \
+            .eq("user_id", userId) \
+            .order("updated_at", desc=True) \
+            .limit(1) \
+            .execute().data
+        if response:
+            return response[0]
+        if required:
+            raise Exception("Subscription data is missing for this user")
+        return None
+
+    def _upsertCanonicalSubscription(
+        self,
+        userId: str,
+        billingMode: str,
+        status: str,
+        currentPeriodStart: str | None,
+        currentPeriodEnd: str | None,
+        renewalDueAt: str | None,
+        autoRenewEnabled: bool,
+        paymentCollectionMode: str,
+    ) -> None:
+        """
+        Upsert canonical subscription row for a user.
+        """
+        existing = self._getCanonicalSubscription(userId=userId, required=False)
+        payload = {
+            "user_id": userId,
+            "billing_mode": billingMode,
+            "status": status,
+            "current_period_start": currentPeriodStart,
+            "current_period_end": currentPeriodEnd,
+            "renewal_due_at": renewalDueAt,
+            "auto_renew_enabled": autoRenewEnabled,
+            "payment_collection_mode": paymentCollectionMode,
+            "default_currency": "INR",
+        }
+        if existing:
+            self.client.table("subscriptions").update(payload).eq("id", existing["id"]).execute()
+        else:
+            self.client.table("subscriptions").insert(payload).execute()
+
+    @staticmethod
+    def _isSubscriptionActive(status: str | None) -> bool:
+        """
+        Determine whether a canonical subscription status is active-like.
+        """
+        return (status or "").lower() in {"active", "renewal_upcoming", "payment_pending"}
+
     def _auditLog(self, userId: str, eventType: str, **kwargs) -> None:
         """
         Insert a row into the SubscriptionLog table.
@@ -430,21 +495,36 @@ class SubscriptionService:
             userEmail = decodedToken.get("email")
             currentTime = datetime.datetime.utcnow()
             trialDurationDays = 12
-            updateData = {
+            trialExpiry = currentTime + datetime.timedelta(days=trialDurationDays)
+            experts = "banking, manufacturing, supplychain, telecom"
+            self.client.table("Users").update({
+                "subscribedExperts": experts,
+                "domainCount": 4,
+                "pendingRemovals": [],
+                "pendingAdditions": [],
+            }).eq("userId", userId).execute()
+            self._upsertCanonicalSubscription(
+                userId=userId,
+                billingMode="monthly_recurring",
+                status="active",
+                currentPeriodStart=currentTime.isoformat(),
+                currentPeriodEnd=trialExpiry.isoformat(),
+                renewalDueAt=trialExpiry.isoformat(),
+                autoRenewEnabled=False,
+                paymentCollectionMode="authenticated_checkout",
+            )
+            records = self.client.table("Users").select("fullName").eq("userId", userId).limit(1).execute()
+            name = records.data[0]["fullName"] if records.data else userEmail
+            self._sendFreeTrialEmail(email=userEmail, name=name)
+            self._auditLog(userId, "free_trial.activated", status="TRIAL")
+            return {
                 "subscriptionPlan": "free",
                 "subscriptionStatus": "TRIAL",
                 "subscriptionStart": currentTime.isoformat(),
-                "subscriptionExpiry": (
-                    currentTime + datetime.timedelta(days=trialDurationDays)
-                ).isoformat(),
+                "subscriptionExpiry": trialExpiry.isoformat(),
                 "subscriptionDaysLeft": trialDurationDays,
-                "subscribedExperts": "banking, manufacturing, supplychain, telecom",
+                "subscribedExperts": experts,
             }
-            records = self.client.table("Users").update(updateData).eq("userId", userId).execute()
-            name = records.data[0]["fullName"]
-            self._sendFreeTrialEmail(email=userEmail, name=name)
-            self._auditLog(userId, "free_trial.activated", status="TRIAL")
-            return updateData
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
@@ -601,21 +681,25 @@ class SubscriptionService:
             currentTime = datetime.datetime.utcnow()
             anchorDay = currentTime.day
             expiry = currentTime + relativedelta(months=1)
-            daysLeft = (expiry.date() - currentTime.date()).days
             self.client.table("Users").update({
                 "razorpayTokenId": tokenId,
                 "subscriptionAnchorDay": anchorDay,
-                "subscriptionPlan": "pro",
-                "subscriptionStatus": "ACTIVE",
-                "subscriptionStart": currentTime.isoformat(),
-                "subscriptionExpiry": expiry.isoformat(),
-                "subscriptionDaysLeft": daysLeft,
                 "subscribedExperts": ", ".join(normalizedDomains),
                 "domainCount": len(normalizedDomains),
                 "recurringFailures": 0,
                 "pendingRemovals": [],
                 "pendingAdditions": [],
             }).eq("userId", userId).execute()
+            self._upsertCanonicalSubscription(
+                userId=userId,
+                billingMode="monthly_recurring",
+                status="active",
+                currentPeriodStart=currentTime.isoformat(),
+                currentPeriodEnd=expiry.isoformat(),
+                renewalDueAt=expiry.isoformat(),
+                autoRenewEnabled=True,
+                paymentCollectionMode="silent_token",
+            )
             self._auditLog(
                 userId, "subscription.verified",
                 paymentId=paymentId,
@@ -660,15 +744,15 @@ class SubscriptionService:
             tokenEmail = decodedToken.get("email")
             user = self.client.table("Users") \
                 .select("userId, subscribedExperts, domainCount, razorpayTokenId, "
-                        "subscriptionStatus, subscriptionStart, subscriptionExpiry, pendingAdditions, "
-                        "pendingRemovals, fullName, razorpayCustomerId") \
+                        "pendingAdditions, pendingRemovals, fullName, razorpayCustomerId") \
                 .eq("userId", userId) \
                 .execute().data
             if not user:
                 raise Exception("User not found")
             user = user[0]
+            subscription = self._getCanonicalSubscription(userId=userId, required=True)
             user = self._reconcilePendingAdditions(user)
-            if user["subscriptionStatus"] != "ACTIVE":
+            if not self._isSubscriptionActive(subscription.get("status")):
                 raise Exception("Subscription must be active to add domains")
             currentExperts = [e.strip() for e in (user.get("subscribedExperts") or "").split(",") if e.strip()]
             pendingAdditions = user.get("pendingAdditions") or []
@@ -705,8 +789,7 @@ class SubscriptionService:
                             # Refresh state after activation
                             user = self.client.table("Users") \
                                 .select("userId, subscribedExperts, domainCount, razorpayTokenId, "
-                                        "subscriptionStatus, subscriptionStart, subscriptionExpiry, pendingAdditions, "
-                                        "pendingRemovals, fullName, razorpayCustomerId") \
+                                        "pendingAdditions, pendingRemovals, fullName, razorpayCustomerId") \
                                 .eq("userId", userId).execute().data[0]
                             currentExperts = [e.strip() for e in (user.get("subscribedExperts") or "").split(",") if e.strip()]
                             pendingAdditions = user.get("pendingAdditions") or []
@@ -755,8 +838,12 @@ class SubscriptionService:
                 )
             plan = self.razorpayClient.plan.fetch(self.BASE_PLAN_ID)
             perDomainAmount = plan["item"]["amount"]
-            cycleStart = parser.isoparse(user["subscriptionStart"])
-            subscriptionExpiry = parser.isoparse(user["subscriptionExpiry"])
+            cycleStartRaw = subscription.get("current_period_start")
+            subscriptionExpiryRaw = subscription.get("current_period_end")
+            if not cycleStartRaw or not subscriptionExpiryRaw:
+                raise Exception("Subscription period window is missing for proration")
+            cycleStart = parser.isoparse(cycleStartRaw)
+            subscriptionExpiry = parser.isoparse(subscriptionExpiryRaw)
             now = datetime.datetime.utcnow()
             daysInCycle = max((subscriptionExpiry - cycleStart).days, 1)
             daysRemaining = max((subscriptionExpiry - now).days, 1)
@@ -909,13 +996,14 @@ class SubscriptionService:
             )
             userId = decodedToken.get("userId")
             userRecord = self.client.table("Users") \
-                .select("userId, subscribedExperts, domainCount, subscriptionStatus, pendingRemovals, pendingAdditions") \
+                .select("userId, subscribedExperts, domainCount, pendingRemovals, pendingAdditions") \
                 .eq("userId", userId) \
                 .execute()
             if not userRecord.data:
                 raise Exception("User not found")
+            subscription = self._getCanonicalSubscription(userId=userId, required=True)
             user = self._reconcilePendingAdditions(userRecord.data[0])
-            if user["subscriptionStatus"] != "ACTIVE":
+            if not self._isSubscriptionActive(subscription.get("status")):
                 raise Exception("Subscription must be active to remove a domain")
             currentExperts = [e.strip() for e in user["subscribedExperts"].split(",") if e.strip()]
             pendingRemovals = user.get("pendingRemovals") or []
@@ -1025,10 +1113,9 @@ class SubscriptionService:
         """
         Schedule cancellation at the end of the current billing cycle.
 
-        Sets subscriptionStatus to PENDING_CANCELLATION and stores the
-        user-provided cancellation reason. The billing engine skips users
-        with this status at renewal, and resolve_subscription_status()
-        transitions them to EXPIRED once subscriptionExpiry passes.
+        Marks canonical subscription as cancelled and disables auto-renew.
+        The current period remains usable until its end, after which billing
+        lifecycle transitions to expired by scheduler logic.
 
         Args:
             reason (str): User-selected reason for cancellation.
@@ -1047,22 +1134,20 @@ class SubscriptionService:
                 algorithms=["HS256"]
             )
             userId = decodedToken.get("userId")
-            userRecord = self.client.table("Users") \
-                .select("subscriptionStatus") \
-                .eq("userId", userId) \
-                .execute()
-            if not userRecord.data:
-                raise Exception("User not found")
-            currentStatus = userRecord.data[0].get("subscriptionStatus")
-            if currentStatus not in ("ACTIVE", "TRIAL"):
+            subscription = self._getCanonicalSubscription(userId=userId, required=True)
+            currentStatus = (subscription.get("status") or "").lower()
+            if not self._isSubscriptionActive(currentStatus):
                 raise Exception("No active subscription found for this user")
+            self.client.table("subscriptions").update({
+                "status": "cancelled",
+                "auto_renew_enabled": False,
+            }).eq("id", subscription["id"]).execute()
             self.client.table("Users").update({
-                "subscriptionStatus": "PENDING_CANCELLATION",
                 "cancellationReason": reason,
             }).eq("userId", userId).execute()
             self._auditLog(
                 userId, "subscription.cancellation_scheduled",
-                status="PENDING_CANCELLATION",
+                status="CANCELLED",
                 metadata={"cancel_at_cycle_end": True, "cancellationReason": reason}
             )
             logger.info(f"Subscription scheduled for cancellation at cycle end for user {userId}")

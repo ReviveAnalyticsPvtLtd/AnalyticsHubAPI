@@ -158,24 +158,47 @@ class DailyBillingTask:
         now = datetime.datetime.now(datetime.timezone.utc)
         chargeWindowEnd = now + datetime.timedelta(hours=48)
 
-        users = (
-            self.client.table("Users")
-            .select(
-                "userId, email, fullName, domainCount, razorpayTokenId, "
-                "razorpayCustomerId, subscriptionExpiry, subscriptionAnchorDay, "
-                "recurringFailures, pendingRemovals, subscribedExperts, subscriptionStatus, "
-                "phoneNumber"
-            )
-            .eq("subscriptionStatus", "ACTIVE")
-            .gte("subscriptionExpiry", now.isoformat())
-            .lte("subscriptionExpiry", chargeWindowEnd.isoformat())
-            .not_.is_("razorpayTokenId", "null")
+        dueSubscriptions = (
+            self.client.table("subscriptions")
+            .select("user_id, current_period_end, status, billing_mode")
+            .eq("status", "active")
+            .eq("billing_mode", "monthly_recurring")
+            .gte("current_period_end", now.isoformat())
+            .lte("current_period_end", chargeWindowEnd.isoformat())
             .execute()
             .data
         )
 
-        if not users:
+        if not dueSubscriptions:
             logger.info("No users due for charge queuing")
+            return {"queued": 0, "errors": 0}
+
+        users: list[dict] = []
+        for subscription in dueSubscriptions:
+            userRows = (
+                self.client.table("Users")
+                .select(
+                    "userId, email, fullName, domainCount, razorpayTokenId, "
+                    "razorpayCustomerId, subscriptionAnchorDay, recurringFailures, "
+                    "pendingRemovals, subscribedExperts, phoneNumber"
+                )
+                .eq("userId", subscription["user_id"])
+                .not_.is_("razorpayTokenId", "null")
+                .limit(1)
+                .execute()
+                .data
+            )
+            if not userRows:
+                logger.warning(
+                    f"Skipping subscription {subscription['user_id']} in billing task: "
+                    f"user missing or token unavailable"
+                )
+                continue
+            userRecord = userRows[0]
+            users.append(userRecord)
+
+        if not users:
+            logger.info("No chargeable users after resolving subscriptions")
             return {"queued": 0, "errors": 0}
 
         basePriceAmount = self._getBasePriceAmount()

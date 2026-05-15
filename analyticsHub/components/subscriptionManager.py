@@ -30,10 +30,10 @@ def _getSupabaseClient():
 
 def recalculateSubscriptionDays() -> None:
     """
-    Recalculates subscription days left for all users with a subscription expiry date.
-    Updates the subscriptionDaysLeft field in the Users table. Expired subscriptions
-    are immediately set to expired status (no grace period). Sends warning emails
-    when exactly 2 days are remaining.
+    Recalculates subscription lifecycle status from canonical subscriptions rows.
+
+    Expired subscriptions are immediately set to expired status (no grace period).
+    Sends warning emails when exactly 2 days are remaining until current_period_end.
 
     Returns:
         None
@@ -44,12 +44,12 @@ def recalculateSubscriptionDays() -> None:
     edgeFunctionUrl = os.environ["FREE_TRIAL_EXPIRY_WARNING_EMAIL_URL"]
     client = _getSupabaseClient()
     now = datetime.now(timezone.utc)
-    users = client.table("Users") \
-        .select("userId, email, fullName, subscriptionStart, subscriptionExpiry, subscriptionDaysLeft, subscriptionStatus") \
-        .not_.is_("subscriptionExpiry", "null") \
+    subscriptions = client.table("subscriptions") \
+        .select("id, user_id, current_period_start, current_period_end, status") \
+        .not_.is_("current_period_end", "null") \
         .execute().data
-    for user in users:
-        expiryRaw = user["subscriptionExpiry"]
+    for subscription in subscriptions:
+        expiryRaw = subscription["current_period_end"]
         expiry = parser.parse(expiryRaw)
         if expiry.tzinfo is None:
             expiry = expiry.replace(tzinfo=timezone.utc)
@@ -57,24 +57,29 @@ def recalculateSubscriptionDays() -> None:
             expiry = expiry.astimezone(timezone.utc)
         deltaDays = (expiry.date() - now.date()).days
         if deltaDays < 0:
-            newDaysLeft = -1
-            st = user.get("subscriptionStatus")
-            if st not in ("EXPIRED", "CANCELLED", "PAUSED"):
-                client.table("Users").update({
-                    "subscriptionStatus": "EXPIRED"
-                }).eq("userId", user["userId"]).execute()
-        else:
-            newDaysLeft = deltaDays
-        client.table("Users") \
-            .update({"subscriptionDaysLeft": newDaysLeft}) \
-            .eq("userId", user["userId"]) \
-            .execute()
-        if newDaysLeft == 2:
+            currentStatus = (subscription.get("status") or "").lower()
+            if currentStatus not in ("expired", "cancelled", "suspended"):
+                client.table("subscriptions").update({
+                    "status": "expired"
+                }).eq("id", subscription["id"]).execute()
+        if deltaDays == 2:
+            userData = client.table("Users") \
+                .select("email, fullName") \
+                .eq("userId", subscription["user_id"]) \
+                .limit(1) \
+                .execute().data
+            if not userData:
+                logger.warning(
+                    f"Skipping warning email: user not found for subscription "
+                    f"{subscription['id']}"
+                )
+                continue
+            user = userData[0]
             _sendSubscriptionWarningMail(
                 edgeFunctionUrl = edgeFunctionUrl,
                 email = user["email"],
                 fullName = user["fullName"],
-                subscriptionStart = user["subscriptionStart"]
+                subscriptionStart = subscription.get("current_period_start")
             )
     logger.info("Subscription days recalculation completed (UTC)")
     return
