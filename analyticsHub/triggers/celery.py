@@ -11,6 +11,7 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["celeryApp"]
 
 from analyticsHub.triggers.tasks.generateForecasts import GenerateForecasts
+from analyticsHub.triggers.tasks.reconciliationTask import ReconciliationTask
 from analyticsHub.triggers.tasks.billingTask import DailyBillingTask
 from celery.schedules import crontab
 from celery import Celery
@@ -79,10 +80,18 @@ class CeleryWrapper:
         def runDailyBilling():
             return DailyBillingTask().execute()
 
+        @self._app.task(name=f"{self.name}.reconciliation")
+        def runReconciliation():
+            return ReconciliationTask().execute()
+
         self._app.conf.beat_schedule = {
             "daily-billing-midnight": {
                 "task": f"{self.name}.dailyBilling",
                 "schedule": crontab(minute=0, hour=0),
+            },
+            "reconciliation-every-15min": {
+                "task": f"{self.name}.reconciliation",
+                "schedule": crontab(minute="*/15"),
             },
         }
         self._app.conf.timezone = "UTC"
