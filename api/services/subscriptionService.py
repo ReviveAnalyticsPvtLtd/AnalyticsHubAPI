@@ -170,6 +170,41 @@ class SubscriptionService:
             updateData["provider_receipt"] = receipt
         self.client.table("Invoices").update(updateData).eq("id", invoiceId).execute()
 
+    def _isAnnualRenewalOrderReusable(self, order: dict) -> bool:
+        """
+        Determine whether an existing annual renewal order can be reused safely.
+
+        Razorpay can block additional attempts when an order is in `attempted`
+        state with an associated `authorized` payment. To avoid checkout failures,
+        attempted orders are reused only when no blocking payment status exists.
+        """
+        status = str(order.get("status", "")).lower()
+        if status == "created":
+            return True
+        if status != "attempted":
+            return False
+
+        orderId = order.get("id")
+        if not orderId:
+            return False
+
+        try:
+            paymentsResp = self.razorpayClient.order.payments(orderId)
+            payments = paymentsResp.get("items", []) if isinstance(paymentsResp, dict) else []
+        except Exception as e:
+            logger.warning(
+                f"Unable to fetch payments for attempted order {orderId}; "
+                f"will create a fresh order. error={e}"
+            )
+            return False
+
+        blockingStatuses = {"authorized", "captured"}
+        for payment in payments:
+            paymentStatus = str(payment.get("status", "")).lower()
+            if paymentStatus in blockingStatuses:
+                return False
+        return True
+
     def _markInvoicePaid(self, invoiceId: str, paymentId: str, paidAt: str | None = None) -> None:
         """
         Mark an internal invoice as paid.
@@ -647,6 +682,11 @@ class SubscriptionService:
             )
             quantity = len(normalizedDomains)
             subscription = self._getCanonicalSubscription(userId=userId, required=False)
+            if subscription and self._isSubscriptionActive(subscription.get("status")):
+                raise Exception(
+                    "Active subscription already exists. "
+                    "Use the annual renewal endpoint for renewals."
+                )
             customerState = None
             snapshot = computeInvoiceSnapshot(
                 billingMode=normalizedBillingMode,
@@ -764,11 +804,28 @@ class SubscriptionService:
             if not hmac.compare_digest(expectedSignature, signature):
                 raise Exception("Invalid Razorpay signature")
             order = self.razorpayClient.order.fetch(orderId)
-            orderNotes = order.get("notes", {})
+            orderNotesRaw = order.get("notes", {}) or {}
+            orderNotes = orderNotesRaw if isinstance(orderNotesRaw, dict) else {}
+            orderUserId = orderNotes.get("userId")
+            if orderUserId and orderUserId != userId:
+                raise Exception(
+                    f"Order/user mismatch during verification: order.userId={orderUserId}, "
+                    f"token.userId={userId}"
+                )
             orderDomains = [d.strip() for d in (orderNotes.get("domains", "") or "").split(",") if d.strip()]
-            payloadDomains = payload.get("domains") or []
-            normalizedDomains = self._normalizeAndValidateDomains(orderDomains or payloadDomains)
+            if not orderDomains:
+                raise Exception(
+                    "Order metadata is missing domains. "
+                    "Client-provided domains are no longer accepted."
+                )
+            normalizedDomains = self._normalizeAndValidateDomains(orderDomains)
             billingMode = self._normalizeBillingMode(orderNotes.get("billingMode") or "monthly_recurring")
+            orderType = orderNotes.get("type", "")
+            if orderType != "initial_subscription":
+                raise Exception(
+                    f"Order {orderId} is not an initial subscription order "
+                    f"(type={orderType}). Use the dedicated renewal verify endpoint."
+                )
             invoiceId = orderNotes.get("invoiceId")
             payment = self.razorpayClient.payment.fetch(paymentId)
             userRecord = self.client.table("Users").select("razorpayCustomerId").eq("userId", userId).execute()
@@ -1441,6 +1498,342 @@ class SubscriptionService:
             ).execute()
         except Exception as e:
             logger.error(f"Failed to store invoice {invoiceData.get('id')} for user {userId}: {e}")
+
+    def createAnnualRenewalPaymentSession(self, invoiceId: str, token: str) -> dict:
+        """
+        Create or reuse a Razorpay Order for an annual renewal invoice
+        checkout from the dashboard.
+
+        Validates invoice ownership, invoice lifecycle state, and subscription
+        billing mode before creating the order. If an unexpired order already
+        exists on the invoice, it is reused to prevent duplicate charges.
+
+        Args:
+            invoiceId (str): Internal invoice primary key.
+            token (str): Authorization JWT token.
+
+        Returns:
+            dict: Checkout session payload for the frontend.
+        """
+        try:
+            decodedToken = jwt.decode(
+                token,
+                os.environ["SECRET_KEY"],
+                algorithms=["HS256"]
+            )
+            userId = decodedToken.get("userId")
+            tokenEmail = decodedToken.get("email")
+
+            invoice = self.client.table("Invoices") \
+                .select(
+                    "id, userId, subscription_id, billing_reason, status, "
+                    "total_amount, amount, currency, period_start, period_end, "
+                    "razorpay_order_id, razorpayInvoiceId, razorpay_payment_link_id, "
+                    "amount_before_tax, tax_amount, tax_breakdown_json, "
+                    "pricing_version, pricing_reference_snapshot_json"
+                ) \
+                .eq("id", invoiceId) \
+                .limit(1) \
+                .execute().data
+            if not invoice:
+                raise Exception(f"Invoice {invoiceId} not found")
+            invoice = invoice[0]
+
+            if invoice["userId"] != userId:
+                raise Exception("Invoice does not belong to the authenticated user")
+
+            invoiceStatus = (invoice.get("status") or "").lower()
+            if invoiceStatus not in ("upcoming", "payment_pending"):
+                raise Exception(
+                    f"Invoice {invoiceId} is not payable (status={invoiceStatus})"
+                )
+
+            if invoice.get("billing_reason") != "renewal":
+                raise Exception(
+                    f"Invoice {invoiceId} is not a renewal invoice"
+                )
+
+            subscription = self._getCanonicalSubscription(userId=userId, required=True)
+            if subscription.get("billing_mode") != "annual_prepaid":
+                raise Exception("Annual renewal checkout requires an annual_prepaid subscription")
+
+            existingOrderId = invoice.get("razorpay_order_id")
+            if existingOrderId:
+                try:
+                    existingOrder = self.razorpayClient.order.fetch(existingOrderId)
+                    if self._isAnnualRenewalOrderReusable(existingOrder):
+                        identity = self._resolveCheckoutIdentity(userId, tokenEmail)
+                        self._auditLog(
+                            userId, "annual_renewal.session_reused",
+                            status="REUSED",
+                            metadata={
+                                "invoiceId": invoiceId,
+                                "orderId": existingOrderId,
+                            }
+                        )
+                        return {
+                            "userId": userId,
+                            "userEmail": identity["email"],
+                            "userContact": identity["contact"],
+                            "userName": identity["name"],
+                            "razorpayKey": os.environ["RAZORPAY_KEY_ID"],
+                            "orderId": existingOrderId,
+                            "invoiceId": invoiceId,
+                            "amount": invoice.get("total_amount") or invoice.get("amount"),
+                            "currency": invoice.get("currency", "INR"),
+                        }
+                    logger.info(
+                        f"Existing order {existingOrderId} is not safely reusable for "
+                        f"invoice {invoiceId}; creating a fresh order"
+                    )
+                except Exception as fetchError:
+                    logger.warning(
+                        f"Failed to reuse existing order {existingOrderId} "
+                        f"for invoice {invoiceId}: {fetchError}"
+                    )
+
+            identity = self._resolveCheckoutIdentity(userId, tokenEmail)
+            customerId = self._getOrCreateRazorpayCustomer(
+                userId, identity["email"], identity["name"], identity["contact"]
+            )
+
+            totalAmount = invoice.get("total_amount") or invoice.get("amount")
+            if not totalAmount or int(totalAmount) <= 0:
+                raise Exception(f"Invoice {invoiceId} has invalid amount: {totalAmount}")
+
+            order = self.razorpayClient.order.create({
+                "amount": int(totalAmount),
+                "currency": invoice.get("currency", "INR"),
+                "customer_id": customerId,
+                "notes": {
+                    "userId": userId,
+                    "type": "annual_renewal",
+                    "invoiceId": invoiceId,
+                    "subscriptionId": subscription["id"],
+                    "billingReason": "renewal",
+                },
+            })
+
+            self._attachOrderToInvoice(invoiceId=invoiceId, orderId=order["id"])
+
+            self._auditLog(
+                userId, "annual_renewal.session_created",
+                status="CREATED",
+                metadata={
+                    "invoiceId": invoiceId,
+                    "orderId": order["id"],
+                    "amount": totalAmount,
+                    "currency": invoice.get("currency", "INR"),
+                }
+            )
+
+            return {
+                "userId": userId,
+                "userEmail": identity["email"],
+                "userContact": identity["contact"],
+                "userName": identity["name"],
+                "razorpayKey": os.environ["RAZORPAY_KEY_ID"],
+                "orderId": order["id"],
+                "customerId": customerId,
+                "invoiceId": invoiceId,
+                "amount": totalAmount,
+                "currency": invoice.get("currency", "INR"),
+                "pricingSnapshot": {
+                    "pricingVersion": invoice.get("pricing_version"),
+                    "amountBeforeTax": invoice.get("amount_before_tax"),
+                    "taxAmount": invoice.get("tax_amount"),
+                    "totalAmount": totalAmount,
+                },
+            }
+        except Exception as e:
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception
+
+    def verifyAnnualRenewalPayment(self, payload: dict, token: str) -> None:
+        """
+        Verify the Razorpay Order checkout signature for an annual renewal
+        payment and mark the attempt as verified pending webhook finalization.
+
+        Validates:
+            - HMAC SHA256 signature.
+            - Order notes match the invoice.
+            - Payment amount/currency match the frozen invoice snapshot.
+
+        The invoice is NOT marked paid here. Final paid transition happens
+        via the payment.captured webhook to guarantee Razorpay settlement.
+
+        Args:
+            payload (dict): Checkout callback payload with invoiceId,
+                            razorpayOrderId, razorpayPaymentId, razorpaySignature.
+            token (str): Authorization JWT token.
+        """
+        try:
+            decodedToken = jwt.decode(
+                token,
+                os.environ["SECRET_KEY"],
+                algorithms=["HS256"]
+            )
+            userId = decodedToken.get("userId")
+
+            invoiceId = payload.get("invoiceId")
+            orderId = payload.get("razorpayOrderId")
+            paymentId = payload.get("razorpayPaymentId")
+            signature = payload.get("razorpaySignature")
+
+            if not all([invoiceId, orderId, paymentId, signature, userId]):
+                raise Exception("Missing required verification fields")
+
+            message = f"{orderId}|{paymentId}"
+            expectedSignature = hmac.new(
+                os.environ["RAZORPAY_KEY_SECRET"].encode(),
+                message.encode(),
+                hashlib.sha256
+            ).hexdigest()
+            if not hmac.compare_digest(expectedSignature, signature):
+                raise Exception("Invalid Razorpay signature")
+
+            invoice = self.client.table("Invoices") \
+                .select(
+                    "id, userId, total_amount, amount, currency, status, "
+                    "razorpay_order_id, billing_reason"
+                ) \
+                .eq("id", invoiceId) \
+                .limit(1) \
+                .execute().data
+            if not invoice:
+                raise Exception(f"Invoice {invoiceId} not found during verification")
+            invoice = invoice[0]
+
+            if invoice["userId"] != userId:
+                raise Exception("Invoice ownership mismatch during verification")
+
+            invoiceStatus = (invoice.get("status") or "").lower()
+            if invoiceStatus in ("paid", "void"):
+                logger.info(
+                    f"Invoice {invoiceId} already resolved ({invoiceStatus}), "
+                    f"skipping verification"
+                )
+                return
+            if invoiceStatus not in ("upcoming", "payment_pending"):
+                raise Exception(
+                    f"Invoice {invoiceId} is not in payable state for verification "
+                    f"(status={invoiceStatus})"
+                )
+            if invoice.get("billing_reason") != "renewal":
+                raise Exception(f"Invoice {invoiceId} is not a renewal invoice")
+
+            invoiceOrderId = invoice.get("razorpay_order_id")
+            if invoiceOrderId and invoiceOrderId != orderId:
+                raise Exception(
+                    f"Order mismatch: invoice bound to {invoiceOrderId}, "
+                    f"received {orderId}"
+                )
+
+            userRecord = self.client.table("Users") \
+                .select("userId, razorpayCustomerId") \
+                .eq("userId", userId) \
+                .limit(1) \
+                .execute().data
+            if not userRecord:
+                raise Exception("Authenticated user not found during verification")
+            expectedCustomerId = userRecord[0].get("razorpayCustomerId")
+
+            order = self.razorpayClient.order.fetch(orderId)
+            orderNotesRaw = order.get("notes", {}) or {}
+            orderNotes = orderNotesRaw if isinstance(orderNotesRaw, dict) else {}
+            if orderNotes.get("type") != "annual_renewal":
+                raise Exception(
+                    f"Order {orderId} is not marked as annual renewal "
+                    f"(type={orderNotes.get('type')})"
+                )
+            noteInvoiceId = orderNotes.get("invoiceId")
+            if noteInvoiceId and noteInvoiceId != invoiceId:
+                raise Exception(
+                    f"Order/invoice mismatch: order.invoiceId={noteInvoiceId}, "
+                    f"request.invoiceId={invoiceId}"
+                )
+            noteUserId = orderNotes.get("userId")
+            if noteUserId and noteUserId != userId:
+                raise Exception(
+                    f"Order/user mismatch: order.userId={noteUserId}, request.userId={userId}"
+                )
+            orderCustomerId = order.get("customer_id")
+            if expectedCustomerId and orderCustomerId and orderCustomerId != expectedCustomerId:
+                raise Exception(
+                    f"Order/customer mismatch: order.customer_id={orderCustomerId}, "
+                    f"user.customer_id={expectedCustomerId}"
+                )
+
+            payment = self.razorpayClient.payment.fetch(paymentId)
+            paymentOrderId = payment.get("order_id")
+            if paymentOrderId and paymentOrderId != orderId:
+                raise Exception(
+                    f"Payment/order mismatch: payment.order_id={paymentOrderId}, "
+                    f"request.orderId={orderId}"
+                )
+            paymentCustomerId = payment.get("customer_id")
+            if expectedCustomerId and paymentCustomerId and paymentCustomerId != expectedCustomerId:
+                raise Exception(
+                    f"Payment/customer mismatch: payment.customer_id={paymentCustomerId}, "
+                    f"user.customer_id={expectedCustomerId}"
+                )
+            paymentNotesRaw = payment.get("notes", {}) or {}
+            paymentNotes = paymentNotesRaw if isinstance(paymentNotesRaw, dict) else {}
+            if paymentNotes.get("type") and paymentNotes.get("type") != "annual_renewal":
+                raise Exception(
+                    f"Payment note type mismatch: {paymentNotes.get('type')}"
+                )
+            if paymentNotes.get("invoiceId") and paymentNotes.get("invoiceId") != invoiceId:
+                raise Exception(
+                    f"Payment/invoice mismatch: payment.invoiceId={paymentNotes.get('invoiceId')}, "
+                    f"request.invoiceId={invoiceId}"
+                )
+
+            expectedAmount = invoice.get("total_amount") or invoice.get("amount")
+            actualAmount = payment.get("amount")
+            expectedCurrency = invoice.get("currency") or "INR"
+            actualCurrency = payment.get("currency", "INR")
+
+            if expectedAmount is not None and int(actualAmount or 0) != int(expectedAmount):
+                raise Exception(
+                    f"Amount mismatch: expected={expectedAmount}, actual={actualAmount}"
+                )
+            if str(actualCurrency).upper() != str(expectedCurrency).upper():
+                raise Exception(
+                    f"Currency mismatch: expected={expectedCurrency}, actual={actualCurrency}"
+                )
+
+            self.client.table("Invoices").update({
+                "razorpay_order_id": orderId,
+                "razorpayPaymentId": paymentId,
+                "metadata_json": {
+                    "flow": "annual_renewal_dashboard_verify",
+                    "verified": True,
+                    "verifiedAt": datetime.datetime.utcnow().isoformat(),
+                    "awaitingWebhookFinalization": True,
+                },
+            }).eq("id", invoiceId).execute()
+
+            self._auditLog(
+                userId, "annual_renewal.verified",
+                paymentId=paymentId,
+                status="VERIFIED_PENDING_WEBHOOK",
+                metadata={
+                    "invoiceId": invoiceId,
+                    "orderId": orderId,
+                    "amount": actualAmount,
+                    "currency": actualCurrency,
+                }
+            )
+            logger.info(
+                f"Annual renewal verified for user {userId}, "
+                f"invoice {invoiceId}, awaiting webhook finalization"
+            )
+        except Exception as e:
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception
 
     def getInvoices(self, token: str) -> list[dict]:
         """

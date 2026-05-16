@@ -146,10 +146,12 @@ class DeleteDashboardElement(BaseModel):
     id: str
 
 class VerifySubscriptionRequest(BaseModel):
-    domains: list[str]
     razorpayOrderId: str
     razorpayPaymentId: str
     razorpaySignature: str
+
+    class Config:
+        extra = "forbid"
 
 class CreateSubscriptionRequest(BaseModel):
     domains: list[str]
@@ -182,6 +184,15 @@ class SubscriptionStatus(str, Enum):
     PENDING_CANCELLATION = "PENDING_CANCELLATION"
     PAUSED = "PAUSED"
     EXPIRED = "EXPIRED"
+
+class CreateAnnualRenewalSessionRequest(BaseModel):
+    invoiceId: str
+
+class VerifyAnnualRenewalPaymentRequest(BaseModel):
+    invoiceId: str
+    razorpayOrderId: str
+    razorpayPaymentId: str
+    razorpaySignature: str
 
 class RefundRequest(BaseModel):
     paymentId: str
