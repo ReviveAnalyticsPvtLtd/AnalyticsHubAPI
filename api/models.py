@@ -154,6 +154,7 @@ class VerifySubscriptionRequest(BaseModel):
 class CreateSubscriptionRequest(BaseModel):
     domains: list[str]
     contact: str
+    billingMode: str | None = "monthly_recurring"
 
 class AddDomainsRequest(BaseModel):
     domains: list[str]

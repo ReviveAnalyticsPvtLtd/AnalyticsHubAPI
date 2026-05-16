@@ -19,8 +19,11 @@ __author__ = "Rohit Mishra"
 __all__ = ["DailyBillingTask"]
 
 from api.services.billingConfig import MAX_SILENT_RECURRING_AMOUNT_PAISE
+from api.services.billingEngine import computeInvoiceSnapshot
 from supabase import create_client
 from utils.logger import logger
+from dateutil.relativedelta import relativedelta
+from dateutil import parser
 import razorpay
 import datetime
 import requests
@@ -280,6 +283,86 @@ class DailyBillingTask:
         except Exception as e:
             logger.error(f"Failed to update payment_attempt {attemptId}: {e}")
 
+    def _createOrGetRenewalInvoiceSnapshot(self, userId: str, subscription: dict, snapshot) -> dict:
+        """
+        Ensure a frozen renewal invoice exists for the billing period.
+
+        Uses subscription_id + period_start + period_end + billing_reason=renewal
+        as the natural key (aligned with DB uniqueness index).
+        """
+        subscriptionId = subscription.get("id")
+        periodStart = subscription.get("current_period_start")
+        periodEnd = subscription.get("current_period_end")
+        existing = (
+            self.client.table("Invoices")
+            .select("id, status, total_amount, currency, razorpay_order_id")
+            .eq("subscription_id", subscriptionId)
+            .eq("billing_reason", "renewal")
+            .eq("period_start", periodStart)
+            .eq("period_end", periodEnd)
+            .limit(1)
+            .execute()
+            .data
+        )
+        if existing:
+            return existing[0]
+
+        payload = {
+            "userId": userId,
+            "subscription_id": subscriptionId,
+            "billing_reason": "renewal",
+            "payment_flow": "token_charge",
+            "requires_customer_auth": False,
+            "period_start": snapshot.period_start,
+            "period_end": snapshot.period_end,
+            "amount_before_tax": snapshot.amount_before_tax,
+            "tax_amount": snapshot.tax.tax_amount,
+            "total_amount": snapshot.total_amount,
+            "amount": snapshot.total_amount,
+            "currency": snapshot.currency,
+            "status": "PAYMENT_PENDING",
+            "tax_breakdown_json": snapshot.tax.to_dict(),
+            "tax_rule_version": snapshot.tax.tax_rule_version,
+            "place_of_supply_snapshot": snapshot.tax.place_of_supply_snapshot,
+            "pricing_version": snapshot.pricing_version,
+            "pricing_reference_snapshot_json": snapshot.pricing_reference_snapshot_json,
+            "metadata_json": {
+                "flow": "monthly_renewal_scheduler",
+                "billingMode": "monthly_recurring",
+            },
+        }
+        created = self.client.table("Invoices").insert(payload).execute().data
+        if not created:
+            raise Exception("Failed to create frozen renewal invoice snapshot")
+        return created[0]
+
+    def _updateInvoiceForPaymentLifecycle(
+        self,
+        invoiceId: str,
+        status: str | None = None,
+        orderId: str | None = None,
+        paymentId: str | None = None,
+        failureReason: str | None = None,
+    ) -> None:
+        """
+        Update invoice row for payment lifecycle transitions.
+        """
+        updateData = {}
+        if status:
+            updateData["status"] = status
+        if orderId:
+            updateData["razorpay_order_id"] = orderId
+        if paymentId:
+            updateData["razorpayPaymentId"] = paymentId
+        if failureReason:
+            updateData["metadata_json"] = {
+                "last_failure_reason": failureReason[:500],
+                "updated_by": "monthly_renewal_scheduler",
+            }
+        if not updateData:
+            return
+        self.client.table("Invoices").update(updateData).eq("id", invoiceId).execute()
+
     def _notifyPaymentMethodUpdateRequired(self, user: dict, reason: str) -> None:
         """
         Trigger notification flow when saved token is unusable and user action
@@ -356,7 +439,6 @@ class DailyBillingTask:
             logger.info("No users due for charge queuing")
             return {"queued": 0, "skipped": 0, "errors": 0}
 
-        basePriceAmount = self._getBasePriceAmount()
         queued = 0
         skipped = 0
         errors = 0
@@ -415,7 +497,17 @@ class DailyBillingTask:
                     skipped += 1
                     continue
 
-                amount = domainCount * basePriceAmount
+                periodStartDt = parser.isoparse(periodStart) if periodStart else now
+                periodEndDt = parser.isoparse(periodEnd) if periodEnd else (periodStartDt + relativedelta(months=1))
+                snapshot = computeInvoiceSnapshot(
+                    billingMode="monthly_recurring",
+                    billingReason="renewal",
+                    domainCount=domainCount,
+                    customerState=None,
+                    periodStart=periodStartDt,
+                    periodEnd=periodEndDt,
+                )
+                amount = snapshot.total_amount
                 tokenId = user["razorpayTokenId"]
                 customerId = user["razorpayCustomerId"]
 
@@ -447,6 +539,12 @@ class DailyBillingTask:
                     continue
 
                 attemptId = attempt["id"]
+                invoice = self._createOrGetRenewalInvoiceSnapshot(
+                    userId=userId,
+                    subscription=subscription,
+                    snapshot=snapshot,
+                )
+                invoiceId = invoice["id"]
 
                 if amount > MAX_SILENT_RECURRING_AMOUNT_PAISE:
                     self._updatePaymentAttemptStatus(
@@ -465,6 +563,7 @@ class DailyBillingTask:
                             "threshold": MAX_SILENT_RECURRING_AMOUNT_PAISE,
                             "domainCount": domainCount,
                             "attemptId": attemptId,
+                            "invoiceId": invoiceId,
                         },
                     )
                     logger.info(
@@ -491,6 +590,7 @@ class DailyBillingTask:
                             "reason": tokenCheck["reason"],
                             "tokenId": tokenId,
                             "attemptId": attemptId,
+                            "invoiceId": invoiceId,
                         },
                     )
                     self._notifyPaymentMethodUpdateRequired(
@@ -521,10 +621,16 @@ class DailyBillingTask:
                                 "userId": userId,
                                 "domainCount": str(domainCount),
                                 "attemptId": attemptId,
+                                "invoiceId": invoiceId,
                             },
                         }
                     )
                     orderId = order["id"]
+                    self._updateInvoiceForPaymentLifecycle(
+                        invoiceId=invoiceId,
+                        status="PAYMENT_PENDING",
+                        orderId=orderId,
+                    )
 
                     self._updatePaymentAttemptStatus(
                         attemptId, "pending_provider_ack",
@@ -547,6 +653,7 @@ class DailyBillingTask:
                                 "userId": userId,
                                 "domainCount": str(domainCount),
                                 "attemptId": attemptId,
+                                "invoiceId": invoiceId,
                             },
                         }
                     )
@@ -554,6 +661,11 @@ class DailyBillingTask:
                     self._updatePaymentAttemptStatus(
                         attemptId, "failed",
                         failureReason=f"provider_call_failed: {providerError}",
+                    )
+                    self._updateInvoiceForPaymentLifecycle(
+                        invoiceId=invoiceId,
+                        status="FAILED",
+                        failureReason=str(providerError),
                     )
                     self.redis.delete(lockKey)
                     raise providerError
@@ -564,6 +676,11 @@ class DailyBillingTask:
                     attemptId, "pending_provider_ack",
                     providerPaymentId=paymentId,
                     providerOrderId=orderId,
+                )
+                self._updateInvoiceForPaymentLifecycle(
+                    invoiceId=invoiceId,
+                    status="PAYMENT_PENDING",
+                    paymentId=paymentId,
                 )
 
                 self._auditLog(
@@ -577,6 +694,7 @@ class DailyBillingTask:
                         "orderId": orderId,
                         "razorpayPaymentId": paymentId,
                         "attemptId": attemptId,
+                        "invoiceId": invoiceId,
                     },
                 )
                 queued += 1

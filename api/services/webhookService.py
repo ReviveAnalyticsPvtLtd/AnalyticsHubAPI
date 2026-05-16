@@ -296,6 +296,71 @@ class WebhookService:
             .eq("razorpayCustomerId", customerId).execute()
         return result.data[0] if result.data else None
 
+    def _findInvoiceById(self, invoiceId: str) -> dict | None:
+        """
+        Look up an internal invoice by primary key.
+        """
+        result = self.client.table("Invoices") \
+            .select("id, userId, total_amount, amount, currency, status, razorpay_order_id") \
+            .eq("id", invoiceId) \
+            .limit(1) \
+            .execute()
+        return result.data[0] if result.data else None
+
+    def _markInvoicePaid(self, invoiceId: str, paymentEntity: dict) -> None:
+        """
+        Mark an internal invoice as paid from webhook payment entity.
+        """
+        updateData = {
+            "status": "PAID",
+            "razorpayPaymentId": paymentEntity.get("id"),
+            "amount": paymentEntity.get("amount", 0),
+            "currency": paymentEntity.get("currency", "INR"),
+        }
+        capturedAt = paymentEntity.get("captured_at") or paymentEntity.get("created_at")
+        if capturedAt:
+            updateData["paidAt"] = str(datetime.datetime.utcfromtimestamp(capturedAt))
+        self.client.table("Invoices").update(updateData).eq("id", invoiceId).execute()
+
+    def _markInvoiceFailed(self, invoiceId: str, errorCode: str = "", errorDescription: str = "") -> None:
+        """
+        Mark an internal invoice as failed from webhook failure signal.
+        """
+        self.client.table("Invoices").update({
+            "status": "FAILED",
+            "metadata_json": {
+                "error_code": errorCode,
+                "error_description": errorDescription,
+                "updated_by": "webhook_payment_failed",
+            }
+        }).eq("id", invoiceId).execute()
+
+    @staticmethod
+    def _validateFrozenInvoicePaymentMatch(invoice: dict, paymentEntity: dict) -> None:
+        """
+        Validate payment amount/currency against frozen internal invoice snapshot.
+
+        Raises:
+            ValueError: If amount or currency mismatches.
+        """
+        expectedAmount = invoice.get("total_amount")
+        if expectedAmount is None:
+            expectedAmount = invoice.get("amount")
+        expectedCurrency = invoice.get("currency") or "INR"
+        actualAmount = paymentEntity.get("amount")
+        actualCurrency = paymentEntity.get("currency", "INR")
+
+        if expectedAmount is not None and int(actualAmount or 0) != int(expectedAmount):
+            raise ValueError(
+                f"Invoice/payment amount mismatch for invoice {invoice.get('id')}: "
+                f"expected={expectedAmount}, actual={actualAmount}"
+            )
+        if str(actualCurrency).upper() != str(expectedCurrency).upper():
+            raise ValueError(
+                f"Invoice/payment currency mismatch for invoice {invoice.get('id')}: "
+                f"expected={expectedCurrency}, actual={actualCurrency}"
+            )
+
     def _auditLog(self, userId: str, eventType: str, **kwargs) -> None:
         """
         Insert a row into the SubscriptionLog table.
@@ -393,12 +458,19 @@ class WebhookService:
         notes = paymentEntity.get("notes", {})
         paymentType = notes.get("type", "")
         paymentId = paymentEntity.get("id")
+        invoiceId = notes.get("invoiceId")
 
         if paymentType == "recurring_renewal":
             userId = notes.get("userId")
             if not userId:
                 logger.error(f"recurring_renewal payment {paymentId} missing userId in notes")
                 return
+            frozenInvoice = None
+            if invoiceId:
+                frozenInvoice = self._findInvoiceById(invoiceId)
+                if not frozenInvoice:
+                    raise Exception(f"Frozen invoice not found for recurring payment: {invoiceId}")
+                self._validateFrozenInvoicePaymentMatch(frozenInvoice, paymentEntity)
             user = self._findUserById(userId)
             if not user:
                 logger.error(f"No user found for userId {userId} during payment.captured")
@@ -427,17 +499,20 @@ class WebhookService:
             self.client.table("Users").update({
                 "recurringFailures": 0,
             }).eq("userId", userId).execute()
-            capturedAt = paymentEntity.get("captured_at") or paymentEntity.get("created_at")
-            self._upsertInvoiceRecord(userId, {
-                "id": paymentId,
-                "payment_id": paymentId,
-                "amount": paymentEntity.get("amount", 0),
-                "currency": paymentEntity.get("currency", "INR"),
-                "status": "paid",
-                "billing_start": int(expiryDt.timestamp()) if expiryDt else None,
-                "billing_end": int(newExpiry.timestamp()) if newExpiry else None,
-                "paid_at": capturedAt,
-            })
+            if invoiceId:
+                self._markInvoicePaid(invoiceId=invoiceId, paymentEntity=paymentEntity)
+            else:
+                capturedAt = paymentEntity.get("captured_at") or paymentEntity.get("created_at")
+                self._upsertInvoiceRecord(userId, {
+                    "id": paymentId,
+                    "payment_id": paymentId,
+                    "amount": paymentEntity.get("amount", 0),
+                    "currency": paymentEntity.get("currency", "INR"),
+                    "status": "paid",
+                    "billing_start": int(expiryDt.timestamp()) if expiryDt else None,
+                    "billing_end": int(newExpiry.timestamp()) if newExpiry else None,
+                    "paid_at": capturedAt,
+                })
             self._auditLog(
                 userId, "billing.renewal_charged",
                 paymentId=paymentId,
@@ -445,6 +520,7 @@ class WebhookService:
                 currency=paymentEntity.get("currency", "INR"),
                 status="CHARGED",
                 metadata={
+                    "invoiceId": invoiceId,
                     "previousExpiry": str(expiryDt),
                     "newExpiry": str(newExpiry),
                 }
@@ -455,6 +531,11 @@ class WebhookService:
             if not userId:
                 logger.error(f"domain_upgrade_proration payment {paymentId} missing userId in notes")
                 return
+            if invoiceId:
+                frozenInvoice = self._findInvoiceById(invoiceId)
+                if not frozenInvoice:
+                    raise Exception(f"Frozen invoice not found for domain proration payment: {invoiceId}")
+                self._validateFrozenInvoicePaymentMatch(frozenInvoice, paymentEntity)
             from api.services.subscriptionService import subscriptionService
             orderId = paymentEntity.get("order_id")
             if orderId:
@@ -464,13 +545,15 @@ class WebhookService:
                     targetQuantity=int(notes.get("targetQuantity", 0)),
                     referenceId=orderId,
                 )
+            if invoiceId:
+                self._markInvoicePaid(invoiceId=invoiceId, paymentEntity=paymentEntity)
             self._auditLog(
                 userId, "payment.captured",
                 paymentId=paymentId,
                 amount=paymentEntity.get("amount"),
                 currency=paymentEntity.get("currency", "INR"),
                 status="CAPTURED",
-                metadata={"type": "domain_upgrade_proration", "orderId": orderId}
+                metadata={"type": "domain_upgrade_proration", "orderId": orderId, "invoiceId": invoiceId}
             )
             logger.info(f"Domain upgrade payment captured and activated: {paymentId}")
         else:
@@ -499,6 +582,7 @@ class WebhookService:
         paymentType = notes.get("type", "")
         paymentId = paymentEntity.get("id")
         errorMeta = paymentEntity.get("error_code", "")
+        invoiceId = notes.get("invoiceId")
 
         if paymentType == "recurring_renewal":
             userId = notes.get("userId")
@@ -525,12 +609,19 @@ class WebhookService:
                 currency=paymentEntity.get("currency", "INR"),
                 status="FAILED",
                 metadata={
+                    "invoiceId": invoiceId,
                     "error_code": errorMeta,
                     "error_description": paymentEntity.get("error_description", ""),
                     "recurringFailures": failures,
                     "suspended": failures >= 3,
                 }
             )
+            if invoiceId:
+                self._markInvoiceFailed(
+                    invoiceId=invoiceId,
+                    errorCode=errorMeta,
+                    errorDescription=paymentEntity.get("error_description", ""),
+                )
             if user.get("email"):
                 self._sendPaymentFailureEmail(user["email"], user.get("fullName", ""), "recurring_renewal_failed")
             logger.info(f"Recurring renewal failed for user {userId}, failures={failures}")
@@ -542,8 +633,14 @@ class WebhookService:
                 amount=paymentEntity.get("amount"),
                 currency=paymentEntity.get("currency", "INR"),
                 status="FAILED",
-                metadata={"error_code": errorMeta, "error_description": paymentEntity.get("error_description", "")}
+                metadata={"invoiceId": invoiceId, "error_code": errorMeta, "error_description": paymentEntity.get("error_description", "")}
             )
+            if invoiceId:
+                self._markInvoiceFailed(
+                    invoiceId=invoiceId,
+                    errorCode=errorMeta,
+                    errorDescription=paymentEntity.get("error_description", ""),
+                )
             user = self._findUserById(userId) if userId != "unknown" else None
             if user:
                 pendingAdditions = user.get("pendingAdditions") or []

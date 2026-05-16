@@ -60,7 +60,12 @@ async def createSubscription(request: CreateSubscriptionRequest, token=Depends(v
         ORJSONResponse: Subscription details required for checkout.
     """
     try:
-        result = subscriptionService.createSubscription(domains=request.domains, contact=request.contact, token=token)
+        result = subscriptionService.createSubscription(
+            domains=request.domains,
+            contact=request.contact,
+            billingMode=request.billingMode,
+            token=token
+        )
         return ORJSONResponse(status_code=200, content=result)
     except CustomException as e:
         raiseHttpException(e)

@@ -15,6 +15,7 @@ __all__ = ["subscriptionService"]
 from dateutil.relativedelta import relativedelta
 from utils.exceptionHandler import CustomException
 from utils.logger import logger
+from api.services.billingEngine import computeInvoiceSnapshot
 from api.commons import client
 from jose import jwt
 import requests
@@ -107,6 +108,79 @@ class SubscriptionService:
             self.client.table("subscriptions").update(payload).eq("id", existing["id"]).execute()
         else:
             self.client.table("subscriptions").insert(payload).execute()
+
+    @staticmethod
+    def _normalizeBillingMode(billingMode: str | None) -> str:
+        """
+        Normalize and validate billing mode for subscription purchase flows.
+        """
+        normalized = (billingMode or "monthly_recurring").strip().lower()
+        if normalized not in {"monthly_recurring", "annual_prepaid"}:
+            raise Exception(f"Unsupported billingMode: {billingMode}")
+        return normalized
+
+    def _createFrozenInvoiceFromSnapshot(
+        self,
+        userId: str,
+        subscriptionId: str | None,
+        billingReason: str,
+        paymentFlow: str,
+        requiresCustomerAuth: bool,
+        snapshot,
+        metadata: dict | None = None,
+    ) -> dict:
+        """
+        Create an internal invoice row with immutable pricing/tax snapshot.
+        """
+        payload = {
+            "userId": userId,
+            "subscription_id": subscriptionId,
+            "billing_reason": billingReason,
+            "payment_flow": paymentFlow,
+            "requires_customer_auth": requiresCustomerAuth,
+            "period_start": snapshot.period_start,
+            "period_end": snapshot.period_end,
+            "amount_before_tax": snapshot.amount_before_tax,
+            "tax_amount": snapshot.tax.tax_amount,
+            "total_amount": snapshot.total_amount,
+            "amount": snapshot.total_amount,
+            "currency": snapshot.currency,
+            "status": "PAYMENT_PENDING",
+            "tax_breakdown_json": snapshot.tax.to_dict(),
+            "tax_rule_version": snapshot.tax.tax_rule_version,
+            "place_of_supply_snapshot": snapshot.tax.place_of_supply_snapshot,
+            "pricing_version": snapshot.pricing_version,
+            "pricing_reference_snapshot_json": snapshot.pricing_reference_snapshot_json,
+            "metadata_json": metadata or {},
+        }
+        result = self.client.table("Invoices").insert(payload).execute().data
+        if not result:
+            raise Exception("Failed to create frozen invoice snapshot")
+        return result[0]
+
+    def _attachOrderToInvoice(self, invoiceId: str, orderId: str, receipt: str | None = None) -> None:
+        """
+        Attach created Razorpay order metadata to an existing internal invoice.
+        """
+        updateData = {
+            "razorpay_order_id": orderId,
+            "status": "PAYMENT_PENDING",
+        }
+        if receipt:
+            updateData["provider_receipt"] = receipt
+        self.client.table("Invoices").update(updateData).eq("id", invoiceId).execute()
+
+    def _markInvoicePaid(self, invoiceId: str, paymentId: str, paidAt: str | None = None) -> None:
+        """
+        Mark an internal invoice as paid.
+        """
+        updateData = {
+            "status": "PAID",
+            "razorpayPaymentId": paymentId,
+        }
+        if paidAt:
+            updateData["paidAt"] = paidAt
+        self.client.table("Invoices").update(updateData).eq("id", invoiceId).execute()
 
     @staticmethod
     def _isSubscriptionActive(status: str | None) -> bool:
@@ -530,7 +604,7 @@ class SubscriptionService:
             logger.error(exception)
             raise exception
 
-    def createSubscription(self, domains: list[str], contact: str, token: str) -> dict:
+    def createSubscription(self, domains: list[str], contact: str, token: str, billingMode: str = "monthly_recurring") -> dict:
         """
         Create a Razorpay Order for tokenization-based subscription checkout.
 
@@ -547,6 +621,7 @@ class SubscriptionService:
         """
         try:
             normalizedDomains = self._normalizeAndValidateDomains(domains)
+            normalizedBillingMode = self._normalizeBillingMode(billingMode)
             decodedToken = jwt.decode(
                 token,
                 os.environ["SECRET_KEY"],
@@ -571,34 +646,59 @@ class SubscriptionService:
                 }
             )
             quantity = len(normalizedDomains)
-            plan = self.razorpayClient.plan.fetch(self.BASE_PLAN_ID)
-            perDomainAmount = plan["item"]["amount"]
-            totalAmount = perDomainAmount * quantity
+            subscription = self._getCanonicalSubscription(userId=userId, required=False)
+            customerState = None
+            snapshot = computeInvoiceSnapshot(
+                billingMode=normalizedBillingMode,
+                billingReason="initial_purchase",
+                domainCount=quantity,
+                customerState=customerState,
+            )
+            invoice = self._createFrozenInvoiceFromSnapshot(
+                userId=userId,
+                subscriptionId=subscription.get("id") if subscription else None,
+                billingReason="initial_purchase",
+                paymentFlow="razorpay_order_checkout",
+                requiresCustomerAuth=(normalizedBillingMode == "annual_prepaid"),
+                snapshot=snapshot,
+                metadata={
+                    "domains": normalizedDomains,
+                    "flow": "createSubscription",
+                    "billingMode": normalizedBillingMode,
+                },
+            )
             farFutureEpoch = int((datetime.datetime.utcnow() + datetime.timedelta(days=365 * 10)).timestamp())
-            order = self.razorpayClient.order.create({
-                "amount": totalAmount,
+            orderPayload = {
+                "amount": snapshot.total_amount,
                 "currency": "INR",
                 "customer_id": customerId,
-                "method": "card",
-                "token": {
-                    "max_amount": 1500000,
-                    "expire_at": farFutureEpoch,
-                    "frequency": "monthly",
-                },
                 "notes": {
                     "userId": userId,
                     "type": "initial_subscription",
                     "domains": ", ".join(normalizedDomains),
+                    "invoiceId": invoice["id"],
+                    "billingMode": normalizedBillingMode,
                 },
-            })
+            }
+            if normalizedBillingMode == "monthly_recurring":
+                orderPayload["method"] = "card"
+                orderPayload["token"] = {
+                    "max_amount": 1500000,
+                    "expire_at": farFutureEpoch,
+                    "frequency": "monthly",
+                }
+            order = self.razorpayClient.order.create(orderPayload)
+            self._attachOrderToInvoice(invoiceId=invoice["id"], orderId=order["id"])
             self._auditLog(
                 userId, "subscription.created",
                 status="CREATED",
                 metadata={
                     "orderId": order["id"],
+                    "invoiceId": invoice["id"],
+                    "billingMode": normalizedBillingMode,
                     "domains": normalizedDomains,
                     "quantity": quantity,
-                    "amount": totalAmount,
+                    "amount": snapshot.total_amount,
                 }
             )
             return {
@@ -612,6 +712,19 @@ class SubscriptionService:
                 "status": order["status"],
                 "quantity": quantity,
                 "domains": normalizedDomains,
+                "invoiceId": invoice["id"],
+                "billingMode": normalizedBillingMode,
+                "pricingSnapshot": {
+                    "pricingVersion": snapshot.pricing_version,
+                    "priceSource": snapshot.pricing_reference_snapshot_json.get("source"),
+                },
+                "taxSnapshot": {
+                    "taxRuleVersion": snapshot.tax.tax_rule_version,
+                    "amountBeforeTax": snapshot.amount_before_tax,
+                    "taxAmount": snapshot.tax.tax_amount,
+                    "totalAmount": snapshot.total_amount,
+                    "currency": snapshot.currency,
+                },
             }
         except Exception as e:
             exception = CustomException(e)
@@ -640,10 +753,8 @@ class SubscriptionService:
             paymentId = payload.get("razorpayPaymentId")
             orderId = payload.get("razorpayOrderId")
             signature = payload.get("razorpaySignature")
-            domains = payload.get("domains")
-            if not all([paymentId, orderId, signature, userId, domains]):
+            if not all([paymentId, orderId, signature, userId]):
                 raise Exception("Missing Razorpay verification fields")
-            normalizedDomains = self._normalizeAndValidateDomains(domains)
             message = f"{orderId}|{paymentId}"
             expectedSignature = hmac.new(
                 os.environ["RAZORPAY_KEY_SECRET"].encode(),
@@ -652,65 +763,104 @@ class SubscriptionService:
             ).hexdigest()
             if not hmac.compare_digest(expectedSignature, signature):
                 raise Exception("Invalid Razorpay signature")
+            order = self.razorpayClient.order.fetch(orderId)
+            orderNotes = order.get("notes", {})
+            orderDomains = [d.strip() for d in (orderNotes.get("domains", "") or "").split(",") if d.strip()]
+            payloadDomains = payload.get("domains") or []
+            normalizedDomains = self._normalizeAndValidateDomains(orderDomains or payloadDomains)
+            billingMode = self._normalizeBillingMode(orderNotes.get("billingMode") or "monthly_recurring")
+            invoiceId = orderNotes.get("invoiceId")
             payment = self.razorpayClient.payment.fetch(paymentId)
-            tokenId = payment.get("token_id")
-            if not tokenId:
-                raise Exception("Payment did not produce a recurring token (token_id is missing)")
             userRecord = self.client.table("Users").select("razorpayCustomerId").eq("userId", userId).execute()
             customerId = userRecord.data[0].get("razorpayCustomerId") if userRecord.data else None
             if not customerId:
                 raise Exception("No Razorpay customer found — cannot validate token")
-            tokenEntity = self.razorpayClient.token.fetch(customerId, tokenId)
-            recurringDetails = tokenEntity.get("recurring_details") or {}
-            recurringStatus = recurringDetails.get("status", "")
-            isRecurring = tokenEntity.get("recurring", False)
-            UNUSABLE_STATES = {"cancelled", "expired", "rejected"}
-            if recurringStatus in UNUSABLE_STATES:
-                raise Exception(
-                    f"Token {tokenId} is not usable for recurring payments "
-                    f"(recurring_details.status={recurringStatus})"
+            tokenId = None
+            recurringStatus = ""
+            if billingMode == "monthly_recurring":
+                tokenId = payment.get("token_id")
+                if not tokenId:
+                    raise Exception("Payment did not produce a recurring token (token_id is missing)")
+                tokenEntity = self.razorpayClient.token.fetch(customerId, tokenId)
+                recurringDetails = tokenEntity.get("recurring_details") or {}
+                recurringStatus = recurringDetails.get("status", "")
+                isRecurring = tokenEntity.get("recurring", False)
+                UNUSABLE_STATES = {"cancelled", "expired", "rejected"}
+                if recurringStatus in UNUSABLE_STATES:
+                    raise Exception(
+                        f"Token {tokenId} is not usable for recurring payments "
+                        f"(recurring_details.status={recurringStatus})"
+                    )
+                if not isRecurring:
+                    raise Exception(
+                        f"Token {tokenId} is not recurring-enabled (recurring={isRecurring})"
+                    )
+                logger.info(
+                    f"Token {tokenId} validated for user {userId}: "
+                    f"recurring={isRecurring}, recurring_details.status={recurringStatus}"
                 )
-            if not isRecurring:
-                raise Exception(
-                    f"Token {tokenId} is not recurring-enabled (recurring={isRecurring})"
-                )
-            logger.info(
-                f"Token {tokenId} validated for user {userId}: "
-                f"recurring={isRecurring}, recurring_details.status={recurringStatus}"
-            )
             currentTime = datetime.datetime.utcnow()
-            anchorDay = currentTime.day
-            expiry = currentTime + relativedelta(months=1)
-            self.client.table("Users").update({
-                "razorpayTokenId": tokenId,
-                "subscriptionAnchorDay": anchorDay,
-                "subscribedExperts": ", ".join(normalizedDomains),
-                "domainCount": len(normalizedDomains),
-                "recurringFailures": 0,
-                "pendingRemovals": [],
-                "pendingAdditions": [],
-            }).eq("userId", userId).execute()
-            self._upsertCanonicalSubscription(
-                userId=userId,
-                billingMode="monthly_recurring",
-                status="active",
-                currentPeriodStart=currentTime.isoformat(),
-                currentPeriodEnd=expiry.isoformat(),
-                renewalDueAt=expiry.isoformat(),
-                autoRenewEnabled=True,
-                paymentCollectionMode="silent_token",
-            )
+            if billingMode == "monthly_recurring":
+                anchorDay = currentTime.day
+                expiry = currentTime + relativedelta(months=1)
+                self.client.table("Users").update({
+                    "razorpayTokenId": tokenId,
+                    "subscriptionAnchorDay": anchorDay,
+                    "subscribedExperts": ", ".join(normalizedDomains),
+                    "domainCount": len(normalizedDomains),
+                    "recurringFailures": 0,
+                    "pendingRemovals": [],
+                    "pendingAdditions": [],
+                }).eq("userId", userId).execute()
+                self._upsertCanonicalSubscription(
+                    userId=userId,
+                    billingMode="monthly_recurring",
+                    status="active",
+                    currentPeriodStart=currentTime.isoformat(),
+                    currentPeriodEnd=expiry.isoformat(),
+                    renewalDueAt=expiry.isoformat(),
+                    autoRenewEnabled=True,
+                    paymentCollectionMode="silent_token",
+                )
+            else:
+                expiry = currentTime + relativedelta(years=1)
+                self.client.table("Users").update({
+                    "subscribedExperts": ", ".join(normalizedDomains),
+                    "domainCount": len(normalizedDomains),
+                    "recurringFailures": 0,
+                    "pendingRemovals": [],
+                    "pendingAdditions": [],
+                }).eq("userId", userId).execute()
+                self._upsertCanonicalSubscription(
+                    userId=userId,
+                    billingMode="annual_prepaid",
+                    status="active",
+                    currentPeriodStart=currentTime.isoformat(),
+                    currentPeriodEnd=expiry.isoformat(),
+                    renewalDueAt=expiry.isoformat(),
+                    autoRenewEnabled=True,
+                    paymentCollectionMode="authenticated_checkout",
+                )
+            if invoiceId:
+                paidAt = payment.get("captured_at") or payment.get("created_at")
+                self._markInvoicePaid(
+                    invoiceId=invoiceId,
+                    paymentId=paymentId,
+                    paidAt=str(datetime.datetime.utcfromtimestamp(paidAt)) if paidAt else None,
+                )
             self._auditLog(
                 userId, "subscription.verified",
                 paymentId=paymentId,
                 status="ACTIVE",
                 metadata={
                     "orderId": orderId,
+                    "invoiceId": invoiceId,
+                    "billingMode": billingMode,
                     "tokenId": tokenId,
                     "tokenRecurringStatus": recurringStatus,
                     "domains": normalizedDomains,
                     "quantity": len(normalizedDomains),
-                    "anchorDay": anchorDay,
+                    "anchorDay": currentTime.day,
                 }
             )
         except Exception as e:
@@ -836,8 +986,6 @@ class SubscriptionService:
                         "synced": synced,
                     }
                 )
-            plan = self.razorpayClient.plan.fetch(self.BASE_PLAN_ID)
-            perDomainAmount = plan["item"]["amount"]
             cycleStartRaw = subscription.get("current_period_start")
             subscriptionExpiryRaw = subscription.get("current_period_end")
             if not cycleStartRaw or not subscriptionExpiryRaw:
@@ -845,11 +993,31 @@ class SubscriptionService:
             cycleStart = parser.isoparse(cycleStartRaw)
             subscriptionExpiry = parser.isoparse(subscriptionExpiryRaw)
             now = datetime.datetime.utcnow()
-            daysInCycle = max((subscriptionExpiry - cycleStart).days, 1)
-            daysRemaining = max((subscriptionExpiry - now).days, 1)
-            perDomainProrated = int((perDomainAmount / daysInCycle) * daysRemaining)
-            totalProrated = perDomainProrated * len(normalizedDomains)
+            billingMode = self._normalizeBillingMode(subscription.get("billing_mode") or "monthly_recurring")
+            snapshot = computeInvoiceSnapshot(
+                billingMode=billingMode,
+                billingReason="proration",
+                domainCount=len(normalizedDomains),
+                customerState=None,
+                prorationAnchorStart=now,
+                prorationAnchorEnd=subscriptionExpiry,
+            )
+            totalProrated = snapshot.total_amount
+            perDomainProrated = int(totalProrated / max(len(normalizedDomains), 1))
             domainLabel = ", ".join(normalizedDomains)
+            invoice = self._createFrozenInvoiceFromSnapshot(
+                userId=userId,
+                subscriptionId=subscription.get("id"),
+                billingReason="proration",
+                paymentFlow="razorpay_order_checkout",
+                requiresCustomerAuth=(billingMode == "annual_prepaid"),
+                snapshot=snapshot,
+                metadata={
+                    "domains": normalizedDomains,
+                    "flow": "addDomains",
+                    "billingMode": billingMode,
+                },
+            )
             order = self.razorpayClient.order.create({
                 "amount": totalProrated,
                 "currency": "INR",
@@ -860,8 +1028,11 @@ class SubscriptionService:
                     "type": "domain_upgrade_proration",
                     "currentQuantity": str(domainCount),
                     "targetQuantity": str(totalAfterAdd),
+                    "invoiceId": invoice["id"],
+                    "billingMode": billingMode,
                 },
             })
+            self._attachOrderToInvoice(invoiceId=invoice["id"], orderId=order["id"])
             for d in normalizedDomains:
                 pendingAdditions.append({
                     "domain": d,
@@ -881,8 +1052,9 @@ class SubscriptionService:
                     "domains": normalizedDomains,
                     "perDomainProrated": perDomainProrated,
                     "totalProrated": totalProrated,
-                    "daysRemaining": daysRemaining,
+                    "daysRemaining": max((subscriptionExpiry - now).days, 1),
                     "orderId": order["id"],
+                    "invoiceId": invoice["id"],
                 }
             )
             logger.info(f"Domain upgrade order created for user {userId}: {normalizedDomains}")
@@ -896,11 +1068,24 @@ class SubscriptionService:
                 "perDomainProratedAmount": perDomainProrated,
                 "currentQuantity": domainCount,
                 "targetQuantity": totalAfterAdd,
-                "daysRemaining": daysRemaining,
+                "daysRemaining": max((subscriptionExpiry - now).days, 1),
                 "userEmail": identity["email"],
                 "userName": identity["name"],
                 "userContact": identity["contact"],
                 "customerId": customerId,
+                "invoiceId": invoice["id"],
+                "billingMode": billingMode,
+                "pricingSnapshot": {
+                    "pricingVersion": snapshot.pricing_version,
+                    "priceSource": snapshot.pricing_reference_snapshot_json.get("source"),
+                },
+                "taxSnapshot": {
+                    "taxRuleVersion": snapshot.tax.tax_rule_version,
+                    "amountBeforeTax": snapshot.amount_before_tax,
+                    "taxAmount": snapshot.tax.tax_amount,
+                    "totalAmount": snapshot.total_amount,
+                    "currency": snapshot.currency,
+                },
             }
         except Exception as e:
             exception = CustomException(e)
@@ -940,6 +1125,9 @@ class SubscriptionService:
             ).hexdigest()
             if not hmac.compare_digest(expectedSignature, signature):
                 raise Exception("Invalid Razorpay signature")
+            order = self.razorpayClient.order.fetch(orderId)
+            orderNotes = order.get("notes", {})
+            invoiceId = orderNotes.get("invoiceId")
             user = self.client.table("Users") \
                 .select("userId, domainCount, pendingAdditions") \
                 .eq("userId", userId).execute().data
@@ -958,12 +1146,21 @@ class SubscriptionService:
                 targetQuantity=currentCount + targetQuantity,
                 referenceId=orderId,
             )
+            if invoiceId:
+                payment = self.razorpayClient.payment.fetch(paymentId)
+                paidAt = payment.get("captured_at") or payment.get("created_at")
+                self._markInvoicePaid(
+                    invoiceId=invoiceId,
+                    paymentId=paymentId,
+                    paidAt=str(datetime.datetime.utcfromtimestamp(paidAt)) if paidAt else None,
+                )
             self._auditLog(
                 userId, "domain.upgrade_verified",
                 paymentId=paymentId,
                 status="VERIFIED",
                 metadata={
                     "orderId": orderId,
+                    "invoiceId": invoiceId,
                     "domains": normalizedDomains,
                 }
             )
