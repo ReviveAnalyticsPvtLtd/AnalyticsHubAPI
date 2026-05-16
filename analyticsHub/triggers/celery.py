@@ -10,7 +10,10 @@ __version__ = "1.0.0"
 __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["celeryApp"]
 
+from analyticsHub.triggers.tasks.pastDueSuspensionTask import PastDueSuspensionTask
 from analyticsHub.triggers.tasks.generateForecasts import GenerateForecasts
+from analyticsHub.triggers.tasks.renewalLifecycleTask import RenewalLifecycleTask
+from analyticsHub.triggers.tasks.annualRenewalTask import AnnualRenewalTask
 from analyticsHub.triggers.tasks.reconciliationTask import ReconciliationTask
 from analyticsHub.triggers.tasks.billingTask import DailyBillingTask
 from celery.schedules import crontab
@@ -67,10 +70,14 @@ class CeleryWrapper:
 
     def _registerTasks(self):
         """
-        Register Celery tasks with the application.
+        Register all Celery tasks and configure the Beat schedule.
 
-        Registers generateForecasts and dailyBilling tasks, and configures
-        the Beat schedule for automated daily billing at midnight UTC.
+        Task schedule:
+            - 00:00 UTC daily: Monthly recurring charges.
+            - 00:30 UTC daily: Annual renewal T-30/T-7 sweep + emails.
+            - 02:00 UTC daily: Renewal reminder emails (T-1, due-today).
+            - Every 30 min: Past-due and suspension transitions.
+            - Every 15 min: Reconciliation sweep.
         """
         @self._app.task(name=f"{self.name}.generateForecasts")
         def sendForecasts():
@@ -80,6 +87,18 @@ class CeleryWrapper:
         def runDailyBilling():
             return DailyBillingTask().execute()
 
+        @self._app.task(name=f"{self.name}.annualRenewal")
+        def runAnnualRenewal():
+            return AnnualRenewalTask().execute()
+
+        @self._app.task(name=f"{self.name}.renewalLifecycle")
+        def runRenewalLifecycle():
+            return RenewalLifecycleTask().execute()
+
+        @self._app.task(name=f"{self.name}.pastDueSuspension")
+        def runPastDueSuspension():
+            return PastDueSuspensionTask().execute()
+
         @self._app.task(name=f"{self.name}.reconciliation")
         def runReconciliation():
             return ReconciliationTask().execute()
@@ -88,6 +107,18 @@ class CeleryWrapper:
             "daily-billing-midnight": {
                 "task": f"{self.name}.dailyBilling",
                 "schedule": crontab(minute=0, hour=0),
+            },
+            "annual-renewal-daily": {
+                "task": f"{self.name}.annualRenewal",
+                "schedule": crontab(minute=30, hour=0),
+            },
+            "renewal-reminders-daily": {
+                "task": f"{self.name}.renewalLifecycle",
+                "schedule": crontab(minute=0, hour=2),
+            },
+            "past-due-suspension-every-30min": {
+                "task": f"{self.name}.pastDueSuspension",
+                "schedule": crontab(minute="*/30"),
             },
             "reconciliation-every-15min": {
                 "task": f"{self.name}.reconciliation",
