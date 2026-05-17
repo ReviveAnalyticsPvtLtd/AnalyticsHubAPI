@@ -24,6 +24,12 @@ __all__ = [
 
 
 from api.services.billingEngine import computeInvoiceSnapshot
+from api.services.subscriptionFieldUtils import (
+    SUBSCRIPTION_BILLING_FIELDS_SELECT,
+    subscriptionBillingState,
+    subscriptionCustomerId,
+    subscriptionDomainCount,
+)
 from supabase import create_client
 from utils.logger import logger
 from dateutil.relativedelta import relativedelta
@@ -105,7 +111,7 @@ def createUpcomingRenewalInvoice(subscription: dict, user: dict) -> dict | None:
 
     Args:
         subscription: Row from the subscriptions table.
-        user: Row from the Users table (userId, email, fullName, domainCount).
+        user: Row from the Users table (identity/profile fields).
 
     Returns:
         dict | None: The invoice row if created/found, None on error.
@@ -154,7 +160,7 @@ def createUpcomingRenewalInvoice(subscription: dict, user: dict) -> dict | None:
         )
         return None
 
-    domainCount = user.get("domainCount") or 0
+    domainCount = subscriptionDomainCount(subscription)
     if domainCount < 1:
         logger.warning(
             f"Subscription {subscriptionId} has 0 domains, skipping invoice creation"
@@ -166,7 +172,7 @@ def createUpcomingRenewalInvoice(subscription: dict, user: dict) -> dict | None:
             billingMode="annual_prepaid",
             billingReason="renewal",
             domainCount=domainCount,
-            customerState=user.get("billingState"),
+            customerState=subscriptionBillingState(subscription),
             periodStart=dtparser.isoparse(nextPeriodStart) if isinstance(nextPeriodStart, str) else nextPeriodStart,
             periodEnd=nextPeriodEndDt,
         )
@@ -245,7 +251,7 @@ def createPaymentArtifact(invoice: dict, user: dict) -> dict | None:
 
     Args:
         invoice: The upcoming/payment_pending invoice row.
-        user: User row (email, fullName, domainCount, phoneNumber).
+        user: User row (email, fullName, phoneNumber).
 
     Returns:
         dict | None: Updated invoice row with artifact IDs, or None on error.
@@ -269,7 +275,7 @@ def createPaymentArtifact(invoice: dict, user: dict) -> dict | None:
     subscriptionId = invoice.get("subscription_id")
     subscription = (
         client.table("subscriptions")
-        .select("id, current_period_end, billing_mode, status")
+        .select(f"id, current_period_end, billing_mode, status, {SUBSCRIPTION_BILLING_FIELDS_SELECT}")
         .eq("id", subscriptionId)
         .limit(1)
         .execute()
@@ -279,7 +285,8 @@ def createPaymentArtifact(invoice: dict, user: dict) -> dict | None:
         logger.error(f"Subscription {subscriptionId} not found for invoice {invoiceId}")
         return None
 
-    domainCount = user.get("domainCount") or 0
+    subscription = subscription[0]
+    domainCount = subscriptionDomainCount(subscription)
     if domainCount < 1:
         logger.warning(f"User has 0 domains for invoice {invoiceId}, skipping artifact")
         return None
@@ -292,7 +299,7 @@ def createPaymentArtifact(invoice: dict, user: dict) -> dict | None:
             billingMode="annual_prepaid",
             billingReason="renewal",
             domainCount=domainCount,
-            customerState=user.get("billingState"),
+            customerState=subscriptionBillingState(subscription),
             periodStart=periodStartDt,
             periodEnd=periodEndDt,
         )
@@ -319,7 +326,7 @@ def createPaymentArtifact(invoice: dict, user: dict) -> dict | None:
     try:
         rzpInvoice = razorpayClient.invoice.create({
             "type": "invoice",
-            "customer_id": user.get("razorpayCustomerId"),
+	            "customer_id": subscriptionCustomerId(subscription),
             "line_items": [
                 {
                     "name": f"Annual Renewal - {domainCount} domain(s)",

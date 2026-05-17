@@ -7,7 +7,7 @@ These models define:
     - Domain enums for billing mode, subscription status, invoice status,
       payment attempt status, and payment collection modes.
     - Read/write schemas for ``subscriptions``, extended ``Invoices``,
-      and ``payment_attempts`` tables introduced in Phase 1.
+      and ``payment_attempts`` billing tables.
 
 All enum values align with the CHECK constraints defined in the SQL
 migration scripts (``docs/annualPlan/sql/``).
@@ -30,7 +30,7 @@ __all__ = [
 ]
 
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime
 from enum import Enum
 
@@ -130,6 +130,16 @@ class SubscriptionRecord(BaseModel):
     status: SubscriptionLifecycleStatus = SubscriptionLifecycleStatus.NONE
     default_currency: str = "INR"
     version: int = 1
+    subscribed_experts: list[str] = Field(default_factory=list)
+    domain_count: int = 0
+    pending_removals: list[str] = Field(default_factory=list)
+    pending_additions: list[dict] = Field(default_factory=list)
+    billing_state: dict = Field(default_factory=dict)
+    razorpay_customer_id: str | None = None
+    razorpay_token_id: str | None = None
+    subscription_anchor_day: int | None = None
+    recurring_failures: int = 0
+    cancellation_reason: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

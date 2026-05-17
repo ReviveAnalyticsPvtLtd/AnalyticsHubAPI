@@ -16,8 +16,8 @@ __all__ = ["recalculateSubscriptionDays"]
 
 from supabase import create_client
 from datetime import datetime, timezone
-from dateutil import parser
 from utils.logger import logger
+from api.services.paymentValidationService import parseUtc
 import requests
 import os
 
@@ -61,8 +61,8 @@ def recalculateSubscriptionDays() -> None:
     Expired subscriptions are immediately set to expired status (no grace period).
     Sends warning emails when exactly 2 days are remaining until current_period_end.
 
-    Annual prepaid subscriptions with billing_mode='annual_prepaid' are skipped
-    entirely — their lifecycle is managed by dedicated schedulers.
+    Annual prepaid subscriptions are managed by dedicated renewal schedulers,
+    except cancelled rows, which are expired here once their paid period ends.
 
     Returns:
         None
@@ -80,14 +80,11 @@ def recalculateSubscriptionDays() -> None:
 
     subscriptionUserIds = {s.get("user_id") for s in subscriptions if s.get("user_id")}
     try:
-        candidateUsers = client.table("Users") \
-            .select("userId, domainCount") \
-            .gt("domainCount", 0) \
+        users = client.table("Users") \
+            .select("userId") \
             .execute().data
-        for user in candidateUsers:
-            userId = user.get("userId")
-            if not userId:
-                continue
+        userIds = {user.get("userId") for user in users if user.get("userId")}
+        for userId in userIds:
             if userId not in subscriptionUserIds:
                 logger.error(
                     f"Data integrity issue: missing subscriptions row for user {userId}"
@@ -96,28 +93,26 @@ def recalculateSubscriptionDays() -> None:
                     client=client,
                     userId=userId,
                     reason="missing_canonical_subscription_row",
-                    metadata={"domainCount": user.get("domainCount")},
+                    metadata={},
                 )
     except Exception as e:
         logger.error(f"Failed subscription integrity precheck in recalculateSubscriptionDays: {e}")
 
     for subscription in subscriptions:
         billingMode = subscription.get("billing_mode", "monthly_recurring")
-        if billingMode == "annual_prepaid":
+        currentStatus = (subscription.get("status") or "").lower()
+        if billingMode == "annual_prepaid" and currentStatus != "cancelled":
             continue
 
         expiryRaw = subscription["current_period_end"]
-        expiry = parser.parse(expiryRaw)
-        if expiry.tzinfo is None:
-            expiry = expiry.replace(tzinfo=timezone.utc)
-        else:
-            expiry = expiry.astimezone(timezone.utc)
+        expiry = parseUtc(expiryRaw)
+        if not expiry:
+            continue
 
         deltaDays = (expiry.date() - now.date()).days
 
         if deltaDays < 0:
-            currentStatus = (subscription.get("status") or "").lower()
-            if currentStatus not in ("expired", "cancelled", "suspended"):
+            if currentStatus not in ("expired", "suspended"):
                 client.table("subscriptions").update({
                     "status": "expired"
                 }).eq("id", subscription["id"]).execute()

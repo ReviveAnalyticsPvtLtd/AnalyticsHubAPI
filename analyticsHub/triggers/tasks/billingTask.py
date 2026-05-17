@@ -20,6 +20,15 @@ __all__ = ["DailyBillingTask"]
 
 from api.services.billingConfig import MAX_SILENT_RECURRING_AMOUNT_PAISE
 from api.services.billingEngine import computeInvoiceSnapshot
+from api.services.subscriptionFieldUtils import (
+    CANONICAL_SUBSCRIPTION_SELECT,
+    subscriptionCustomerId,
+    subscriptionDomainCount,
+    subscriptionExperts,
+    subscriptionPendingRemovals,
+    subscriptionRecurringFailures,
+    subscriptionTokenId,
+)
 from supabase import create_client
 from utils.logger import logger
 from dateutil.relativedelta import relativedelta
@@ -48,7 +57,7 @@ class DailyBillingTask:
     Daily billing engine that queues recurring charges for token-based
     subscriptions approaching renewal.
 
-    Phase 2 hardening includes:
+    Billing hardening includes:
         - RBI silent-charge threshold guard.
         - Token health validation before every charge attempt.
         - Period-based idempotency (DB uniqueness + Redis lock).
@@ -426,7 +435,7 @@ class DailyBillingTask:
 
         dueSubscriptions = (
             self.client.table("subscriptions")
-            .select("id, user_id, current_period_start, current_period_end, status, billing_mode")
+            .select(CANONICAL_SUBSCRIPTION_SELECT)
             .eq("status", "active")
             .eq("billing_mode", "monthly_recurring")
             .gte("current_period_end", now.isoformat())
@@ -453,42 +462,47 @@ class DailyBillingTask:
                 userRows = (
                     self.client.table("Users")
                     .select(
-                        "userId, email, fullName, domainCount, razorpayTokenId, "
-                        "razorpayCustomerId, subscriptionAnchorDay, recurringFailures, "
-                        "pendingRemovals, subscribedExperts, phoneNumber"
+                        "userId, email, fullName, phoneNumber"
                     )
                     .eq("userId", userId)
-                    .not_.is_("razorpayTokenId", "null")
                     .limit(1)
                     .execute()
                     .data
                 )
                 if not userRows:
                     logger.warning(
-                        f"Skipping subscription {userId}: user missing or token unavailable"
+                        f"Skipping subscription {userId}: user missing"
                     )
                     skipped += 1
                     continue
 
                 user = userRows[0]
+                tokenId = subscriptionTokenId(subscription)
+                customerId = subscriptionCustomerId(subscription)
+                if not tokenId or not customerId:
+                    logger.warning(
+                        f"Skipping subscription {subscriptionId}: token/customer unavailable"
+                    )
+                    skipped += 1
+                    continue
 
-                if (user.get("recurringFailures") or 0) >= 3:
+                if subscriptionRecurringFailures(subscription) >= 3:
                     logger.info(
                         f"User {userId} has reached max recurring failures, skipping"
                     )
                     skipped += 1
                     continue
 
-                self._processPendingRemovals(user)
-
-                refreshed = (
-                    self.client.table("Users")
-                    .select("domainCount, subscribedExperts")
-                    .eq("userId", userId)
+                self._processPendingRemovals(subscription)
+                subscription = (
+                    self.client.table("subscriptions")
+                    .select(CANONICAL_SUBSCRIPTION_SELECT)
+                    .eq("id", subscriptionId)
+                    .limit(1)
                     .execute()
                     .data[0]
                 )
-                domainCount = refreshed.get("domainCount") or 0
+                domainCount = subscriptionDomainCount(subscription)
 
                 if domainCount < 1:
                     logger.warning(
@@ -508,9 +522,6 @@ class DailyBillingTask:
                     periodEnd=periodEndDt,
                 )
                 amount = snapshot.total_amount
-                tokenId = user["razorpayTokenId"]
-                customerId = user["razorpayCustomerId"]
-
                 cycleKey = f"{periodStart[:10]}_{periodEnd[:10]}" if periodEnd else now.strftime("%Y-%m")
                 lockKey = f"billing:charge:{userId}:{cycleKey}"
                 acquired = self.redis.set(
@@ -706,8 +717,8 @@ class DailyBillingTask:
                 logger.error(f"Failed to queue recurring charge for user {userId}: {e}")
                 self._handleChargeError(
                     userId, error=e,
-                    tokenId=user.get("razorpayTokenId", "") if "user" in dir() else "",
-                    customerId=user.get("razorpayCustomerId", "") if "user" in dir() else "",
+                    tokenId=subscriptionTokenId(subscription) or "",
+                    customerId=subscriptionCustomerId(subscription) or "",
                 )
                 errors += 1
 
@@ -716,7 +727,7 @@ class DailyBillingTask:
         logger.info(f"Charge execution complete: {queued} queued, {skipped} skipped, {errors} errors")
         return {"queued": queued, "skipped": skipped, "errors": errors}
 
-    def _processPendingRemovals(self, user: dict) -> None:
+    def _processPendingRemovals(self, subscription: dict) -> None:
         """
         Process pending domain removals at cycle boundary.
 
@@ -724,23 +735,22 @@ class DailyBillingTask:
         and clears pendingRemovals.
 
         Args:
-            user (dict): The user record.
+            subscription (dict): The subscription record.
         """
-        pendingRemovals = user.get("pendingRemovals") or []
+        pendingRemovals = subscriptionPendingRemovals(subscription)
         if not pendingRemovals:
             return
-        experts = user.get("subscribedExperts") or ""
-        currentExperts = [e.strip() for e in experts.split(",") if e.strip()]
+        currentExperts = subscriptionExperts(subscription)
         updatedExperts = [e for e in currentExperts if e not in pendingRemovals]
-        self.client.table("Users").update(
+        self.client.table("subscriptions").update(
             {
-                "subscribedExperts": ", ".join(updatedExperts),
-                "domainCount": len(updatedExperts),
-                "pendingRemovals": [],
+                "subscribed_experts": updatedExperts,
+                "domain_count": len(updatedExperts),
+                "pending_removals": [],
             }
-        ).eq("userId", user["userId"]).execute()
+        ).eq("id", subscription["id"]).execute()
         logger.info(
-            f"Processed pending removals for user {user['userId']}: {pendingRemovals}"
+            f"Processed pending removals for user {subscription['user_id']}: {pendingRemovals}"
         )
 
     def _handleChargeError(self, userId: str, error: Exception = None,

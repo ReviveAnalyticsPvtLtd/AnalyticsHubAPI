@@ -1,7 +1,7 @@
 """
 Admin-only billing reconciliation and observability endpoints.
 
-These endpoints expose Phase 7 operational actions for support/engineering:
+These endpoints expose billing operational actions for support/engineering:
 reconciliation reports, webhook replay, expired artifact regeneration,
 investigation notes, and billing metric snapshots.
 """

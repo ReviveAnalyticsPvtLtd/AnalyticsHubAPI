@@ -16,6 +16,30 @@ from dateutil.relativedelta import relativedelta
 from utils.exceptionHandler import CustomException
 from utils.logger import logger
 from api.services.billingEngine import computeInvoiceSnapshot
+from api.services.subscriptionFieldUtils import (
+    CANONICAL_SUBSCRIPTION_SELECT,
+    normalizeDomainList,
+    subscriptionAnchorDay,
+    subscriptionBillingState,
+    subscriptionCustomerId,
+    subscriptionDomainCount,
+    subscriptionExperts,
+    subscriptionPendingAdditions,
+    subscriptionPendingRemovals,
+    subscriptionTokenId,
+    toSubscriptionBillingPayload,
+)
+from api.services.paymentValidationService import (
+    PaymentValidationError,
+    assertInvoiceBelongsToSubscription,
+    blocksNewCheckout,
+    isAccessActive,
+    loadPayableInvoice,
+    parseUtc,
+    utcFromTimestamp,
+    utcNow,
+    validateOrderPaymentAgainstInvoice,
+)
 from api.commons import client
 from jose import jwt
 import requests
@@ -63,11 +87,7 @@ class SubscriptionService:
             dict | None: Subscription row or None.
         """
         response = self.client.table("subscriptions") \
-            .select(
-                "id, user_id, billing_mode, status, current_period_start, "
-                "current_period_end, renewal_due_at, auto_renew_enabled, "
-                "payment_collection_mode"
-            ) \
+            .select(CANONICAL_SUBSCRIPTION_SELECT) \
             .eq("user_id", userId) \
             .order("updated_at", desc=True) \
             .limit(1) \
@@ -88,6 +108,16 @@ class SubscriptionService:
         renewalDueAt: str | None,
         autoRenewEnabled: bool,
         paymentCollectionMode: str,
+        subscribedExperts=None,
+        domainCount=None,
+        pendingRemovals=None,
+        pendingAdditions=None,
+        billingState=None,
+        razorpayCustomerId=None,
+        razorpayTokenId=None,
+        subscriptionAnchorDay=None,
+        recurringFailures=None,
+        cancellationReason=None,
     ) -> None:
         """
         Upsert canonical subscription row for a user.
@@ -104,6 +134,18 @@ class SubscriptionService:
             "payment_collection_mode": paymentCollectionMode,
             "default_currency": "INR",
         }
+        payload.update(toSubscriptionBillingPayload(
+            subscribedExperts=subscribedExperts,
+            domainCount=domainCount,
+            pendingRemovals=pendingRemovals,
+            pendingAdditions=pendingAdditions,
+            billingState=billingState,
+            razorpayCustomerId=razorpayCustomerId,
+            razorpayTokenId=razorpayTokenId,
+            subscriptionAnchorDay=subscriptionAnchorDay,
+            recurringFailures=recurringFailures,
+            cancellationReason=cancellationReason,
+        ))
         if existing:
             self.client.table("subscriptions").update(payload).eq("id", existing["id"]).execute()
         else:
@@ -224,6 +266,18 @@ class SubscriptionService:
         """
         return (status or "").lower() in {"active", "renewal_upcoming", "payment_pending"}
 
+    @staticmethod
+    def _isAccessActive(subscription: dict | None, now: datetime.datetime | None = None) -> bool:
+        return isAccessActive(subscription, now)
+
+    @staticmethod
+    def _blocksNewCheckout(subscription: dict | None, now: datetime.datetime | None = None) -> bool:
+        return blocksNewCheckout(subscription, now)
+
+    @staticmethod
+    def _paymentValidationException(error: PaymentValidationError) -> CustomException:
+        return CustomException(error, statusCode=400, uiMessage=str(error))
+
     def _auditLog(self, userId: str, eventType: str, **kwargs) -> None:
         """
         Insert a row into the SubscriptionLog table.
@@ -271,8 +325,8 @@ class SubscriptionService:
         Returns:
             str: The Razorpay Customer ID.
         """
-        record = self.client.table("Users").select("razorpayCustomerId").eq("userId", userId).execute()
-        existingCustomerId = record.data[0].get("razorpayCustomerId") if record.data else None
+        subscription = self._getCanonicalSubscription(userId=userId, required=True)
+        existingCustomerId = subscriptionCustomerId(subscription)
         if existingCustomerId:
             return existingCustomerId
         customer = self.razorpayClient.customer.create({
@@ -282,9 +336,9 @@ class SubscriptionService:
             "fail_existing": 0
         })
         customerId = customer["id"]
-        self.client.table("Users").update({
-            "razorpayCustomerId": customerId
-        }).eq("userId", userId).execute()
+        self.client.table("subscriptions").update({
+            "razorpay_customer_id": customerId
+        }).eq("id", subscription["id"]).execute()
         logger.info(f"Razorpay customer created for user {userId}: {customerId}")
         return customerId
 
@@ -445,7 +499,7 @@ class SubscriptionService:
 
     _STALE_ORDER_THRESHOLD_MINUTES = 30
 
-    def _reconcilePendingAdditions(self, user: dict) -> dict:
+    def _reconcilePendingAdditions(self, subscription: dict) -> dict:
         """
         Reconcile awaiting_payment entries against Razorpay Order status.
 
@@ -456,12 +510,13 @@ class SubscriptionService:
         missed activations.
 
         Args:
-            user (dict): The user record with pendingAdditions.
+            subscription (dict): Subscription row with pending_additions.
 
         Returns:
-            dict: The (possibly refreshed) user record.
+            dict: The (possibly refreshed) subscription row.
         """
-        pendingAdditions = user.get("pendingAdditions") or []
+        pendingAdditions = subscriptionPendingAdditions(subscription)
+        userId = subscription.get("user_id")
         changed = False
         for item in pendingAdditions:
             if item.get("state") != "awaiting_payment":
@@ -477,7 +532,7 @@ class SubscriptionService:
             if order["status"] == "paid":
                 notes = order.get("notes", {})
                 self._activatePaidDomains(
-                    userId=user["userId"],
+                    userId=userId,
                     domains=[d.strip() for d in notes.get("domains", "").split(",") if d.strip()],
                     targetQuantity=int(notes.get("targetQuantity", 0)),
                     referenceId=orderId,
@@ -491,24 +546,24 @@ class SubscriptionService:
                 requestedAt = item.get("requestedAt")
                 if requestedAt:
                     try:
-                        age = datetime.datetime.utcnow() - parser.isoparse(requestedAt)
+                        requestedAtUtc = parseUtc(requestedAt)
+                        age = utcNow() - requestedAtUtc if requestedAtUtc else datetime.timedelta.max
                         if age > datetime.timedelta(minutes=self._STALE_ORDER_THRESHOLD_MINUTES):
                             item["state"] = "expired"
                             changed = True
                             logger.info(
                                 f"Expired stale awaiting_payment order {orderId} "
-                                f"for user {user['userId']} (age: {age})"
+                                f"for user {userId} (age: {age})"
                             )
                     except (ValueError, TypeError):
                         pass
         if changed:
             cleanedPending = [item for item in pendingAdditions if item.get("state") not in ("expired", "activated")]
-            self.client.table("Users").update({
-                "pendingAdditions": cleanedPending
-            }).eq("userId", user["userId"]).execute()
-            user = self.client.table("Users").select("*") \
-                .eq("userId", user["userId"]).execute().data[0]
-        return user
+            self.client.table("subscriptions").update({
+                "pending_additions": cleanedPending
+            }).eq("id", subscription["id"]).execute()
+            subscription = self._getCanonicalSubscription(userId=userId, required=True)
+        return subscription
 
     def _activatePaidDomains(self, userId: str, domains: list[str], targetQuantity: int, referenceId: str) -> None:
         """
@@ -524,15 +579,13 @@ class SubscriptionService:
             targetQuantity (int): The expected total domain count after activation.
             referenceId (str): The Razorpay Order ID (or legacy Payment Link ID) for idempotency.
         """
-        user = self.client.table("Users") \
-            .select("userId, subscribedExperts, domainCount, pendingAdditions") \
-            .eq("userId", userId).execute().data[0]
-        pendingAdditions = user.get("pendingAdditions") or []
+        subscription = self._getCanonicalSubscription(userId=userId, required=True)
+        pendingAdditions = subscriptionPendingAdditions(subscription)
         matchKey = "orderId" if any(item.get("orderId") == referenceId for item in pendingAdditions) else "paymentLinkId"
         matchEntries = [item for item in pendingAdditions if item.get(matchKey) == referenceId]
         if matchEntries and all(item.get("state") == "activated" for item in matchEntries):
             return
-        currentExperts = [e.strip() for e in (user.get("subscribedExperts") or "").split(",") if e.strip()]
+        currentExperts = subscriptionExperts(subscription)
         activatedDomains = []
         for domain in domains:
             if domain not in currentExperts:
@@ -542,11 +595,11 @@ class SubscriptionService:
             if item.get(matchKey) == referenceId:
                 item["state"] = "activated"
         updatedDomainCount = len(currentExperts)
-        self.client.table("Users").update({
-            "subscribedExperts": ", ".join(currentExperts),
-            "domainCount": updatedDomainCount,
-            "pendingAdditions": pendingAdditions,
-        }).eq("userId", userId).execute()
+        self.client.table("subscriptions").update({
+            "subscribed_experts": currentExperts,
+            "domain_count": updatedDomainCount,
+            "pending_additions": pendingAdditions,
+        }).eq("id", subscription["id"]).execute()
         for domain in activatedDomains:
             self._auditLog(
                 userId, "domain.add_activated",
@@ -605,13 +658,7 @@ class SubscriptionService:
             currentTime = datetime.datetime.now(datetime.timezone.utc)
             trialDurationDays = 12
             trialExpiry = currentTime + datetime.timedelta(days=trialDurationDays)
-            experts = "banking, manufacturing, supplychain, telecom"
-            self.client.table("Users").update({
-                "subscribedExperts": experts,
-                "domainCount": 4,
-                "pendingRemovals": [],
-                "pendingAdditions": [],
-            }).eq("userId", userId).execute()
+            experts = ["banking", "manufacturing", "supplychain", "telecom"]
             self._upsertCanonicalSubscription(
                 userId=userId,
                 billingMode="none",
@@ -621,6 +668,11 @@ class SubscriptionService:
                 renewalDueAt=trialExpiry.isoformat(),
                 autoRenewEnabled=False,
                 paymentCollectionMode="authenticated_checkout",
+                subscribedExperts=experts,
+                domainCount=4,
+                pendingRemovals=[],
+                pendingAdditions=[],
+                recurringFailures=0,
             )
             records = self.client.table("Users").select("fullName").eq("userId", userId).limit(1).execute()
             name = records.data[0]["fullName"] if records.data else userEmail
@@ -634,6 +686,8 @@ class SubscriptionService:
                 "subscriptionDaysLeft": trialDurationDays,
                 "subscribedExperts": experts,
             }
+        except CustomException:
+            raise
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
@@ -682,10 +736,14 @@ class SubscriptionService:
             )
             quantity = len(normalizedDomains)
             subscription = self._getCanonicalSubscription(userId=userId, required=False)
-            if subscription and self._isSubscriptionActive(subscription.get("status")):
-                raise Exception(
-                    "Active subscription already exists. "
-                    "Use the annual renewal endpoint for renewals."
+            if self._blocksNewCheckout(subscription, utcNow()):
+                raise CustomException(
+                    ValueError("An active paid period already exists for this user"),
+                    statusCode=409,
+                    uiMessage=(
+                        "You already have subscription access until the current "
+                        "billing period ends."
+                    )
                 )
             customerState = None
             snapshot = computeInvoiceSnapshot(
@@ -707,7 +765,7 @@ class SubscriptionService:
                     "billingMode": normalizedBillingMode,
                 },
             )
-            farFutureEpoch = int((datetime.datetime.utcnow() + datetime.timedelta(days=365 * 10)).timestamp())
+            farFutureEpoch = int((utcNow() + datetime.timedelta(days=365 * 10)).timestamp())
             orderPayload = {
                 "amount": snapshot.total_amount,
                 "currency": "INR",
@@ -766,6 +824,8 @@ class SubscriptionService:
                     "currency": snapshot.currency,
                 },
             }
+        except CustomException:
+            raise
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
@@ -827,11 +887,30 @@ class SubscriptionService:
                     f"(type={orderType}). Use the dedicated renewal verify endpoint."
                 )
             invoiceId = orderNotes.get("invoiceId")
+            if not invoiceId:
+                raise PaymentValidationError("Initial subscription order is missing invoiceId")
+            invoice = loadPayableInvoice(
+                self.client,
+                invoiceId=invoiceId,
+                userId=userId,
+                expectedBillingReason="initial_purchase",
+            )
             payment = self.razorpayClient.payment.fetch(paymentId)
-            userRecord = self.client.table("Users").select("razorpayCustomerId").eq("userId", userId).execute()
-            customerId = userRecord.data[0].get("razorpayCustomerId") if userRecord.data else None
+            subscription = self._getCanonicalSubscription(userId=userId, required=True)
+            customerId = subscriptionCustomerId(subscription)
             if not customerId:
                 raise Exception("No Razorpay customer found — cannot validate token")
+            assertInvoiceBelongsToSubscription(invoice, subscription)
+            validateOrderPaymentAgainstInvoice(
+                order=order,
+                payment=payment,
+                invoice=invoice,
+                expectedType="initial_subscription",
+                expectedUserId=userId,
+                expectedCustomerId=customerId,
+                requestOrderId=orderId,
+                requireCaptured=True,
+            )
             tokenId = None
             recurringStatus = ""
             if billingMode == "monthly_recurring":
@@ -856,19 +935,10 @@ class SubscriptionService:
                     f"Token {tokenId} validated for user {userId}: "
                     f"recurring={isRecurring}, recurring_details.status={recurringStatus}"
                 )
-            currentTime = datetime.datetime.utcnow()
+            currentTime = utcNow()
             if billingMode == "monthly_recurring":
                 anchorDay = currentTime.day
                 expiry = currentTime + relativedelta(months=1)
-                self.client.table("Users").update({
-                    "razorpayTokenId": tokenId,
-                    "subscriptionAnchorDay": anchorDay,
-                    "subscribedExperts": ", ".join(normalizedDomains),
-                    "domainCount": len(normalizedDomains),
-                    "recurringFailures": 0,
-                    "pendingRemovals": [],
-                    "pendingAdditions": [],
-                }).eq("userId", userId).execute()
                 self._upsertCanonicalSubscription(
                     userId=userId,
                     billingMode="monthly_recurring",
@@ -878,16 +948,17 @@ class SubscriptionService:
                     renewalDueAt=expiry.isoformat(),
                     autoRenewEnabled=True,
                     paymentCollectionMode="silent_token",
+                    subscribedExperts=normalizedDomains,
+                    domainCount=len(normalizedDomains),
+                    razorpayCustomerId=customerId,
+                    razorpayTokenId=tokenId,
+                    subscriptionAnchorDay=anchorDay,
+                    recurringFailures=0,
+                    pendingRemovals=[],
+                    pendingAdditions=[],
                 )
             else:
                 expiry = currentTime + relativedelta(years=1)
-                self.client.table("Users").update({
-                    "subscribedExperts": ", ".join(normalizedDomains),
-                    "domainCount": len(normalizedDomains),
-                    "recurringFailures": 0,
-                    "pendingRemovals": [],
-                    "pendingAdditions": [],
-                }).eq("userId", userId).execute()
                 self._upsertCanonicalSubscription(
                     userId=userId,
                     billingMode="annual_prepaid",
@@ -897,13 +968,24 @@ class SubscriptionService:
                     renewalDueAt=expiry.isoformat(),
                     autoRenewEnabled=True,
                     paymentCollectionMode="authenticated_checkout",
+                    subscribedExperts=normalizedDomains,
+                    domainCount=len(normalizedDomains),
+                    razorpayCustomerId=customerId,
+                    recurringFailures=0,
+                    pendingRemovals=[],
+                    pendingAdditions=[],
                 )
+                annualSubscription = self._getCanonicalSubscription(userId=userId, required=True)
+                self.client.table("subscriptions").update({
+                    "razorpay_token_id": None,
+                    "subscription_anchor_day": None,
+                }).eq("id", annualSubscription["id"]).execute()
             if invoiceId:
                 paidAt = payment.get("captured_at") or payment.get("created_at")
                 self._markInvoicePaid(
                     invoiceId=invoiceId,
                     paymentId=paymentId,
-                    paidAt=str(datetime.datetime.utcfromtimestamp(paidAt)) if paidAt else None,
+                    paidAt=str(utcFromTimestamp(paidAt)) if paidAt else None,
                 )
             self._auditLog(
                 userId, "subscription.verified",
@@ -920,6 +1002,12 @@ class SubscriptionService:
                     "anchorDay": currentTime.day,
                 }
             )
+        except PaymentValidationError as e:
+            exception = self._paymentValidationException(e)
+            logger.error(exception)
+            raise exception
+        except CustomException:
+            raise
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
@@ -950,19 +1038,17 @@ class SubscriptionService:
             userId = decodedToken.get("userId")
             tokenEmail = decodedToken.get("email")
             user = self.client.table("Users") \
-                .select("userId, subscribedExperts, domainCount, razorpayTokenId, "
-                        "pendingAdditions, pendingRemovals, fullName, razorpayCustomerId") \
+                .select("userId") \
                 .eq("userId", userId) \
                 .execute().data
             if not user:
                 raise Exception("User not found")
-            user = user[0]
             subscription = self._getCanonicalSubscription(userId=userId, required=True)
-            user = self._reconcilePendingAdditions(user)
+            subscription = self._reconcilePendingAdditions(subscription)
             if not self._isSubscriptionActive(subscription.get("status")):
                 raise Exception("Subscription must be active to add domains")
-            currentExperts = [e.strip() for e in (user.get("subscribedExperts") or "").split(",") if e.strip()]
-            pendingAdditions = user.get("pendingAdditions") or []
+            currentExperts = subscriptionExperts(subscription)
+            pendingAdditions = subscriptionPendingAdditions(subscription)
             activePending = [item["domain"] for item in pendingAdditions
                              if item.get("state") not in ("failed", "activated")]
             for d in normalizedDomains:
@@ -994,12 +1080,9 @@ class SubscriptionService:
                                 referenceId=staleOrderId,
                             )
                             # Refresh state after activation
-                            user = self.client.table("Users") \
-                                .select("userId, subscribedExperts, domainCount, razorpayTokenId, "
-                                        "pendingAdditions, pendingRemovals, fullName, razorpayCustomerId") \
-                                .eq("userId", userId).execute().data[0]
-                            currentExperts = [e.strip() for e in (user.get("subscribedExperts") or "").split(",") if e.strip()]
-                            pendingAdditions = user.get("pendingAdditions") or []
+                            subscription = self._getCanonicalSubscription(userId=userId, required=True)
+                            currentExperts = subscriptionExperts(subscription)
+                            pendingAdditions = subscriptionPendingAdditions(subscription)
                             if d in currentExperts:
                                 # Already activated — skip this domain
                                 continue
@@ -1023,7 +1106,7 @@ class SubscriptionService:
                             )
                     else:
                         raise Exception(f"Domain '{d}' already has a pending addition request")
-            domainCount = user["domainCount"] or len(currentExperts)
+            domainCount = subscriptionDomainCount(subscription) or len(currentExperts)
             totalAfterAdd = domainCount + len(activePending) + len(normalizedDomains)
             if totalAfterAdd > 4:
                 raise Exception(f"Maximum of 4 domains. Current: {domainCount}, "
@@ -1045,8 +1128,8 @@ class SubscriptionService:
             now = datetime.datetime.now(datetime.timezone.utc)
             billingMode = self._normalizeBillingMode(subscription.get("billing_mode") or "monthly_recurring")
             identity = self._resolveCheckoutIdentity(userId, tokenEmail)
-            customerId = user.get("razorpayCustomerId")
-            if billingMode == "monthly_recurring" and not user.get("razorpayTokenId"):
+            customerId = subscriptionCustomerId(subscription)
+            if billingMode == "monthly_recurring" and not subscriptionTokenId(subscription):
                 raise Exception("No active recurring token found for monthly add-domain billing")
             if not customerId:
                 customerId = self._getOrCreateRazorpayCustomer(
@@ -1109,9 +1192,9 @@ class SubscriptionService:
                     "proratedAmount": perDomainProrated,
                     "requestedAt": str(now),
                 })
-            self.client.table("Users").update({
-                "pendingAdditions": pendingAdditions
-            }).eq("userId", userId).execute()
+            self.client.table("subscriptions").update({
+                "pending_additions": pendingAdditions
+            }).eq("id", subscription["id"]).execute()
             self._auditLog(
                 userId, "domain.add_requested",
                 amount=totalProrated,
@@ -1207,13 +1290,11 @@ class SubscriptionService:
                     f"token.userId={userId}"
                 )
             invoiceId = orderNotes.get("invoiceId")
-            user = self.client.table("Users") \
-                .select("userId, domainCount, pendingAdditions, razorpayCustomerId") \
-                .eq("userId", userId).execute().data
+            user = self.client.table("Users").select("userId").eq("userId", userId).execute().data
             if not user:
                 raise Exception("User not found")
-            user = user[0]
-            pendingAdditions = user.get("pendingAdditions") or []
+            subscription = self._getCanonicalSubscription(userId=userId, required=True)
+            pendingAdditions = subscriptionPendingAdditions(subscription)
             pendingDomains = [
                 item.get("domain")
                 for item in pendingAdditions
@@ -1235,12 +1316,12 @@ class SubscriptionService:
                     f"pending domains={pendingDomains}"
                 )
 
-            expectedCustomerId = user.get("razorpayCustomerId")
+            expectedCustomerId = subscriptionCustomerId(subscription)
             orderCustomerId = order.get("customer_id")
             if expectedCustomerId and orderCustomerId and orderCustomerId != expectedCustomerId:
                 raise Exception(
                     f"Order/customer mismatch: order.customer_id={orderCustomerId}, "
-                    f"user.customer_id={expectedCustomerId}"
+                        f"subscription.customer_id={expectedCustomerId}"
                 )
 
             invoice = None
@@ -1288,7 +1369,7 @@ class SubscriptionService:
             if expectedCustomerId and paymentCustomerId and paymentCustomerId != expectedCustomerId:
                 raise Exception(
                     f"Payment/customer mismatch: payment.customer_id={paymentCustomerId}, "
-                    f"user.customer_id={expectedCustomerId}"
+                        f"subscription.customer_id={expectedCustomerId}"
                 )
             if invoice:
                 expectedAmount = invoice.get("total_amount") or invoice.get("amount")
@@ -1304,7 +1385,7 @@ class SubscriptionService:
                         f"Currency mismatch: expected={expectedCurrency}, actual={actualCurrency}"
                     )
 
-            currentCount = user.get("domainCount") or 0
+            currentCount = subscriptionDomainCount(subscription)
             targetQuantity = int(orderNotes.get("targetQuantity") or (currentCount + len(serverDomains)))
             self._activatePaidDomains(
                 userId=userId,
@@ -1317,7 +1398,7 @@ class SubscriptionService:
                 self._markInvoicePaid(
                     invoiceId=invoiceId,
                     paymentId=paymentId,
-                    paidAt=str(datetime.datetime.utcfromtimestamp(paidAt)) if paidAt else None,
+                    paidAt=str(utcFromTimestamp(paidAt)) if paidAt else None,
                 )
             self._auditLog(
                 userId, "domain.upgrade_verified",
@@ -1358,17 +1439,17 @@ class SubscriptionService:
             )
             userId = decodedToken.get("userId")
             userRecord = self.client.table("Users") \
-                .select("userId, subscribedExperts, domainCount, pendingRemovals, pendingAdditions") \
+                .select("userId") \
                 .eq("userId", userId) \
                 .execute()
             if not userRecord.data:
                 raise Exception("User not found")
             subscription = self._getCanonicalSubscription(userId=userId, required=True)
-            user = self._reconcilePendingAdditions(userRecord.data[0])
+            subscription = self._reconcilePendingAdditions(subscription)
             if not self._isSubscriptionActive(subscription.get("status")):
                 raise Exception("Subscription must be active to remove a domain")
-            currentExperts = [e.strip() for e in user["subscribedExperts"].split(",") if e.strip()]
-            pendingRemovals = user.get("pendingRemovals") or []
+            currentExperts = subscriptionExperts(subscription)
+            pendingRemovals = subscriptionPendingRemovals(subscription)
             for domain in normalizedDomains:
                 if domain not in currentExperts:
                     raise Exception(f"Domain '{domain}' is not in your active domains")
@@ -1382,10 +1463,10 @@ class SubscriptionService:
             if len(activeDomains) - len(normalizedDomains) < 1:
                 raise Exception("Cannot remove all domains. At least one must remain active. Use cancel subscription instead.")
             pendingRemovals.extend(normalizedDomains)
-            self.client.table("Users").update({
-                "pendingRemovals": pendingRemovals
-            }).eq("userId", userId).execute()
-            domainCount = user["domainCount"] or len(currentExperts)
+            self.client.table("subscriptions").update({
+                "pending_removals": pendingRemovals
+            }).eq("id", subscription["id"]).execute()
+            domainCount = subscriptionDomainCount(subscription) or len(currentExperts)
             for domain in normalizedDomains:
                 self._auditLog(
                     userId, "domain.remove_scheduled",
@@ -1435,13 +1516,13 @@ class SubscriptionService:
             )
             userId = decodedToken.get("userId")
             userRecord = self.client.table("Users") \
-                .select("pendingAdditions, domainCount") \
+                .select("userId") \
                 .eq("userId", userId) \
                 .execute()
             if not userRecord.data:
                 raise Exception("User not found")
-            user = userRecord.data[0]
-            pendingAdditions = user.get("pendingAdditions") or []
+            subscription = self._getCanonicalSubscription(userId=userId, required=True)
+            pendingAdditions = subscriptionPendingAdditions(subscription)
             targetItem = None
             targetIndex = None
             for i, item in enumerate(pendingAdditions):
@@ -1452,15 +1533,15 @@ class SubscriptionService:
             if targetItem is None:
                 raise Exception(f"No cancellable pending addition found for domain '{normalizedDomain}'")
             pendingAdditions.pop(targetIndex)
-            self.client.table("Users").update({
-                "pendingAdditions": pendingAdditions
-            }).eq("userId", userId).execute()
+            self.client.table("subscriptions").update({
+                "pending_additions": pendingAdditions
+            }).eq("id", subscription["id"]).execute()
             self._auditLog(
                 userId, "domain.add_cancelled",
                 status="CANCELLED",
                 metadata={
                     "domain": normalizedDomain,
-                    "currentDomainCount": user["domainCount"] or 0,
+                    "currentDomainCount": subscriptionDomainCount(subscription),
                     "effectiveAt": "immediate",
                 }
             )
@@ -1503,10 +1584,8 @@ class SubscriptionService:
             self.client.table("subscriptions").update({
                 "status": "cancelled",
                 "auto_renew_enabled": False,
+                "cancellation_reason": reason,
             }).eq("id", subscription["id"]).execute()
-            self.client.table("Users").update({
-                "cancellationReason": reason,
-            }).eq("userId", userId).execute()
             self._auditLog(
                 userId, "subscription.cancellation_scheduled",
                 status="CANCELLED",
@@ -1544,13 +1623,11 @@ class SubscriptionService:
             userId = decodedToken.get("userId")
             if not userId:
                 raise Exception("Invalid token payload")
-            userRecord = self.client.table("Users") \
-                .select("razorpayCustomerId") \
-                .eq("userId", userId) \
-                .execute()
+            userRecord = self.client.table("Users").select("userId").eq("userId", userId).execute()
             if not userRecord.data:
                 raise Exception("User not found")
-            customerId = userRecord.data[0].get("razorpayCustomerId")
+            subscription = self._getCanonicalSubscription(userId=userId, required=True)
+            customerId = subscriptionCustomerId(subscription)
             if not customerId:
                 raise Exception("No Razorpay customer found for this user")
             payment = self.razorpayClient.payment.fetch(paymentId)
@@ -1596,9 +1673,9 @@ class SubscriptionService:
                 "amount": invoiceData.get("amount", 0),
                 "currency": invoiceData.get("currency", "INR"),
                 "status": invoiceData.get("status", "paid").upper(),
-                "billingStart": str(datetime.datetime.utcfromtimestamp(billingStart)) if billingStart else None,
-                "billingEnd": str(datetime.datetime.utcfromtimestamp(billingEnd)) if billingEnd else None,
-                "paidAt": str(datetime.datetime.utcfromtimestamp(paidAt)) if paidAt else None,
+                "billingStart": str(utcFromTimestamp(billingStart)) if billingStart else None,
+                "billingEnd": str(utcFromTimestamp(billingEnd)) if billingEnd else None,
+                "paidAt": str(utcFromTimestamp(paidAt)) if paidAt else None,
                 "shortUrl": invoiceData.get("short_url"),
             }
             self.client.table("Invoices").upsert(
@@ -1664,6 +1741,7 @@ class SubscriptionService:
             subscription = self._getCanonicalSubscription(userId=userId, required=True)
             if subscription.get("billing_mode") != "annual_prepaid":
                 raise Exception("Annual renewal checkout requires an annual_prepaid subscription")
+            assertInvoiceBelongsToSubscription(invoice, subscription)
 
             existingOrderId = invoice.get("razorpay_order_id")
             if existingOrderId:
@@ -1753,6 +1831,12 @@ class SubscriptionService:
                     "totalAmount": totalAmount,
                 },
             }
+        except PaymentValidationError as e:
+            exception = self._paymentValidationException(e)
+            logger.error(exception)
+            raise exception
+        except CustomException:
+            raise
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
@@ -1803,7 +1887,7 @@ class SubscriptionService:
 
             invoice = self.client.table("Invoices") \
                 .select(
-                    "id, userId, total_amount, amount, currency, status, "
+                    "id, userId, subscription_id, total_amount, amount, currency, status, "
                     "razorpay_order_id, billing_reason"
                 ) \
                 .eq("id", invoiceId) \
@@ -1839,13 +1923,15 @@ class SubscriptionService:
                 )
 
             userRecord = self.client.table("Users") \
-                .select("userId, razorpayCustomerId") \
+                .select("userId") \
                 .eq("userId", userId) \
                 .limit(1) \
                 .execute().data
             if not userRecord:
                 raise Exception("Authenticated user not found during verification")
-            expectedCustomerId = userRecord[0].get("razorpayCustomerId")
+            subscription = self._getCanonicalSubscription(userId=userId, required=True)
+            assertInvoiceBelongsToSubscription(invoice, subscription)
+            expectedCustomerId = subscriptionCustomerId(subscription)
 
             order = self.razorpayClient.order.fetch(orderId)
             orderNotesRaw = order.get("notes", {}) or {}
@@ -1870,7 +1956,7 @@ class SubscriptionService:
             if expectedCustomerId and orderCustomerId and orderCustomerId != expectedCustomerId:
                 raise Exception(
                     f"Order/customer mismatch: order.customer_id={orderCustomerId}, "
-                    f"user.customer_id={expectedCustomerId}"
+                        f"subscription.customer_id={expectedCustomerId}"
                 )
 
             payment = self.razorpayClient.payment.fetch(paymentId)
@@ -1884,7 +1970,7 @@ class SubscriptionService:
             if expectedCustomerId and paymentCustomerId and paymentCustomerId != expectedCustomerId:
                 raise Exception(
                     f"Payment/customer mismatch: payment.customer_id={paymentCustomerId}, "
-                    f"user.customer_id={expectedCustomerId}"
+                        f"subscription.customer_id={expectedCustomerId}"
                 )
             paymentNotesRaw = payment.get("notes", {}) or {}
             paymentNotes = paymentNotesRaw if isinstance(paymentNotesRaw, dict) else {}
@@ -1918,7 +2004,7 @@ class SubscriptionService:
                 "metadata_json": {
                     "flow": "annual_renewal_dashboard_verify",
                     "verified": True,
-                    "verifiedAt": datetime.datetime.utcnow().isoformat(),
+                    "verifiedAt": utcNow().isoformat(),
                     "awaitingWebhookFinalization": True,
                 },
             }).eq("id", invoiceId).execute()
@@ -1938,6 +2024,12 @@ class SubscriptionService:
                 f"Annual renewal verified for user {userId}, "
                 f"invoice {invoiceId}, awaiting webhook finalization"
             )
+        except PaymentValidationError as e:
+            exception = self._paymentValidationException(e)
+            logger.error(exception)
+            raise exception
+        except CustomException:
+            raise
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)

@@ -15,6 +15,11 @@ from analyticsHub.components.domainKpiMapper import DomainKpiMapper
 from utils.llmOutputParser import parseModelJsonOutput
 from api.commons import updateProjectModifiedAt
 from utils.exceptionHandler import CustomException
+from api.services.subscriptionFieldUtils import (
+    CANONICAL_SUBSCRIPTION_SELECT,
+    subscriptionExperts,
+    toApiPlanFields,
+)
 from concurrent.futures import ProcessPoolExecutor
 from utils.logger import logger
 from urllib.request import urlopen
@@ -223,7 +228,8 @@ class ManagementService:
             )
             data = pd.DataFrame(self.client.table("Workspaces").select("*").execute().data)
             data = data[data["ownerId"] == decodedToken["userId"]]
-            subscribedExperts = [x.strip() for x in self.client.table("Users").select("subscribedExperts").eq("userId", decodedToken["userId"]).execute().data[0]["subscribedExperts"].split(",")]
+            subscription = self._getCanonicalSubscription(decodedToken["userId"])
+            subscribedExperts = subscriptionExperts(subscription)
             response = {
                 "workspaces": data.to_dict(orient = "records"),
                 "aiExperts": {
@@ -916,10 +922,7 @@ class ManagementService:
 
     def _getCanonicalSubscription(self, userId: str) -> dict:
         subscription = self.client.table("subscriptions") \
-            .select(
-                "billing_mode, status, current_period_start, current_period_end, "
-                "renewal_due_at, payment_collection_mode"
-            ) \
+            .select(CANONICAL_SUBSCRIPTION_SELECT) \
             .eq("user_id", userId) \
             .order("updated_at", desc=True) \
             .limit(1) \
@@ -963,10 +966,7 @@ class ManagementService:
                     "profileImage",
                     "companyName",
                     "role",
-                    "profileBio",
-                    "subscribedExperts",
-                    "domainCount",
-                    "pendingRemovals"
+	                    "profileBio"
                 ) \
                 .eq("userId", userId) \
                 .execute().data
@@ -978,11 +978,7 @@ class ManagementService:
                 )
             record = userRecord[0]
             subscription = self._getCanonicalSubscription(userId)
-            subscribedExperts = record.get("subscribedExperts")
-            if subscribedExperts:
-                aiExpertsList = [x.strip() for x in subscribedExperts.split(",") if x.strip()]
-            else:
-                aiExpertsList = []
+            planFields = toApiPlanFields(subscription)
             subscriptionDaysLeft = 0
             expiryStr = subscription.get("current_period_end")
             if expiryStr == "None":
@@ -1014,9 +1010,9 @@ class ManagementService:
                     "status": currentStatus,
                     "planExpire": expiryStr,
                     "nextBilling": nextBilling,
-                    "subscribedExperts": aiExpertsList,
-                    "domainCount": record.get("domainCount") or len(aiExpertsList),
-                    "pendingRemovals": record.get("pendingRemovals") or [],
+	                    "subscribedExperts": planFields["subscribedExperts"],
+	                    "domainCount": planFields["domainCount"],
+	                    "pendingRemovals": planFields["pendingRemovals"],
                     "subscriptionDaysLeft": subscriptionDaysLeft,
                     "billingMode": subscription.get("billing_mode"),
                     "paymentCollectionMode": subscription.get("payment_collection_mode"),
@@ -1111,20 +1107,13 @@ class ManagementService:
                     "profileImage",
                     "companyName",
                     "role",
-                    "profileBio",
-                    "subscribedExperts",
-                    "domainCount",
-                    "pendingRemovals"
+	                    "profileBio"
                 ) \
                 .eq("userId", userId) \
                 .execute().data
             record = updatedUserRecord[0]
             subscription = self._getCanonicalSubscription(userId)
-            subscribedExperts = record.get("subscribedExperts")
-            if subscribedExperts:
-                aiExpertsList = [x.strip() for x in subscribedExperts.split(",") if x.strip()]
-            else:
-                aiExpertsList = []
+            planFields = toApiPlanFields(subscription)
             subscriptionDaysLeft = 0
             expiryStr = subscription.get("current_period_end")
             if expiryStr:
@@ -1154,9 +1143,9 @@ class ManagementService:
                     "status": currentStatus,
                     "planExpire": expiryStr,
                     "nextBilling": nextBilling,
-                    "subscribedExperts": aiExpertsList,
-                    "domainCount": record.get("domainCount") or len(aiExpertsList),
-                    "pendingRemovals": record.get("pendingRemovals") or [],
+	                    "subscribedExperts": planFields["subscribedExperts"],
+	                    "domainCount": planFields["domainCount"],
+	                    "pendingRemovals": planFields["pendingRemovals"],
                     "subscriptionDaysLeft": subscriptionDaysLeft,
                     "billingMode": subscription.get("billing_mode"),
                     "paymentCollectionMode": subscription.get("payment_collection_mode"),

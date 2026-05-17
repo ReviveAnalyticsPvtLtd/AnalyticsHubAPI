@@ -17,6 +17,13 @@ from utils.exceptionHandler import CustomException
 from utils.webhookExceptions import RetryableWebhookError
 from utils.logger import logger
 from api.commons import client
+from api.services.subscriptionFieldUtils import (
+    CANONICAL_SUBSCRIPTION_SELECT,
+    subscriptionCustomerId,
+    subscriptionRecurringFailures,
+    subscriptionTokenId,
+)
+from api.services.paymentValidationService import utcFromTimestamp, utcNow
 import datetime
 from dateutil import parser
 import hashlib
@@ -137,7 +144,7 @@ class WebhookService:
         Returns True only for the worker that owns processing rights.
         Returns False for duplicates already completed or being processed.
         """
-        nowTime = datetime.datetime.utcnow()
+        nowTime = utcNow()
         nowIso = str(nowTime)
         try:
             self.client.table("WebhookEvents").insert({
@@ -214,7 +221,7 @@ class WebhookService:
         """
         self.client.table("WebhookEvents").update({
             "status": "completed",
-            "completedAt": str(datetime.datetime.utcnow()),
+            "completedAt": str(utcNow()),
             "errorMessage": None,
         }).eq("razorpayEventId", eventId).execute()
 
@@ -225,7 +232,7 @@ class WebhookService:
         self.client.table("WebhookEvents").update({
             "status": "failed",
             "errorMessage": errorMessage[:2000],
-            "lastAttemptAt": str(datetime.datetime.utcnow()),
+            "lastAttemptAt": str(utcNow()),
         }).eq("razorpayEventId", eventId).execute()
 
     @staticmethod
@@ -264,10 +271,13 @@ class WebhookService:
             dict | None: The user record or None if not found.
         """
         result = self.client.table("Users") \
-            .select("userId, email, fullName, subscriptionAnchorDay, recurringFailures, razorpayCustomerId, "
-                    "pendingRemovals, pendingAdditions, subscribedExperts, domainCount") \
+            .select("userId, email, fullName, phoneNumber") \
             .eq("userId", userId).execute()
-        return result.data[0] if result.data else None
+        if not result.data:
+            return None
+        user = result.data[0]
+        user["subscription"] = self._findSubscriptionByUserId(userId)
+        return user
 
     def _findSubscriptionByUserId(self, userId: str) -> dict | None:
         """
@@ -280,7 +290,7 @@ class WebhookService:
             dict | None: The subscription record or None if not found.
         """
         result = self.client.table("subscriptions") \
-            .select("id, user_id, billing_mode, status, current_period_start, current_period_end, renewal_due_at") \
+            .select(CANONICAL_SUBSCRIPTION_SELECT) \
             .eq("user_id", userId) \
             .order("updated_at", desc=True) \
             .limit(1) \
@@ -297,10 +307,23 @@ class WebhookService:
         Returns:
             dict | None: The user record or None if not found.
         """
+        subscriptionResult = self.client.table("subscriptions") \
+            .select(CANONICAL_SUBSCRIPTION_SELECT) \
+            .eq("razorpay_customer_id", customerId) \
+            .order("updated_at", desc=True) \
+            .limit(1) \
+            .execute()
+        if not subscriptionResult.data:
+            return None
+        subscription = subscriptionResult.data[0]
         result = self.client.table("Users") \
-            .select("userId, email, fullName, razorpayTokenId, razorpayCustomerId") \
-            .eq("razorpayCustomerId", customerId).execute()
-        return result.data[0] if result.data else None
+            .select("userId, email, fullName, phoneNumber") \
+            .eq("userId", subscription["user_id"]).execute()
+        if not result.data:
+            return None
+        user = result.data[0]
+        user["subscription"] = subscription
+        return user
 
     def _findInvoiceById(self, invoiceId: str) -> dict | None:
         """
@@ -325,7 +348,7 @@ class WebhookService:
         }
         capturedAt = paymentEntity.get("captured_at") or paymentEntity.get("created_at")
         if capturedAt:
-            updateData["paidAt"] = str(datetime.datetime.utcfromtimestamp(capturedAt))
+            updateData["paidAt"] = str(utcFromTimestamp(capturedAt))
         self.client.table("Invoices").update(updateData).eq("id", invoiceId).execute()
 
     def _markInvoiceFailed(self, invoiceId: str, errorCode: str = "", errorDescription: str = "") -> None:
@@ -359,7 +382,7 @@ class WebhookService:
                 "artifactExpired": True,
                 "artifactType": artifactType,
                 "artifactId": artifactId,
-                "expiredAt": datetime.datetime.utcnow().isoformat(),
+                "expiredAt": utcNow().isoformat(),
             },
         }
         if artifactType == "razorpay_invoice":
@@ -448,9 +471,9 @@ class WebhookService:
                 "amount": invoiceData.get("amount", 0),
                 "currency": invoiceData.get("currency", "INR"),
                 "status": invoiceData.get("status", "paid").upper(),
-                "billingStart": str(datetime.datetime.utcfromtimestamp(billingStart)) if billingStart else None,
-                "billingEnd": str(datetime.datetime.utcfromtimestamp(billingEnd)) if billingEnd else None,
-                "paidAt": str(datetime.datetime.utcfromtimestamp(paidAt)) if paidAt else None,
+                "billingStart": str(utcFromTimestamp(billingStart)) if billingStart else None,
+                "billingEnd": str(utcFromTimestamp(billingEnd)) if billingEnd else None,
+                "paidAt": str(utcFromTimestamp(paidAt)) if paidAt else None,
                 "shortUrl": invoiceData.get("short_url"),
             }, on_conflict="razorpayInvoiceId").execute()
         except Exception as e:
@@ -522,17 +545,15 @@ class WebhookService:
                 if expiryDt.tzinfo is not None:
                     expiryDt = expiryDt.replace(tzinfo=None)
             else:
-                expiryDt = datetime.datetime.utcnow()
+                expiryDt = utcNow().replace(tzinfo=None)
             newExpiry = expiryDt + relativedelta(months=1)
             self.client.table("subscriptions").update({
                 "status": "active",
                 "current_period_start": expiryDt.isoformat(),
                 "current_period_end": newExpiry.isoformat(),
                 "renewal_due_at": newExpiry.isoformat(),
+                "recurring_failures": 0,
             }).eq("id", subscription["id"]).execute()
-            self.client.table("Users").update({
-                "recurringFailures": 0,
-            }).eq("userId", userId).execute()
             if invoiceId:
                 self._markInvoicePaid(invoiceId=invoiceId, paymentEntity=paymentEntity)
             else:
@@ -620,7 +641,7 @@ class WebhookService:
                 if expiryDt.tzinfo is not None:
                     expiryDt = expiryDt.replace(tzinfo=None)
             else:
-                expiryDt = datetime.datetime.utcnow()
+                expiryDt = utcNow().replace(tzinfo=None)
             newExpiry = expiryDt + relativedelta(years=1)
             self.client.table("subscriptions").update({
                 "status": "active",
@@ -693,15 +714,15 @@ class WebhookService:
             if not user:
                 logger.error(f"No user found for userId {userId} during payment.failed")
                 return
-            failures = (user.get("recurringFailures") or 0) + 1
-            updateData = {"recurringFailures": failures}
+            subscription = user.get("subscription") or self._findSubscriptionByUserId(userId)
+            failures = subscriptionRecurringFailures(subscription) + 1
+            if not subscription:
+                logger.error(f"No subscription found for userId {userId} during payment.failed")
+                return
+            updateData = {"recurring_failures": failures}
             if failures >= 3:
-                subscription = self._findSubscriptionByUserId(userId)
-                if subscription:
-                    self.client.table("subscriptions").update({
-                        "status": "suspended"
-                    }).eq("id", subscription["id"]).execute()
-            self.client.table("Users").update(updateData).eq("userId", userId).execute()
+                updateData["status"] = "suspended"
+            self.client.table("subscriptions").update(updateData).eq("id", subscription["id"]).execute()
             self._auditLog(
                 userId, "billing.renewal_failed",
                 paymentId=paymentId,
@@ -775,16 +796,17 @@ class WebhookService:
                 )
             user = self._findUserById(userId) if userId != "unknown" else None
             if user:
-                pendingAdditions = user.get("pendingAdditions") or []
+                subscription = user.get("subscription") or self._findSubscriptionByUserId(userId)
+                pendingAdditions = (subscription or {}).get("pending_additions") or []
                 failedAny = False
                 for item in pendingAdditions:
                     if item.get("state") in ("processing", "awaiting_payment"):
                         item["state"] = "failed"
                         failedAny = True
-                if failedAny:
-                    self.client.table("Users").update({
-                        "pendingAdditions": pendingAdditions
-                    }).eq("userId", user["userId"]).execute()
+                if failedAny and subscription:
+                    self.client.table("subscriptions").update({
+                        "pending_additions": pendingAdditions
+                    }).eq("id", subscription["id"]).execute()
                 self._sendPaymentFailureEmail(user["email"], user["fullName"], "payment_failed")
             logger.info(f"Payment failed: {paymentId}")
 
@@ -881,7 +903,7 @@ class WebhookService:
                             if expiryDt.tzinfo is not None:
                                 expiryDt = expiryDt.replace(tzinfo=None)
                         else:
-                            expiryDt = datetime.datetime.utcnow()
+                            expiryDt = utcNow().replace(tzinfo=None)
                         newExpiry = expiryDt + relativedelta(years=1)
                         self.client.table("subscriptions").update({
                             "status": "active",
@@ -998,7 +1020,7 @@ class WebhookService:
                     if expiryDt.tzinfo is not None:
                         expiryDt = expiryDt.replace(tzinfo=None)
                 else:
-                    expiryDt = datetime.datetime.utcnow()
+                    expiryDt = utcNow().replace(tzinfo=None)
                 newExpiry = expiryDt + relativedelta(years=1)
                 self.client.table("subscriptions").update({
                     "status": "active",
@@ -1076,15 +1098,16 @@ class WebhookService:
         customerId = tokenEntity.get("customer_id", "")
         user = self._findUserByCustomerId(customerId) if customerId else None
         if user:
-            self.client.table("Users").update({
-                "razorpayTokenId": None,
-            }).eq("userId", user["userId"]).execute()
+            subscription = user.get("subscription")
+            self.client.table("subscriptions").update({
+                "razorpay_token_id": None,
+            }).eq("id", subscription["id"]).execute()
             self._auditLog(
                 user["userId"], "token.cancelled",
                 status="CANCELLED",
                 metadata={"tokenId": tokenEntity.get("id"), "customerId": customerId}
             )
-            logger.info(f"Token cancelled for user {user['userId']}, cleared razorpayTokenId")
+            logger.info(f"Token cancelled for user {user['userId']}, cleared subscription razorpay_token_id")
         else:
             logger.warning(f"Token cancelled for unknown customer {customerId}")
 
@@ -1216,7 +1239,7 @@ class WebhookService:
                 "template": template,
                 "templateVersion": "1",
                 "deliveryStatus": deliveryStatus,
-                "sentAt": datetime.datetime.utcnow().isoformat(),
+                "sentAt": utcNow().isoformat(),
             },
         }).execute()
         logger.info(f"{template} email dispatched for user {userId}, delivery={deliveryStatus}")

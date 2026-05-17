@@ -101,6 +101,16 @@ class AuthenticationService:
             "current_period_start": None,
             "current_period_end": None,
             "renewal_due_at": None,
+            "subscribed_experts": [],
+            "domain_count": 0,
+            "pending_removals": [],
+            "pending_additions": [],
+            "billing_state": {},
+            "razorpay_customer_id": None,
+            "razorpay_token_id": None,
+            "subscription_anchor_day": None,
+            "recurring_failures": 0,
+            "cancellation_reason": None,
         }).execute()
 
     def _ensureSubscriptionSnapshot(self, userId: str) -> dict:

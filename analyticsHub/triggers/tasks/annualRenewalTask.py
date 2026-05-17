@@ -29,6 +29,12 @@ from api.services.invoiceService import (
     createUpcomingRenewalInvoice,
     createPaymentArtifact,
 )
+from api.services.subscriptionFieldUtils import (
+    CANONICAL_SUBSCRIPTION_SELECT,
+    subscriptionDomainCount,
+    subscriptionExperts,
+    subscriptionPendingRemovals,
+)
 from supabase import create_client
 from utils.logger import logger
 import datetime
@@ -102,7 +108,7 @@ class AnnualRenewalTask:
 
         subscriptions = (
             self.client.table("subscriptions")
-            .select("id, user_id, current_period_start, current_period_end, status, billing_mode")
+            .select(CANONICAL_SUBSCRIPTION_SELECT)
             .eq("billing_mode", "annual_prepaid")
             .in_("status", ["active", "renewal_upcoming"])
             .gte("current_period_end", now.isoformat())
@@ -124,7 +130,7 @@ class AnnualRenewalTask:
             try:
                 userRows = (
                     self.client.table("Users")
-                    .select("userId, email, fullName, domainCount, billingState, razorpayCustomerId")
+                    .select("userId, email, fullName, phoneNumber")
                     .eq("userId", userId)
                     .limit(1)
                     .execute()
@@ -193,10 +199,7 @@ class AnnualRenewalTask:
             try:
                 userRows = (
                     self.client.table("Users")
-                    .select(
-                        "userId, email, fullName, domainCount, phoneNumber, "
-                        "billingState, razorpayCustomerId, subscribedExperts, pendingRemovals"
-                    )
+                    .select("userId, email, fullName, phoneNumber")
                     .eq("userId", userId)
                     .limit(1)
                     .execute()
@@ -207,22 +210,32 @@ class AnnualRenewalTask:
                     skipped += 1
                     continue
 
-                self._processPendingRemovals(userRows[0])
-                userRows = (
-                    self.client.table("Users")
-                    .select(
-                        "userId, email, fullName, domainCount, phoneNumber, "
-                        "billingState, razorpayCustomerId"
-                    )
-                    .eq("userId", userId)
+                subscriptionRows = (
+                    self.client.table("subscriptions")
+                    .select(CANONICAL_SUBSCRIPTION_SELECT)
+                    .eq("id", invoice.get("subscription_id"))
                     .limit(1)
                     .execute()
                     .data
                 )
+                if not subscriptionRows:
+                    logger.warning(f"T-7: Subscription not found for invoice {invoice['id']}")
+                    skipped += 1
+                    continue
+                subscription = subscriptionRows[0]
+                self._processPendingRemovals(subscription)
 
                 result = createPaymentArtifact(invoice, userRows[0])
                 if result:
-                    self._sendT7Email(userRows[0], result)
+                    refreshedSubscription = (
+                        self.client.table("subscriptions")
+                        .select(CANONICAL_SUBSCRIPTION_SELECT)
+                        .eq("id", subscription["id"])
+                        .limit(1)
+                        .execute()
+                        .data
+                    )
+                    self._sendT7Email(userRows[0], result, refreshedSubscription[0] if refreshedSubscription else subscription)
                     created += 1
                 else:
                     skipped += 1
@@ -244,7 +257,7 @@ class AnnualRenewalTask:
                 "status": "renewal_upcoming",
             }).eq("id", subscription["id"]).execute()
 
-    def _processPendingRemovals(self, user: dict) -> None:
+    def _processPendingRemovals(self, subscription: dict) -> None:
         """
         Process pending domain removals at cycle boundary for annual
         subscriptions. Mirrors billingTask._processPendingRemovals.
@@ -253,21 +266,20 @@ class AnnualRenewalTask:
         and clears pendingRemovals.
 
         Args:
-            user: The user record with subscribedExperts, pendingRemovals.
+            subscription: The subscription record with subscribed_experts and pending_removals.
         """
-        pendingRemovals = user.get("pendingRemovals") or []
+        pendingRemovals = subscriptionPendingRemovals(subscription)
         if not pendingRemovals:
             return
-        experts = user.get("subscribedExperts") or ""
-        currentExperts = [e.strip() for e in experts.split(",") if e.strip()]
+        currentExperts = subscriptionExperts(subscription)
         updatedExperts = [e for e in currentExperts if e not in pendingRemovals]
-        self.client.table("Users").update({
-            "subscribedExperts": ", ".join(updatedExperts),
-            "domainCount": len(updatedExperts),
-            "pendingRemovals": [],
-        }).eq("userId", user["userId"]).execute()
+        self.client.table("subscriptions").update({
+            "subscribed_experts": updatedExperts,
+            "domain_count": len(updatedExperts),
+            "pending_removals": [],
+        }).eq("id", subscription["id"]).execute()
         logger.info(
-            f"Annual T-7: Processed pending removals for user {user['userId']}: {pendingRemovals}"
+            f"Annual T-7: Processed pending removals for user {subscription['user_id']}: {pendingRemovals}"
         )
 
     def _sendT30Email(self, user: dict, invoice: dict, subscription: dict) -> None:
@@ -278,7 +290,7 @@ class AnnualRenewalTask:
         invoiceId + template to ensure the email is sent exactly once.
 
         Args:
-            user: User row (email, fullName, domainCount).
+            user: User row (email, fullName).
             invoice: The created invoice row (id, total_amount).
             subscription: The subscription row (current_period_end).
         """
@@ -317,7 +329,7 @@ class AnnualRenewalTask:
             "templateVersion": "1",
             "amount": invoice.get("total_amount", 0),
             "currency": "INR",
-            "domainCount": user.get("domainCount", 0),
+            "domainCount": subscriptionDomainCount(subscription),
             "renewalDate": subscription.get("current_period_end", ""),
             "estimateNote": True,
         }
@@ -354,7 +366,7 @@ class AnnualRenewalTask:
         }).execute()
         logger.info(f"T-30 awareness email dispatched for invoice {invoiceId}, delivery={deliveryStatus}")
 
-    def _sendT7Email(self, user: dict, artifact: dict) -> None:
+    def _sendT7Email(self, user: dict, artifact: dict, subscription: dict) -> None:
         """
         Send a T-7 payment ready email with the Razorpay pay link
         and a dashboard fallback link.
@@ -363,7 +375,7 @@ class AnnualRenewalTask:
         invoiceId + template to ensure the email is sent exactly once.
 
         Args:
-            user: User row (email, fullName, domainCount).
+            user: User row (email, fullName).
             artifact: The updated invoice row with shortUrl, total_amount.
         """
         template = "renewal_payment_ready_t7"
@@ -407,7 +419,7 @@ class AnnualRenewalTask:
             "paymentUrl": artifact.get("shortUrl", ""),
             "dashboardFallbackUrl": dashboardFallbackLink,
             "dueDate": artifact.get("due_date", ""),
-            "domainCount": user.get("domainCount", 0),
+            "domainCount": subscriptionDomainCount(subscription),
         }
 
         deliveryStatus = "SENT"

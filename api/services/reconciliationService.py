@@ -366,8 +366,7 @@ class ReconciliationService:
         userRows = (
             self.client.table("Users")
             .select(
-                "userId, email, fullName, domainCount, phoneNumber, "
-                "billingState, razorpayCustomerId"
+                "userId, email, fullName, phoneNumber"
             )
             .eq("userId", userId)
             .limit(1)
