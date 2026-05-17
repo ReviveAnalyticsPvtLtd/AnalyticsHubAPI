@@ -313,6 +313,9 @@ def createPaymentArtifact(invoice: dict, user: dict) -> dict | None:
         "billingReason": "renewal",
         "pricingVersion": snapshot.pricing_version,
     }
+    now = datetime.datetime.now(datetime.timezone.utc)
+    expireByDt = periodStartDt if periodStartDt > now else now + datetime.timedelta(days=7)
+
     try:
         rzpInvoice = razorpayClient.invoice.create({
             "type": "invoice",
@@ -325,7 +328,7 @@ def createPaymentArtifact(invoice: dict, user: dict) -> dict | None:
                     "quantity": 1,
                 }
             ],
-            "expire_by": int(periodStartDt.timestamp()) if periodStartDt else None,
+            "expire_by": int(expireByDt.timestamp()) if expireByDt else None,
             "sms_notify": 0,
             "email_notify": 0,
             "notes": commonNotes,
@@ -349,7 +352,7 @@ def createPaymentArtifact(invoice: dict, user: dict) -> dict | None:
                     "email": user.get("email", ""),
                     "contact": user.get("phoneNumber", ""),
                 },
-                "expire_by": int(periodStartDt.timestamp()) if periodStartDt else None,
+                "expire_by": int(expireByDt.timestamp()) if expireByDt else None,
                 "notify": {"sms": False, "email": False},
                 "reference_id": str(invoiceId),
                 "notes": commonNotes,
@@ -369,6 +372,7 @@ def createPaymentArtifact(invoice: dict, user: dict) -> dict | None:
         "shortUrl": shortUrl,
         "payment_flow": paymentFlow,
         "status": "payment_pending",
+        "expires_at": expireByDt.isoformat() if expireByDt else None,
         "amount_before_tax": snapshot.amount_before_tax,
         "tax_amount": snapshot.tax.tax_amount,
         "total_amount": snapshot.total_amount,

@@ -28,6 +28,8 @@ import os
 
 
 WEBHOOK_PROCESSING_TIMEOUT_MINUTES = int(os.environ.get("WEBHOOK_PROCESSING_TIMEOUT_MINUTES", "10"))
+RENEWAL_EMAIL_MAX_SEND_ATTEMPTS = int(os.environ.get("RENEWAL_EMAIL_MAX_SEND_ATTEMPTS", "3"))
+RENEWAL_EMAIL_SINGLE_SEND_TEMPLATES = {"payment_success"}
 
 EVENT_HANDLERS = {
     "payment.authorized": "_handlePaymentAuthorized",
@@ -35,7 +37,9 @@ EVENT_HANDLERS = {
     "order.paid": "_handleOrderPaid",
     "payment.failed": "_handlePaymentFailed",
     "invoice.paid": "_handleInvoicePaid",
+    "invoice.expired": "_handleInvoiceExpired",
     "payment_link.paid": "_handlePaymentLinkPaid",
+    "payment_link.expired": "_handlePaymentLinkExpired",
     "refund.processed": "_handleRefundProcessed",
     "token.confirmed": "_handleTokenConfirmed",
     "token.cancelled": "_handleTokenCancelled",
@@ -337,6 +341,33 @@ class WebhookService:
             }
         }).eq("id", invoiceId).execute()
 
+    def _markHostedArtifactExpired(
+        self,
+        invoiceId: str,
+        *,
+        artifactType: str,
+        artifactId: str,
+    ) -> None:
+        """
+        Mark the provider artifact as expired while keeping the internal renewal
+        invoice regenerable by clearing stale provider IDs.
+        """
+        updateData = {
+            "status": "expired",
+            "shortUrl": None,
+            "metadata_json": {
+                "artifactExpired": True,
+                "artifactType": artifactType,
+                "artifactId": artifactId,
+                "expiredAt": datetime.datetime.utcnow().isoformat(),
+            },
+        }
+        if artifactType == "razorpay_invoice":
+            updateData["razorpayInvoiceId"] = None
+        if artifactType == "payment_link":
+            updateData["razorpay_payment_link_id"] = None
+        self.client.table("Invoices").update(updateData).eq("id", invoiceId).execute()
+
     @staticmethod
     def _validateFrozenInvoicePaymentMatch(invoice: dict, paymentEntity: dict) -> None:
         """
@@ -598,6 +629,18 @@ class WebhookService:
                 "renewal_due_at": newExpiry.isoformat(),
             }).eq("id", subscription["id"]).execute()
             self._markInvoicePaid(invoiceId=invoiceId, paymentEntity=paymentEntity)
+            previousStatus = subscription.get("status", "")
+            if previousStatus in ("past_due", "suspended"):
+                self._sendRenewalNotification(
+                    userId=userId, invoiceId=invoiceId,
+                    template="subscription_restored",
+                    metadata={"previousStatus": previousStatus, "newExpiry": str(newExpiry)},
+                )
+            self._sendRenewalNotification(
+                userId=userId, invoiceId=invoiceId,
+                template="payment_success",
+                metadata={"amount": paymentEntity.get("amount"), "newExpiry": str(newExpiry)},
+            )
             self._auditLog(
                 userId, "billing.annual_renewal_charged",
                 paymentId=paymentId,
@@ -609,6 +652,7 @@ class WebhookService:
                     "previousExpiry": str(expiryDt),
                     "newExpiry": str(newExpiry),
                     "flow": "webhook_payment_captured",
+                    "restoredFrom": previousStatus if previousStatus in ("past_due", "suspended") else None,
                 }
             )
             logger.info(f"Annual renewal charged for user {userId}, new expiry {newExpiry}")
@@ -681,6 +725,38 @@ class WebhookService:
             if user.get("email"):
                 self._sendPaymentFailureEmail(user["email"], user.get("fullName", ""), "recurring_renewal_failed")
             logger.info(f"Recurring renewal failed for user {userId}, failures={failures}")
+        elif paymentType == "annual_renewal":
+            userId = notes.get("userId")
+            if not userId:
+                logger.error(f"annual_renewal payment {paymentId} missing userId in notes")
+                return
+            self._auditLog(
+                userId, "billing.annual_renewal_failed",
+                paymentId=paymentId,
+                amount=paymentEntity.get("amount"),
+                currency=paymentEntity.get("currency", "INR"),
+                status="FAILED",
+                metadata={
+                    "invoiceId": invoiceId,
+                    "error_code": errorMeta,
+                    "error_description": paymentEntity.get("error_description", ""),
+                }
+            )
+            if invoiceId:
+                self._markInvoiceFailed(
+                    invoiceId=invoiceId,
+                    errorCode=errorMeta,
+                    errorDescription=paymentEntity.get("error_description", ""),
+                )
+                self._sendRenewalNotification(
+                    userId=userId, invoiceId=invoiceId,
+                    template="payment_failed_retry",
+                    metadata={
+                        "reason": "payment_failed",
+                        "errorCode": errorMeta,
+                    },
+                )
+            logger.info(f"Annual renewal payment failed for user {userId}, payment {paymentId}")
         else:
             userId = notes.get("userId", "unknown")
             self._auditLog(
@@ -787,6 +863,10 @@ class WebhookService:
                     user = self._findUserByCustomerId(customerId) if customerId else None
                     userId = user["userId"] if user else None
                 if userId:
+                    self._validateFrozenInvoicePaymentMatch(internalInvoice, {
+                        "amount": invoiceEntity.get("amount", 0),
+                        "currency": invoiceEntity.get("currency", "INR"),
+                    })
                     self._markInvoicePaid(invoiceId=internalInvoiceId, paymentEntity={
                         "id": invoiceEntity.get("payment_id"),
                         "amount": invoiceEntity.get("amount", 0),
@@ -826,6 +906,11 @@ class WebhookService:
                         logger.info(
                             f"Annual renewal via invoice.paid for user {userId}, "
                             f"new expiry {newExpiry}"
+                        )
+                        self._sendRenewalNotification(
+                            userId=userId, invoiceId=internalInvoiceId,
+                            template="payment_success",
+                            metadata={"amount": invoiceEntity.get("amount"), "newExpiry": str(newExpiry)},
                         )
                         return
                     self._auditLog(
@@ -892,6 +977,11 @@ class WebhookService:
         if not userId:
             userId = internalInvoice.get("userId")
 
+        self._validateFrozenInvoicePaymentMatch(internalInvoice, {
+            "amount": linkEntity.get("amount", 0),
+            "currency": linkEntity.get("currency", "INR"),
+        })
+
         self._markInvoicePaid(invoiceId=internalInvoiceId, paymentEntity={
             "id": paymentId,
             "amount": linkEntity.get("amount", 0),
@@ -932,6 +1022,11 @@ class WebhookService:
                 logger.info(
                     f"Annual renewal via payment_link.paid for user {userId}, "
                     f"new expiry {newExpiry}"
+                )
+                self._sendRenewalNotification(
+                    userId=userId, invoiceId=internalInvoiceId,
+                    template="payment_success",
+                    metadata={"amount": linkEntity.get("amount"), "newExpiry": str(newExpiry)},
                 )
                 return
 
@@ -1041,6 +1136,216 @@ class WebhookService:
             )
         except Exception as e:
             logger.error(f"Failed to send payment failure email to {email}: {e}")
+
+    def _sendRenewalNotification(
+        self, userId: str, invoiceId: str, template: str,
+        metadata: dict | None = None,
+    ) -> None:
+        """
+        Send a renewal lifecycle notification email with template version
+        tracking, send-log deduplication, and delivery status logging.
+
+        Uses SubscriptionLog as the send-log with a dedupe key of
+        (invoiceId, template) to enforce exactly-once delivery per
+        template per invoice.
+
+        Args:
+            userId: Internal user ID.
+            invoiceId: Internal invoice primary key.
+            template: Template identifier (e.g. payment_success, suspension_notice).
+            metadata: Optional metadata to include in the email payload.
+        """
+        sendLogKey = f"{invoiceId}:{template}"
+        existingLog = (
+            self.client.table("SubscriptionLog")
+            .select("id, metadata")
+            .eq("userId", userId)
+            .eq("eventType", f"email.{template}")
+            .eq("status", sendLogKey)
+            .execute()
+            .data
+        )
+        maxAttempts = 1 if template in RENEWAL_EMAIL_SINGLE_SEND_TEMPLATES else RENEWAL_EMAIL_MAX_SEND_ATTEMPTS
+        if not self._shouldSendRenewalEmail(existingLog, maxAttempts=maxAttempts):
+            return
+
+        user = self._findUserById(userId)
+        if not user:
+            logger.warning(f"Cannot send {template} email: user {userId} not found")
+            return
+
+        emailUrl = os.environ.get("RENEWAL_REMINDER_EMAIL_URL")
+        if not emailUrl:
+            logger.info(f"{template} email skipped: RENEWAL_REMINDER_EMAIL_URL not configured")
+            return
+
+        payload = {
+            "email": user.get("email", ""),
+            "name": user.get("fullName", ""),
+            "template": template,
+            "templateVersion": "1",
+            "invoiceId": invoiceId,
+        }
+        if metadata:
+            payload.update(metadata)
+
+        deliveryStatus = "SENT"
+        try:
+            response = requests.post(
+                url=emailUrl,
+                data=json.dumps(payload),
+                headers={"Authorization": f"Bearer {os.environ.get('SUPABASE_KEY', '')}"},
+                timeout=10,
+            )
+            if response.status_code >= 400:
+                deliveryStatus = "DELIVERY_FAILED"
+                logger.warning(
+                    f"{template} email delivery failed for user {userId}, "
+                    f"status={response.status_code}"
+                )
+        except Exception as e:
+            deliveryStatus = "DELIVERY_FAILED"
+            logger.error(f"{template} email send failed for user {userId}: {e}")
+
+        self.client.table("SubscriptionLog").insert({
+            "userId": userId,
+            "eventType": f"email.{template}",
+            "status": sendLogKey,
+            "metadata": {
+                "invoiceId": invoiceId,
+                "template": template,
+                "templateVersion": "1",
+                "deliveryStatus": deliveryStatus,
+                "sentAt": datetime.datetime.utcnow().isoformat(),
+            },
+        }).execute()
+        logger.info(f"{template} email dispatched for user {userId}, delivery={deliveryStatus}")
+
+    @staticmethod
+    def _shouldSendRenewalEmail(existingLogs: list[dict] | None, maxAttempts: int) -> bool:
+        logs = existingLogs or []
+        if not logs:
+            return True
+        for log in logs:
+            metadata = log.get("metadata") or {}
+            if metadata.get("deliveryStatus") == "SENT":
+                return False
+        return len(logs) < maxAttempts
+
+    def _handleInvoiceExpired(self, event: dict) -> None:
+        """
+        Handle the invoice.expired webhook event.
+
+        Marks the internal invoice as expired and triggers a
+        payment-failed reminder if the invoice was for annual renewal.
+
+        Args:
+            event (dict): The Razorpay webhook event.
+        """
+        invoiceEntity = event.get("payload", {}).get("invoice", {}).get("entity", {})
+        notes = invoiceEntity.get("notes", {})
+        internalInvoiceId = notes.get("invoiceId")
+        userId = notes.get("userId")
+        razorpayInvoiceId = invoiceEntity.get("id", "")
+
+        if not internalInvoiceId:
+            logger.info(f"invoice.expired for non-internal invoice {razorpayInvoiceId}, skipping")
+            return
+
+        internalInvoice = self._findInvoiceById(internalInvoiceId)
+        if not internalInvoice:
+            logger.warning(f"Internal invoice {internalInvoiceId} not found for invoice.expired")
+            return
+
+        invoiceStatus = (internalInvoice.get("status") or "").upper()
+        if invoiceStatus in ("PAID", "VOID"):
+            logger.info(
+                f"Invoice {internalInvoiceId} already resolved ({invoiceStatus}), "
+                f"skipping invoice.expired"
+            )
+            return
+
+        self._markHostedArtifactExpired(
+            invoiceId=internalInvoiceId,
+            artifactType="razorpay_invoice",
+            artifactId=razorpayInvoiceId,
+        )
+
+        if not userId:
+            userId = internalInvoice.get("userId")
+
+        if userId:
+            self._sendRenewalNotification(
+                userId=userId, invoiceId=internalInvoiceId,
+                template="payment_failed_retry",
+                metadata={"reason": "invoice_expired", "razorpayInvoiceId": razorpayInvoiceId},
+            )
+
+        self._auditLog(
+            userId or "unknown", "invoice.expired",
+            invoiceId=razorpayInvoiceId,
+            status="EXPIRED",
+            metadata={"internalInvoiceId": internalInvoiceId}
+        )
+        logger.info(f"Invoice expired: {razorpayInvoiceId} (internal: {internalInvoiceId})")
+
+    def _handlePaymentLinkExpired(self, event: dict) -> None:
+        """
+        Handle the payment_link.expired webhook event.
+
+        Marks metadata on the internal invoice and triggers a
+        payment-failed reminder for annual renewal invoices.
+
+        Args:
+            event (dict): The Razorpay webhook event.
+        """
+        linkEntity = event.get("payload", {}).get("payment_link", {}).get("entity", {})
+        notes = linkEntity.get("notes", {})
+        internalInvoiceId = notes.get("invoiceId") or linkEntity.get("reference_id")
+        userId = notes.get("userId")
+        linkId = linkEntity.get("id", "")
+
+        if not internalInvoiceId:
+            logger.info(f"payment_link.expired for non-internal link {linkId}, skipping")
+            return
+
+        internalInvoice = self._findInvoiceById(internalInvoiceId)
+        if not internalInvoice:
+            logger.warning(
+                f"Internal invoice {internalInvoiceId} not found for payment_link.expired"
+            )
+            return
+
+        invoiceStatus = (internalInvoice.get("status") or "").upper()
+        if invoiceStatus in ("PAID", "VOID"):
+            logger.info(
+                f"Invoice {internalInvoiceId} already resolved ({invoiceStatus}), "
+                f"skipping payment_link.expired"
+            )
+            return
+
+        self._markHostedArtifactExpired(
+            invoiceId=internalInvoiceId,
+            artifactType="payment_link",
+            artifactId=linkId,
+        )
+
+        if not userId:
+            userId = internalInvoice.get("userId")
+
+        if userId:
+            self._sendRenewalNotification(
+                userId=userId, invoiceId=internalInvoiceId,
+                template="payment_failed_retry",
+                metadata={"reason": "payment_link_expired", "paymentLinkId": linkId},
+            )
+
+        self._auditLog(
+            userId or "unknown", "payment_link.expired",
+            status="EXPIRED",
+            metadata={"internalInvoiceId": internalInvoiceId, "paymentLinkId": linkId}
+        )
+        logger.info(f"Payment link expired: {linkId} (internal: {internalInvoiceId})")
 
 
 webhookService = WebhookService()

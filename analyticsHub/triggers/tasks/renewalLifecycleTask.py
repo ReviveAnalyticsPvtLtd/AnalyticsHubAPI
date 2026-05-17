@@ -26,6 +26,7 @@ import os
 
 
 _REMINDER_LOCK_TTL_SECONDS = 90
+_MAX_EMAIL_SEND_ATTEMPTS = int(os.environ.get("RENEWAL_EMAIL_MAX_SEND_ATTEMPTS", "3"))
 
 
 def _getSupabaseClient():
@@ -122,15 +123,14 @@ class RenewalLifecycleTask:
                 continue
             existingLog = (
                 self.client.table("SubscriptionLog")
-                .select("id")
+                .select("id, metadata")
                 .eq("userId", userId)
                 .eq("eventType", f"email.{template}")
                 .eq("status", sendLogKey)
-                .limit(1)
                 .execute()
                 .data
             )
-            if existingLog:
+            if not self._shouldSendEmail(existingLog, maxAttempts=_MAX_EMAIL_SEND_ATTEMPTS):
                 skipped += 1
                 continue
 
@@ -147,11 +147,14 @@ class RenewalLifecycleTask:
                     skipped += 1
                     continue
 
-                self._sendReminderEmail(
+                deliveryStatus = self._sendReminderEmail(
                     user=userRows[0],
                     invoice=invoice,
                     template=template,
                 )
+                if deliveryStatus == "SKIPPED":
+                    skipped += 1
+                    continue
 
                 self.client.table("SubscriptionLog").insert({
                     "userId": userId,
@@ -160,6 +163,8 @@ class RenewalLifecycleTask:
                     "metadata": {
                         "invoiceId": invoiceId,
                         "template": template,
+                        "templateVersion": "1",
+                        "deliveryStatus": deliveryStatus,
                         "sentAt": now.isoformat(),
                     },
                 }).execute()
@@ -184,12 +189,13 @@ class RenewalLifecycleTask:
         emailUrl = os.environ.get("RENEWAL_REMINDER_EMAIL_URL")
         if not emailUrl:
             logger.info("Reminder email skipped: RENEWAL_REMINDER_EMAIL_URL not configured")
-            return
+            return "SKIPPED"
 
         payload = {
             "email": user.get("email", ""),
             "name": user.get("fullName", ""),
             "template": template,
+            "templateVersion": "1",
             "amount": invoice.get("total_amount", 0),
             "currency": invoice.get("currency", "INR"),
             "paymentUrl": invoice.get("shortUrl", ""),
@@ -197,11 +203,30 @@ class RenewalLifecycleTask:
         }
 
         try:
-            requests.post(
+            response = requests.post(
                 url=emailUrl,
                 data=json.dumps(payload),
                 headers={"Authorization": f"Bearer {os.environ.get('SUPABASE_KEY', '')}"},
                 timeout=10,
             )
+            if response.status_code >= 400:
+                logger.warning(
+                    f"Reminder email delivery failed for template {template}, "
+                    f"status={response.status_code}"
+                )
+                return "DELIVERY_FAILED"
         except Exception as e:
             logger.error(f"Reminder email send failed: {e}")
+            return "DELIVERY_FAILED"
+        return "SENT"
+
+    @staticmethod
+    def _shouldSendEmail(existingLogs: list[dict] | None, maxAttempts: int) -> bool:
+        logs = existingLogs or []
+        if not logs:
+            return True
+        for log in logs:
+            metadata = log.get("metadata") or {}
+            if metadata.get("deliveryStatus") == "SENT":
+                return False
+        return len(logs) < maxAttempts

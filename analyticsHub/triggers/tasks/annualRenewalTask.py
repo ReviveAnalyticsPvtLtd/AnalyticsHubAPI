@@ -36,6 +36,7 @@ import json
 import os
 
 _EMAIL_LOCK_TTL_SECONDS = 120
+_MAX_EMAIL_SEND_ATTEMPTS = int(os.environ.get("RENEWAL_EMAIL_MAX_SEND_ATTEMPTS", "3"))
 
 
 def _getSupabaseClient():
@@ -164,10 +165,9 @@ class AnnualRenewalTask:
             self.client.table("Invoices")
             .select("id, subscription_id, userId, status, due_date, period_start, period_end, "
                     "razorpayInvoiceId, razorpay_payment_link_id, total_amount, currency")
-            .in_("status", ["upcoming", "payment_pending"])
+            .in_("status", ["upcoming", "payment_pending", "expired"])
             .eq("billing_reason", "renewal")
             .not_.is_("due_date", "null")
-            .gte("due_date", now.isoformat())
             .lte("due_date", windowEnd)
             .execute()
             .data
@@ -253,15 +253,14 @@ class AnnualRenewalTask:
 
         existingLog = (
             self.client.table("SubscriptionLog")
-            .select("id")
+            .select("id, metadata")
             .eq("userId", userId)
             .eq("eventType", f"email.{template}")
             .eq("status", sendLogKey)
-            .limit(1)
             .execute()
             .data
         )
-        if existingLog:
+        if not self._shouldSendEmail(existingLog, maxAttempts=_MAX_EMAIL_SEND_ATTEMPTS):
             return
 
         emailUrl = os.environ.get("RENEWAL_REMINDER_EMAIL_URL")
@@ -273,6 +272,7 @@ class AnnualRenewalTask:
             "email": user.get("email", ""),
             "name": user.get("fullName", ""),
             "template": template,
+            "templateVersion": "1",
             "amount": invoice.get("total_amount", 0),
             "currency": "INR",
             "domainCount": user.get("domainCount", 0),
@@ -280,30 +280,42 @@ class AnnualRenewalTask:
             "estimateNote": True,
         }
 
+        deliveryStatus = "SENT"
         try:
-            requests.post(
+            response = requests.post(
                 url=emailUrl,
                 data=json.dumps(payload),
                 headers={"Authorization": f"Bearer {os.environ.get('SUPABASE_KEY', '')}"},
                 timeout=10,
             )
-            self.client.table("SubscriptionLog").insert({
-                "userId": userId,
-                "eventType": f"email.{template}",
-                "status": sendLogKey,
-                "metadata": {
-                    "invoiceId": invoiceId,
-                    "template": template,
-                    "sentAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                },
-            }).execute()
-            logger.info(f"T-30 awareness email sent for invoice {invoiceId}")
+            if response.status_code >= 400:
+                deliveryStatus = "DELIVERY_FAILED"
+                logger.warning(
+                    f"T-30 email delivery failed for invoice {invoiceId}, "
+                    f"status={response.status_code}"
+                )
         except Exception as e:
+            deliveryStatus = "DELIVERY_FAILED"
             logger.error(f"T-30 email send failed for invoice {invoiceId}: {e}")
+
+        self.client.table("SubscriptionLog").insert({
+            "userId": userId,
+            "eventType": f"email.{template}",
+            "status": sendLogKey,
+            "metadata": {
+                "invoiceId": invoiceId,
+                "template": template,
+                "templateVersion": "1",
+                "deliveryStatus": deliveryStatus,
+                "sentAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            },
+        }).execute()
+        logger.info(f"T-30 awareness email dispatched for invoice {invoiceId}, delivery={deliveryStatus}")
 
     def _sendT7Email(self, user: dict, artifact: dict) -> None:
         """
-        Send a T-7 payment ready email with the Razorpay pay link.
+        Send a T-7 payment ready email with the Razorpay pay link
+        and a dashboard fallback link.
 
         Uses SubscriptionLog as an idempotent send-log keyed by
         invoiceId + template to ensure the email is sent exactly once.
@@ -325,15 +337,14 @@ class AnnualRenewalTask:
 
         existingLog = (
             self.client.table("SubscriptionLog")
-            .select("id")
+            .select("id, metadata")
             .eq("userId", userId)
             .eq("eventType", f"email.{template}")
             .eq("status", sendLogKey)
-            .limit(1)
             .execute()
             .data
         )
-        if existingLog:
+        if not self._shouldSendEmail(existingLog, maxAttempts=_MAX_EMAIL_SEND_ATTEMPTS):
             return
 
         emailUrl = os.environ.get("RENEWAL_REMINDER_EMAIL_URL")
@@ -341,34 +352,65 @@ class AnnualRenewalTask:
             logger.info("T-7 email skipped: RENEWAL_REMINDER_EMAIL_URL not configured")
             return
 
+        dashboardBaseUrl = os.environ.get("DASHBOARD_BASE_URL", "")
+        dashboardFallbackLink = f"{dashboardBaseUrl}/billing" if dashboardBaseUrl else ""
+
         payload = {
             "email": user.get("email", ""),
             "name": user.get("fullName", ""),
             "template": template,
+            "templateVersion": "1",
             "amount": artifact.get("total_amount", 0),
             "currency": artifact.get("currency", "INR"),
             "paymentUrl": artifact.get("shortUrl", ""),
+            "dashboardFallbackUrl": dashboardFallbackLink,
             "dueDate": artifact.get("due_date", ""),
             "domainCount": user.get("domainCount", 0),
         }
 
+        deliveryStatus = "SENT"
         try:
-            requests.post(
+            response = requests.post(
                 url=emailUrl,
                 data=json.dumps(payload),
                 headers={"Authorization": f"Bearer {os.environ.get('SUPABASE_KEY', '')}"},
                 timeout=10,
             )
-            self.client.table("SubscriptionLog").insert({
-                "userId": userId,
-                "eventType": f"email.{template}",
-                "status": sendLogKey,
-                "metadata": {
-                    "invoiceId": invoiceId,
-                    "template": template,
-                    "sentAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                },
-            }).execute()
-            logger.info(f"T-7 payment ready email sent for invoice {invoiceId}")
+            if response.status_code >= 400:
+                deliveryStatus = "DELIVERY_FAILED"
+                logger.warning(
+                    f"T-7 email delivery failed for invoice {invoiceId}, "
+                    f"status={response.status_code}"
+                )
         except Exception as e:
+            deliveryStatus = "DELIVERY_FAILED"
             logger.error(f"T-7 email send failed for invoice {invoiceId}: {e}")
+
+        self.client.table("SubscriptionLog").insert({
+            "userId": userId,
+            "eventType": f"email.{template}",
+            "status": sendLogKey,
+            "metadata": {
+                "invoiceId": invoiceId,
+                "template": template,
+                "templateVersion": "1",
+                "deliveryStatus": deliveryStatus,
+                "sentAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            },
+        }).execute()
+        logger.info(f"T-7 payment ready email dispatched for invoice {invoiceId}, delivery={deliveryStatus}")
+
+    @staticmethod
+    def _shouldSendEmail(existingLogs: list[dict] | None, maxAttempts: int) -> bool:
+        """
+        Allow retry only when prior delivery attempts failed and the bounded
+        resend limit has not been reached.
+        """
+        logs = existingLogs or []
+        if not logs:
+            return True
+        for log in logs:
+            metadata = log.get("metadata") or {}
+            if metadata.get("deliveryStatus") == "SENT":
+                return False
+        return len(logs) < maxAttempts
