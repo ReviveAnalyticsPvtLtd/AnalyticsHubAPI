@@ -13,6 +13,7 @@ Runs daily and handles two distinct timeline windows:
 
     T-7 sweep:
         Finds upcoming renewal invoices whose due_date is within 7 days,
+        processes any pending domain removals (cycle-end boundary),
         recomputes final pricing, freezes the snapshot, and creates a
         Razorpay Invoice payment artifact via
         invoiceService.createPaymentArtifact. Sends a T-7 payment
@@ -55,7 +56,7 @@ class AnnualRenewalTask:
 
     Executes two sweeps per run:
         1. T-30: Create upcoming renewal invoices + send awareness email.
-        2. T-7: Create payment artifacts + send pay link email.
+        2. T-7: Process pending removals, create payment artifacts, send pay link email.
     """
 
     def __init__(self):
@@ -152,8 +153,10 @@ class AnnualRenewalTask:
     def _sweepT7(self) -> dict:
         """
         Find upcoming renewal invoices due within 7 days and create
-        Razorpay payment artifacts. Sends T-7 payment ready email
-        with the pay link on successful artifact creation.
+        Razorpay payment artifacts. Processes pending domain removals
+        at the cycle boundary so the frozen invoice reflects the
+        correct post-removal domain count. Sends T-7 payment ready
+        email with the pay link on successful artifact creation.
 
         Returns:
             dict: Counts of created, skipped, and errored artifacts.
@@ -192,7 +195,7 @@ class AnnualRenewalTask:
                     self.client.table("Users")
                     .select(
                         "userId, email, fullName, domainCount, phoneNumber, "
-                        "billingState, razorpayCustomerId"
+                        "billingState, razorpayCustomerId, subscribedExperts, pendingRemovals"
                     )
                     .eq("userId", userId)
                     .limit(1)
@@ -203,6 +206,19 @@ class AnnualRenewalTask:
                     logger.warning(f"T-7: User not found for invoice {invoice['id']}")
                     skipped += 1
                     continue
+
+                self._processPendingRemovals(userRows[0])
+                userRows = (
+                    self.client.table("Users")
+                    .select(
+                        "userId, email, fullName, domainCount, phoneNumber, "
+                        "billingState, razorpayCustomerId"
+                    )
+                    .eq("userId", userId)
+                    .limit(1)
+                    .execute()
+                    .data
+                )
 
                 result = createPaymentArtifact(invoice, userRows[0])
                 if result:
@@ -227,6 +243,32 @@ class AnnualRenewalTask:
             self.client.table("subscriptions").update({
                 "status": "renewal_upcoming",
             }).eq("id", subscription["id"]).execute()
+
+    def _processPendingRemovals(self, user: dict) -> None:
+        """
+        Process pending domain removals at cycle boundary for annual
+        subscriptions. Mirrors billingTask._processPendingRemovals.
+
+        Removes domains from subscribedExperts, updates domainCount,
+        and clears pendingRemovals.
+
+        Args:
+            user: The user record with subscribedExperts, pendingRemovals.
+        """
+        pendingRemovals = user.get("pendingRemovals") or []
+        if not pendingRemovals:
+            return
+        experts = user.get("subscribedExperts") or ""
+        currentExperts = [e.strip() for e in experts.split(",") if e.strip()]
+        updatedExperts = [e for e in currentExperts if e not in pendingRemovals]
+        self.client.table("Users").update({
+            "subscribedExperts": ", ".join(updatedExperts),
+            "domainCount": len(updatedExperts),
+            "pendingRemovals": [],
+        }).eq("userId", user["userId"]).execute()
+        logger.info(
+            f"Annual T-7: Processed pending removals for user {user['userId']}: {pendingRemovals}"
+        )
 
     def _sendT30Email(self, user: dict, invoice: dict, subscription: dict) -> None:
         """

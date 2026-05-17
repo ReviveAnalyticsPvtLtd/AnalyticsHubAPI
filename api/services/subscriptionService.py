@@ -602,7 +602,7 @@ class SubscriptionService:
             )
             userId = decodedToken.get("userId")
             userEmail = decodedToken.get("email")
-            currentTime = datetime.datetime.utcnow()
+            currentTime = datetime.datetime.now(datetime.timezone.utc)
             trialDurationDays = 12
             trialExpiry = currentTime + datetime.timedelta(days=trialDurationDays)
             experts = "banking, manufacturing, supplychain, telecom"
@@ -614,8 +614,8 @@ class SubscriptionService:
             }).eq("userId", userId).execute()
             self._upsertCanonicalSubscription(
                 userId=userId,
-                billingMode="monthly_recurring",
-                status="active",
+                billingMode="none",
+                status="trial",
                 currentPeriodStart=currentTime.isoformat(),
                 currentPeriodEnd=trialExpiry.isoformat(),
                 renewalDueAt=trialExpiry.isoformat(),
@@ -1028,35 +1028,46 @@ class SubscriptionService:
             if totalAfterAdd > 4:
                 raise Exception(f"Maximum of 4 domains. Current: {domainCount}, "
                                 f"pending: {len(activePending)}, requested: {len(normalizedDomains)}")
-            if not user.get("razorpayTokenId"):
-                raise Exception("No active subscription found for this user")
-            identity = self._resolveCheckoutIdentity(userId, tokenEmail)
-            customerId = user.get("razorpayCustomerId")
-            if customerId:
-                synced = self._syncRazorpayCustomerIdentity(customerId, identity)
-                self._auditLog(
-                    userId, "identity.checkout_resolved",
-                    status="SYNCED" if synced else "CURRENT",
-                    metadata={
-                        "flow": "addDomains",
-                        "customerId": customerId,
-                        "synced": synced,
-                    }
-                )
             cycleStartRaw = subscription.get("current_period_start")
             subscriptionExpiryRaw = subscription.get("current_period_end")
             if not cycleStartRaw or not subscriptionExpiryRaw:
                 raise Exception("Subscription period window is missing for proration")
             cycleStart = parser.isoparse(cycleStartRaw)
             subscriptionExpiry = parser.isoparse(subscriptionExpiryRaw)
-            now = datetime.datetime.utcnow()
+            if cycleStart.tzinfo is None:
+                cycleStart = cycleStart.replace(tzinfo=datetime.timezone.utc)
+            else:
+                cycleStart = cycleStart.astimezone(datetime.timezone.utc)
+            if subscriptionExpiry.tzinfo is None:
+                subscriptionExpiry = subscriptionExpiry.replace(tzinfo=datetime.timezone.utc)
+            else:
+                subscriptionExpiry = subscriptionExpiry.astimezone(datetime.timezone.utc)
+            now = datetime.datetime.now(datetime.timezone.utc)
             billingMode = self._normalizeBillingMode(subscription.get("billing_mode") or "monthly_recurring")
+            identity = self._resolveCheckoutIdentity(userId, tokenEmail)
+            customerId = user.get("razorpayCustomerId")
+            if billingMode == "monthly_recurring" and not user.get("razorpayTokenId"):
+                raise Exception("No active recurring token found for monthly add-domain billing")
+            if not customerId:
+                customerId = self._getOrCreateRazorpayCustomer(
+                    userId, identity["email"], identity["name"], identity["contact"]
+                )
+            synced = self._syncRazorpayCustomerIdentity(customerId, identity)
+            self._auditLog(
+                userId, "identity.checkout_resolved",
+                status="SYNCED" if synced else "CURRENT",
+                metadata={
+                    "flow": "addDomains",
+                    "customerId": customerId,
+                    "synced": synced,
+                }
+            )
             snapshot = computeInvoiceSnapshot(
                 billingMode=billingMode,
                 billingReason="proration",
                 domainCount=len(normalizedDomains),
                 customerState=None,
-                prorationAnchorStart=now,
+                prorationAnchorStart=cycleStart,
                 prorationAnchorEnd=subscriptionExpiry,
             )
             totalProrated = snapshot.total_amount
@@ -1078,7 +1089,7 @@ class SubscriptionService:
             order = self.razorpayClient.order.create({
                 "amount": totalProrated,
                 "currency": "INR",
-                "customer_id": user.get("razorpayCustomerId"),
+                "customer_id": customerId,
                 "notes": {
                     "userId": userId,
                     "domains": domainLabel,
@@ -1153,8 +1164,9 @@ class SubscriptionService:
         """
         Verify Razorpay Order checkout signature and activate the added domains.
 
-        Performs HMAC SHA256 verification using Razorpay API secret. On success,
-        activates the paid domains via the idempotent _activatePaidDomains().
+        Performs HMAC SHA256 verification using Razorpay API secret. The paid
+        domains are derived only from server/provider state (Razorpay notes and
+        pendingAdditions), never from the client callback payload.
 
         Args:
             payload (dict): Razorpay checkout response payload.
@@ -1170,10 +1182,8 @@ class SubscriptionService:
             paymentId = payload.get("razorpayPaymentId")
             orderId = payload.get("razorpayOrderId")
             signature = payload.get("razorpaySignature")
-            domains = payload.get("domains")
-            if not all([paymentId, orderId, signature, userId, domains]):
+            if not all([paymentId, orderId, signature, userId]):
                 raise Exception("Missing Razorpay verification fields")
-            normalizedDomains = self._normalizeAndValidateDomains(domains)
             message = f"{orderId}|{paymentId}"
             expectedSignature = hmac.new(
                 os.environ["RAZORPAY_KEY_SECRET"].encode(),
@@ -1183,28 +1193,126 @@ class SubscriptionService:
             if not hmac.compare_digest(expectedSignature, signature):
                 raise Exception("Invalid Razorpay signature")
             order = self.razorpayClient.order.fetch(orderId)
-            orderNotes = order.get("notes", {})
+            orderNotesRaw = order.get("notes", {}) or {}
+            orderNotes = orderNotesRaw if isinstance(orderNotesRaw, dict) else {}
+            if orderNotes.get("type") != "domain_upgrade_proration":
+                raise Exception(
+                    f"Order {orderId} is not a domain upgrade order "
+                    f"(type={orderNotes.get('type')})"
+                )
+            noteUserId = orderNotes.get("userId")
+            if noteUserId and noteUserId != userId:
+                raise Exception(
+                    f"Order/user mismatch during domain upgrade: order.userId={noteUserId}, "
+                    f"token.userId={userId}"
+                )
             invoiceId = orderNotes.get("invoiceId")
             user = self.client.table("Users") \
-                .select("userId, domainCount, pendingAdditions") \
+                .select("userId, domainCount, pendingAdditions, razorpayCustomerId") \
                 .eq("userId", userId).execute().data
             if not user:
                 raise Exception("User not found")
             user = user[0]
             pendingAdditions = user.get("pendingAdditions") or []
-            targetQuantity = 0
-            for item in pendingAdditions:
-                if item.get("orderId") == orderId:
-                    targetQuantity += 1
+            pendingDomains = [
+                item.get("domain")
+                for item in pendingAdditions
+                if item.get("orderId") == orderId
+                and item.get("state") not in ("activated", "failed", "expired")
+                and item.get("domain")
+            ]
+            orderDomains = [
+                d.strip()
+                for d in (orderNotes.get("domains", "") or "").split(",")
+                if d.strip()
+            ]
+            serverDomains = self._normalizeAndValidateDomains(orderDomains or pendingDomains)
+            if not serverDomains:
+                raise Exception("No server-side pending domains found for domain upgrade")
+            if pendingDomains and sorted(serverDomains) != sorted(self._normalizeAndValidateDomains(pendingDomains)):
+                raise Exception(
+                    f"Domain upgrade mismatch: order domains={serverDomains}, "
+                    f"pending domains={pendingDomains}"
+                )
+
+            expectedCustomerId = user.get("razorpayCustomerId")
+            orderCustomerId = order.get("customer_id")
+            if expectedCustomerId and orderCustomerId and orderCustomerId != expectedCustomerId:
+                raise Exception(
+                    f"Order/customer mismatch: order.customer_id={orderCustomerId}, "
+                    f"user.customer_id={expectedCustomerId}"
+                )
+
+            invoice = None
+            if invoiceId:
+                invoiceRows = self.client.table("Invoices") \
+                    .select(
+                        "id, userId, status, total_amount, amount, currency, "
+                        "razorpay_order_id, billing_reason"
+                    ) \
+                    .eq("id", invoiceId) \
+                    .limit(1) \
+                    .execute().data
+                if not invoiceRows:
+                    raise Exception(f"Frozen invoice not found for domain upgrade: {invoiceId}")
+                invoice = invoiceRows[0]
+                if invoice.get("userId") != userId:
+                    raise Exception("Invoice ownership mismatch during domain upgrade verification")
+                invoiceStatus = (invoice.get("status") or "").lower()
+                if invoiceStatus in ("paid", "void"):
+                    logger.info(
+                        f"Domain upgrade invoice {invoiceId} already resolved ({invoiceStatus}), "
+                        f"skipping verification"
+                    )
+                    return
+                if invoiceStatus not in ("upcoming", "payment_pending"):
+                    raise Exception(
+                        f"Domain upgrade invoice {invoiceId} is not payable "
+                        f"(status={invoiceStatus})"
+                    )
+                invoiceOrderId = invoice.get("razorpay_order_id")
+                if invoiceOrderId and invoiceOrderId != orderId:
+                    raise Exception(
+                        f"Invoice/order mismatch: invoice.order_id={invoiceOrderId}, "
+                        f"request.orderId={orderId}"
+                    )
+
+            payment = self.razorpayClient.payment.fetch(paymentId)
+            paymentOrderId = payment.get("order_id")
+            if paymentOrderId and paymentOrderId != orderId:
+                raise Exception(
+                    f"Payment/order mismatch: payment.order_id={paymentOrderId}, "
+                    f"request.orderId={orderId}"
+                )
+            paymentCustomerId = payment.get("customer_id")
+            if expectedCustomerId and paymentCustomerId and paymentCustomerId != expectedCustomerId:
+                raise Exception(
+                    f"Payment/customer mismatch: payment.customer_id={paymentCustomerId}, "
+                    f"user.customer_id={expectedCustomerId}"
+                )
+            if invoice:
+                expectedAmount = invoice.get("total_amount") or invoice.get("amount")
+                actualAmount = payment.get("amount")
+                expectedCurrency = invoice.get("currency") or "INR"
+                actualCurrency = payment.get("currency", "INR")
+                if expectedAmount is not None and int(actualAmount or 0) != int(expectedAmount):
+                    raise Exception(
+                        f"Amount mismatch: expected={expectedAmount}, actual={actualAmount}"
+                    )
+                if str(actualCurrency).upper() != str(expectedCurrency).upper():
+                    raise Exception(
+                        f"Currency mismatch: expected={expectedCurrency}, actual={actualCurrency}"
+                    )
+
             currentCount = user.get("domainCount") or 0
+            targetQuantity = int(orderNotes.get("targetQuantity") or (currentCount + len(serverDomains)))
             self._activatePaidDomains(
                 userId=userId,
-                domains=normalizedDomains,
-                targetQuantity=currentCount + targetQuantity,
+                domains=serverDomains,
+                targetQuantity=targetQuantity,
                 referenceId=orderId,
             )
             if invoiceId:
-                payment = self.razorpayClient.payment.fetch(paymentId)
                 paidAt = payment.get("captured_at") or payment.get("created_at")
                 self._markInvoicePaid(
                     invoiceId=invoiceId,
@@ -1218,7 +1326,7 @@ class SubscriptionService:
                 metadata={
                     "orderId": orderId,
                     "invoiceId": invoiceId,
-                    "domains": normalizedDomains,
+                    "domains": serverDomains,
                 }
             )
         except Exception as e:

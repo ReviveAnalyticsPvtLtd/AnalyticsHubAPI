@@ -162,7 +162,7 @@ class AddDomainsRequest(BaseModel):
     domains: list[str]
 
 class VerifyDomainUpgradeRequest(BaseModel):
-    domains: list[str]
+    domains: list[str] | None = None
     razorpayOrderId: str
     razorpayPaymentId: str
     razorpaySignature: str
@@ -193,6 +193,17 @@ class VerifyAnnualRenewalPaymentRequest(BaseModel):
     razorpayOrderId: str
     razorpayPaymentId: str
     razorpaySignature: str
+
+class ReplayWebhookEventRequest(BaseModel):
+    eventId: str
+
+class RegeneratePaymentArtifactRequest(BaseModel):
+    invoiceId: str
+
+class MarkReconciliationInvestigatedRequest(BaseModel):
+    entityType: str
+    entityId: str
+    note: str
 
 class RefundRequest(BaseModel):
     paymentId: str

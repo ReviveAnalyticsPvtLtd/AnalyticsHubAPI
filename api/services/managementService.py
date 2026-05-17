@@ -887,6 +887,8 @@ class ManagementService:
     def _mapSubscriptionStatusForProfile(status: str | None) -> str:
         normalized = (status or "").strip().lower()
         mapping = {
+            "none": "NONE",
+            "trial": "TRIAL",
             "active": "ACTIVE",
             "renewal_upcoming": "ACTIVE",
             "payment_pending": "ACTIVE",
@@ -898,7 +900,14 @@ class ManagementService:
         return mapping.get(normalized, "NONE")
 
     @staticmethod
-    def _mapBillingModeToPlanType(billingMode: str | None) -> str:
+    def _mapBillingModeToPlanType(billingMode: str | None, status: str | None = None) -> str:
+        normalizedStatus = (status or "").strip().lower()
+        if normalizedStatus == "trial":
+            return "free"
+        if normalizedStatus == "none":
+            return "none"
+        if billingMode == "none":
+            return "none"
         if billingMode == "monthly_recurring":
             return "pro"
         if billingMode == "annual_prepaid":
@@ -998,7 +1007,10 @@ class ManagementService:
                 "position": record.get("role"),
                 "bio": record.get("profileBio"),
                 "plan": {
-                    "planType": self._mapBillingModeToPlanType(subscription.get("billing_mode")),
+                    "planType": self._mapBillingModeToPlanType(
+                        subscription.get("billing_mode"),
+                        subscription.get("status"),
+                    ),
                     "status": currentStatus,
                     "planExpire": expiryStr,
                     "nextBilling": nextBilling,
@@ -1135,7 +1147,10 @@ class ManagementService:
                 "position": record.get("role"),
                 "bio": record.get("profileBio"),
                 "plan": {
-                    "planType": self._mapBillingModeToPlanType(subscription.get("billing_mode")),
+                    "planType": self._mapBillingModeToPlanType(
+                        subscription.get("billing_mode"),
+                        subscription.get("status"),
+                    ),
                     "status": currentStatus,
                     "planExpire": expiryStr,
                     "nextBilling": nextBilling,

@@ -37,12 +37,15 @@ from enum import Enum
 
 class BillingMode(str, Enum):
     """Matches ``subscriptions.billing_mode`` CHECK constraint."""
+    NONE = "none"
     MONTHLY_RECURRING = "monthly_recurring"
     ANNUAL_PREPAID = "annual_prepaid"
 
 
 class SubscriptionLifecycleStatus(str, Enum):
     """Matches ``subscriptions.status`` CHECK constraint."""
+    NONE = "none"
+    TRIAL = "trial"
     ACTIVE = "active"
     RENEWAL_UPCOMING = "renewal_upcoming"
     PAYMENT_PENDING = "payment_pending"
@@ -106,6 +109,7 @@ class PaymentAttemptStatus(str, Enum):
     FAILED = "failed"
     CANCELLED = "cancelled"
     EXPIRED = "expired"
+    INVESTIGATED = "investigated"
 
 
 class SubscriptionRecord(BaseModel):
@@ -121,9 +125,9 @@ class SubscriptionRecord(BaseModel):
     current_period_start: datetime | None = None
     current_period_end: datetime | None = None
     renewal_due_at: datetime | None = None
-    auto_renew_enabled: bool = True
-    payment_collection_mode: PaymentCollectionMode = PaymentCollectionMode.SILENT_TOKEN
-    status: SubscriptionLifecycleStatus = SubscriptionLifecycleStatus.ACTIVE
+    auto_renew_enabled: bool = False
+    payment_collection_mode: PaymentCollectionMode = PaymentCollectionMode.AUTHENTICATED_CHECKOUT
+    status: SubscriptionLifecycleStatus = SubscriptionLifecycleStatus.NONE
     default_currency: str = "INR"
     version: int = 1
     created_at: datetime | None = None

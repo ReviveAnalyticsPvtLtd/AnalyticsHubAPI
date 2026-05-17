@@ -15,6 +15,7 @@ from analyticsHub.triggers.tasks.generateForecasts import GenerateForecasts
 from analyticsHub.triggers.tasks.renewalLifecycleTask import RenewalLifecycleTask
 from analyticsHub.triggers.tasks.annualRenewalTask import AnnualRenewalTask
 from analyticsHub.triggers.tasks.reconciliationTask import ReconciliationTask
+from analyticsHub.triggers.tasks.billingMetricsTask import BillingMetricsTask
 from analyticsHub.triggers.tasks.billingTask import DailyBillingTask
 from celery.schedules import crontab
 from celery import Celery
@@ -78,6 +79,7 @@ class CeleryWrapper:
             - 02:00 UTC daily: Renewal reminder emails (T-1, due-today).
             - Every 30 min: Past-due and suspension transitions.
             - Every 15 min: Reconciliation sweep.
+            - Every 30 min: Billing metrics and alert evaluation.
         """
         @self._app.task(name=f"{self.name}.generateForecasts")
         def sendForecasts():
@@ -103,6 +105,10 @@ class CeleryWrapper:
         def runReconciliation():
             return ReconciliationTask().execute()
 
+        @self._app.task(name=f"{self.name}.billingMetrics")
+        def runBillingMetrics():
+            return BillingMetricsTask().execute()
+
         self._app.conf.beat_schedule = {
             "daily-billing-midnight": {
                 "task": f"{self.name}.dailyBilling",
@@ -123,6 +129,10 @@ class CeleryWrapper:
             "reconciliation-every-15min": {
                 "task": f"{self.name}.reconciliation",
                 "schedule": crontab(minute="*/15"),
+            },
+            "billing-metrics-every-30min": {
+                "task": f"{self.name}.billingMetrics",
+                "schedule": crontab(minute="*/30"),
             },
         }
         self._app.conf.timezone = "UTC"

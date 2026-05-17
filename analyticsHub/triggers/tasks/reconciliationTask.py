@@ -8,9 +8,9 @@ Runs every 15 minutes via Celery Beat. For each stale attempt,
 queries Razorpay for the authoritative payment/order status and
 finalizes the attempt row idempotently (captured, failed, expired).
 
-This closes Gap 3: ensures no unresolved payment attempt is left
-indefinitely without a reconciliation path, even if webhooks are
-delayed or missed entirely.
+After the stale-attempt sweep, generates a reconciliation anomaly
+report covering provider-vs-internal mismatches and webhook
+processing anomalies, logging summary metrics for observability.
 """
 
 __version__ = "1.0.0"
@@ -55,18 +55,20 @@ class ReconciliationTask:
 
     def execute(self) -> dict:
         """
-        Run a reconciliation sweep.
+        Run a reconciliation sweep and generate an anomaly report.
 
         Returns:
-            dict: Counts of resolved and errored attempts.
+            dict: Counts of resolved attempts, errors, and anomaly summary.
         """
         logger.info("Reconciliation task started")
         results = self._reconcileStaleAttempts()
+        anomalySummary = self._generateAnomalyReport()
         logger.info(
             f"Reconciliation task completed: {results['resolved']} resolved, "
-            f"{results['errors']} errors"
+            f"{results['errors']} errors, "
+            f"{anomalySummary['totalAnomalies']} anomalies detected"
         )
-        return results
+        return {**results, "anomalySummary": anomalySummary}
 
     def _reconcileStaleAttempts(self) -> dict:
         """
@@ -209,3 +211,33 @@ class ReconciliationTask:
             "refunded": "captured",
         }
         return statusMap.get(razorpayStatus)
+
+    def _generateAnomalyReport(self) -> dict:
+        """
+        Generate and log a reconciliation anomaly report using the
+        ReconciliationService.
+
+        Returns:
+            dict: Summary counts of detected anomalies.
+        """
+        try:
+            from api.services.reconciliationService import ReconciliationService
+            service = ReconciliationService()
+            report = service.generateReport()
+            summary = report.get("summary", {})
+
+            if summary.get("totalAnomalies", 0) > 0:
+                self.client.table("SubscriptionLog").insert({
+                    "userId": "system",
+                    "eventType": "reconciliation.anomaly_report",
+                    "status": "ANOMALIES_DETECTED",
+                    "metadata": summary,
+                }).execute()
+                logger.warning(
+                    f"Reconciliation anomalies detected: {summary}"
+                )
+
+            return summary
+        except Exception as e:
+            logger.error(f"Anomaly report generation failed: {e}")
+            return {"totalAnomalies": 0, "error": str(e)}

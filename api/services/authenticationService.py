@@ -48,6 +48,8 @@ class AuthenticationService:
     def _mapSubscriptionStatus(status: str | None) -> str:
         normalized = (status or "").strip().lower()
         mapping = {
+            "none": "NONE",
+            "trial": "TRIAL",
             "active": "ACTIVE",
             "renewal_upcoming": "ACTIVE",
             "payment_pending": "ACTIVE",
@@ -59,7 +61,14 @@ class AuthenticationService:
         return mapping.get(normalized, "NONE")
 
     @staticmethod
-    def _mapBillingModeToPlan(billingMode: str | None) -> str:
+    def _mapBillingModeToPlan(billingMode: str | None, status: str | None = None) -> str:
+        normalizedStatus = (status or "").strip().lower()
+        if normalizedStatus == "trial":
+            return "free"
+        if normalizedStatus == "none":
+            return "none"
+        if billingMode == "none":
+            return "none"
         if billingMode == "monthly_recurring":
             return "pro"
         if billingMode == "annual_prepaid":
@@ -84,8 +93,8 @@ class AuthenticationService:
         """
         self.client.table("subscriptions").insert({
             "user_id": userId,
-            "billing_mode": "monthly_recurring",
-            "status": "expired",
+            "billing_mode": "none",
+            "status": "none",
             "auto_renew_enabled": False,
             "payment_collection_mode": "authenticated_checkout",
             "default_currency": "INR",
@@ -277,6 +286,10 @@ class AuthenticationService:
             }).execute()
             subscription = self._ensureSubscriptionSnapshot(dataSlice["userId"])
             subscriptionStatus = self._mapSubscriptionStatus(subscription.get("status") if subscription else None)
+            subscriptionPlan = self._mapBillingModeToPlan(
+                subscription.get("billing_mode") if subscription else None,
+                subscription.get("status") if subscription else None,
+            )
             return {
                 "status": "SUCCESS",
                 "userId": dataSlice["userId"],
@@ -287,7 +300,7 @@ class AuthenticationService:
                 "subscriptionStatus": subscriptionStatus,
                 "subscriptionStart": subscription.get("current_period_start") if subscription else None,
                 "subscriptionExpiry": subscription.get("current_period_end") if subscription else None,
-                "subscriptionPlan": self._mapBillingModeToPlan(subscription.get("billing_mode") if subscription else None)
+                "subscriptionPlan": subscriptionPlan,
             }
         except CustomException:
             raise
@@ -332,7 +345,10 @@ class AuthenticationService:
                 userData = response.data[0]
                 subscription = self._ensureSubscriptionSnapshot(userData["userId"])
                 subscriptionStatus = self._mapSubscriptionStatus(subscription.get("status") if subscription else None)
-                subscriptionPlan = self._mapBillingModeToPlan(subscription.get("billing_mode") if subscription else None)
+                subscriptionPlan = self._mapBillingModeToPlan(
+                    subscription.get("billing_mode") if subscription else None,
+                    subscription.get("status") if subscription else None,
+                )
             else:
                 userId = str(uuid.uuid4())
                 workspaceId = str(uuid.uuid4())
@@ -356,7 +372,10 @@ class AuthenticationService:
                 }).execute()
                 subscription = self._ensureSubscriptionSnapshot(userId)
                 subscriptionStatus = self._mapSubscriptionStatus(subscription.get("status"))
-                subscriptionPlan = self._mapBillingModeToPlan(subscription.get("billing_mode"))
+                subscriptionPlan = self._mapBillingModeToPlan(
+                    subscription.get("billing_mode"),
+                    subscription.get("status"),
+                )
 
             tokenPayload = {
                 "userId": userData["userId"],
