@@ -1,5 +1,5 @@
 """
-Shared helpers for subscription-owned billing and entitlement fields.
+Shared subscription package helpers for billing and entitlement fields.
 
 The MVP billing cutover keeps identity/profile data on ``Users`` and moves
 plan lifecycle, entitlement, pending changes, and Razorpay provider state to

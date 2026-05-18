@@ -18,8 +18,8 @@ __author__ = "Rohit Mishra"
 __all__ = ["computeInvoiceSnapshot"]
 
 
-from api.services.billingConfig import RAZORPAY_ANNUAL_PLAN_ID
-from api.services.taxEngine import computeTax, TaxBreakdown
+from api.services.billing.billingConfig import RAZORPAY_ANNUAL_PLAN_ID
+from api.services.billing.taxEngine import computeTax, TaxBreakdown
 from utils.logger import logger
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone

@@ -23,8 +23,8 @@ __all__ = [
 ]
 
 
-from api.services.billingEngine import computeInvoiceSnapshot
-from api.services.subscriptionFieldUtils import (
+from api.services.billing.billingEngine import computeInvoiceSnapshot
+from api.services.subscriptions.subscriptionFieldUtils import (
     SUBSCRIPTION_BILLING_FIELDS_SELECT,
     subscriptionBillingState,
     subscriptionCustomerId,

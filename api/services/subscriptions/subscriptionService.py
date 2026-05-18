@@ -15,8 +15,9 @@ __all__ = ["subscriptionService"]
 from dateutil.relativedelta import relativedelta
 from utils.exceptionHandler import CustomException
 from utils.logger import logger
-from api.services.billingEngine import computeInvoiceSnapshot
-from api.services.subscriptionFieldUtils import (
+from api.services.billing.billingEngine import computeInvoiceSnapshot
+from api.services.billing.billingEventService import BillingEventService
+from api.services.subscriptions.subscriptionFieldUtils import (
     CANONICAL_SUBSCRIPTION_SELECT,
     normalizeDomainList,
     subscriptionAnchorDay,
@@ -29,7 +30,7 @@ from api.services.subscriptionFieldUtils import (
     subscriptionTokenId,
     toSubscriptionBillingPayload,
 )
-from api.services.paymentValidationService import (
+from api.services.subscriptions.paymentValidationService import (
     PaymentValidationError,
     assertInvoiceBelongsToSubscription,
     blocksNewCheckout,
@@ -280,7 +281,7 @@ class SubscriptionService:
 
     def _auditLog(self, userId: str, eventType: str, **kwargs) -> None:
         """
-        Insert a row into the SubscriptionLog table.
+        Insert an audit row into the unified billing ledger.
 
         Args:
             userId (str): The user ID associated with this log entry.
@@ -303,14 +304,14 @@ class SubscriptionService:
 
             metadata = {**metaFields, **existingMeta, **kwargs}
 
-            self.client.table("SubscriptionLog").insert({
-                "userId": userId,
-                "eventType": eventType,
-                "status": status,
-                "metadata": metadata if metadata else None,
-            }).execute()
+            BillingEventService(self.client).log_event(
+                user_id=userId,
+                event_type=eventType,
+                event_status=status,
+                metadata=metadata if metadata else None,
+            )
         except Exception as e:
-            logger.error(f"SubscriptionLog insert failed for user {userId}, event {eventType}: {e}")
+            logger.error(f"billing_events insert failed for user {userId}, event {eventType}: {e}")
 
     def _getOrCreateRazorpayCustomer(self, userId: str, email: str, name: str, contact: str = "") -> str:
         """
@@ -966,7 +967,7 @@ class SubscriptionService:
                     currentPeriodStart=currentTime.isoformat(),
                     currentPeriodEnd=expiry.isoformat(),
                     renewalDueAt=expiry.isoformat(),
-                    autoRenewEnabled=True,
+                    autoRenewEnabled=False,
                     paymentCollectionMode="authenticated_checkout",
                     subscribedExperts=normalizedDomains,
                     domainCount=len(normalizedDomains),

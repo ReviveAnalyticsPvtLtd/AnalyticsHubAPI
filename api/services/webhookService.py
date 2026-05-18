@@ -17,13 +17,14 @@ from utils.exceptionHandler import CustomException
 from utils.webhookExceptions import RetryableWebhookError
 from utils.logger import logger
 from api.commons import client
-from api.services.subscriptionFieldUtils import (
+from api.services.billing.billingEventService import BillingEventService
+from api.services.subscriptions.subscriptionFieldUtils import (
     CANONICAL_SUBSCRIPTION_SELECT,
     subscriptionCustomerId,
     subscriptionRecurringFailures,
     subscriptionTokenId,
 )
-from api.services.paymentValidationService import utcFromTimestamp, utcNow
+from api.services.subscriptions.paymentValidationService import utcFromTimestamp, utcNow
 import datetime
 from dateutil import parser
 import hashlib
@@ -419,7 +420,7 @@ class WebhookService:
 
     def _auditLog(self, userId: str, eventType: str, **kwargs) -> None:
         """
-        Insert a row into the SubscriptionLog table.
+        Insert an audit row into the unified billing ledger.
 
         Args:
             userId (str): The user ID associated with this log entry.
@@ -442,14 +443,14 @@ class WebhookService:
 
             metadata = {**metaFields, **existingMeta, **kwargs}
 
-            self.client.table("SubscriptionLog").insert({
-                "userId": userId,
-                "eventType": eventType,
-                "status": status,
-                "metadata": metadata if metadata else None,
-            }).execute()
+            BillingEventService(self.client).log_event(
+                user_id=userId,
+                event_type=eventType,
+                event_status=status,
+                metadata=metadata if metadata else None,
+            )
         except Exception as e:
-            logger.error(f"SubscriptionLog insert failed for user {userId}, event {eventType}: {e}")
+            logger.error(f"billing_events insert failed for user {userId}, event {eventType}: {e}")
 
     def _upsertInvoiceRecord(self, userId: str, invoiceData: dict) -> None:
         """
@@ -591,7 +592,7 @@ class WebhookService:
                 if not frozenInvoice:
                     raise Exception(f"Frozen invoice not found for domain proration payment: {invoiceId}")
                 self._validateFrozenInvoicePaymentMatch(frozenInvoice, paymentEntity)
-            from api.services.subscriptionService import subscriptionService
+            from api.services.subscriptions.subscriptionService import subscriptionService
             orderId = paymentEntity.get("order_id")
             if orderId:
                 subscriptionService._activatePaidDomains(
@@ -1168,7 +1169,7 @@ class WebhookService:
         Send a renewal lifecycle notification email with template version
         tracking, send-log deduplication, and delivery status logging.
 
-        Uses SubscriptionLog as the send-log with a dedupe key of
+        Uses billing_events as the send-log with a dedupe key of
         (invoiceId, template) to enforce exactly-once delivery per
         template per invoice.
 
@@ -1180,11 +1181,11 @@ class WebhookService:
         """
         sendLogKey = f"{invoiceId}:{template}"
         existingLog = (
-            self.client.table("SubscriptionLog")
-            .select("id, metadata")
-            .eq("userId", userId)
-            .eq("eventType", f"email.{template}")
-            .eq("status", sendLogKey)
+            self.client.table("billing_events")
+            .select("id, metadata_json")
+            .eq("user_id", userId)
+            .eq("event_type", f"email.{template}")
+            .eq("event_status", sendLogKey)
             .execute()
             .data
         )
@@ -1230,18 +1231,20 @@ class WebhookService:
             deliveryStatus = "DELIVERY_FAILED"
             logger.error(f"{template} email send failed for user {userId}: {e}")
 
-        self.client.table("SubscriptionLog").insert({
-            "userId": userId,
-            "eventType": f"email.{template}",
-            "status": sendLogKey,
-            "metadata": {
+        BillingEventService(self.client).log_event(
+            user_id=userId,
+            event_type=f"email.{template}",
+            event_status=sendLogKey,
+            category="notification",
+            idempotency_key=sendLogKey if deliveryStatus == "SENT" else None,
+            metadata={
                 "invoiceId": invoiceId,
                 "template": template,
                 "templateVersion": "1",
                 "deliveryStatus": deliveryStatus,
                 "sentAt": utcNow().isoformat(),
             },
-        }).execute()
+        )
         logger.info(f"{template} email dispatched for user {userId}, delivery={deliveryStatus}")
 
     @staticmethod
@@ -1250,7 +1253,7 @@ class WebhookService:
         if not logs:
             return True
         for log in logs:
-            metadata = log.get("metadata") or {}
+            metadata = log.get("metadata_json") or log.get("metadata") or {}
             if metadata.get("deliveryStatus") == "SENT":
                 return False
         return len(logs) < maxAttempts

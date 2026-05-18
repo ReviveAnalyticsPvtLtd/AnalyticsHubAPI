@@ -25,11 +25,12 @@ __author__ = "Rohit Mishra"
 __all__ = ["AnnualRenewalTask"]
 
 
-from api.services.invoiceService import (
+from api.services.billing.invoiceService import (
     createUpcomingRenewalInvoice,
     createPaymentArtifact,
 )
-from api.services.subscriptionFieldUtils import (
+from api.services.billing.billingEventService import BillingEventService
+from api.services.subscriptions.subscriptionFieldUtils import (
     CANONICAL_SUBSCRIPTION_SELECT,
     subscriptionDomainCount,
     subscriptionExperts,
@@ -286,7 +287,7 @@ class AnnualRenewalTask:
         """
         Send a T-30 renewal awareness email.
 
-        Uses SubscriptionLog as an idempotent send-log keyed by
+        Uses billing_events as an idempotent send-log keyed by
         invoiceId + template to ensure the email is sent exactly once.
 
         Args:
@@ -306,11 +307,11 @@ class AnnualRenewalTask:
             return
 
         existingLog = (
-            self.client.table("SubscriptionLog")
-            .select("id, metadata")
-            .eq("userId", userId)
-            .eq("eventType", f"email.{template}")
-            .eq("status", sendLogKey)
+            self.client.table("billing_events")
+            .select("id, metadata_json")
+            .eq("user_id", userId)
+            .eq("event_type", f"email.{template}")
+            .eq("event_status", sendLogKey)
             .execute()
             .data
         )
@@ -352,18 +353,20 @@ class AnnualRenewalTask:
             deliveryStatus = "DELIVERY_FAILED"
             logger.error(f"T-30 email send failed for invoice {invoiceId}: {e}")
 
-        self.client.table("SubscriptionLog").insert({
-            "userId": userId,
-            "eventType": f"email.{template}",
-            "status": sendLogKey,
-            "metadata": {
+        BillingEventService(self.client).log_event(
+            user_id=userId,
+            event_type=f"email.{template}",
+            event_status=sendLogKey,
+            category="notification",
+            idempotency_key=sendLogKey if deliveryStatus == "SENT" else None,
+            metadata={
                 "invoiceId": invoiceId,
                 "template": template,
                 "templateVersion": "1",
                 "deliveryStatus": deliveryStatus,
                 "sentAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             },
-        }).execute()
+        )
         logger.info(f"T-30 awareness email dispatched for invoice {invoiceId}, delivery={deliveryStatus}")
 
     def _sendT7Email(self, user: dict, artifact: dict, subscription: dict) -> None:
@@ -371,7 +374,7 @@ class AnnualRenewalTask:
         Send a T-7 payment ready email with the Razorpay pay link
         and a dashboard fallback link.
 
-        Uses SubscriptionLog as an idempotent send-log keyed by
+        Uses billing_events as an idempotent send-log keyed by
         invoiceId + template to ensure the email is sent exactly once.
 
         Args:
@@ -390,11 +393,11 @@ class AnnualRenewalTask:
             return
 
         existingLog = (
-            self.client.table("SubscriptionLog")
-            .select("id, metadata")
-            .eq("userId", userId)
-            .eq("eventType", f"email.{template}")
-            .eq("status", sendLogKey)
+            self.client.table("billing_events")
+            .select("id, metadata_json")
+            .eq("user_id", userId)
+            .eq("event_type", f"email.{template}")
+            .eq("event_status", sendLogKey)
             .execute()
             .data
         )
@@ -440,18 +443,20 @@ class AnnualRenewalTask:
             deliveryStatus = "DELIVERY_FAILED"
             logger.error(f"T-7 email send failed for invoice {invoiceId}: {e}")
 
-        self.client.table("SubscriptionLog").insert({
-            "userId": userId,
-            "eventType": f"email.{template}",
-            "status": sendLogKey,
-            "metadata": {
+        BillingEventService(self.client).log_event(
+            user_id=userId,
+            event_type=f"email.{template}",
+            event_status=sendLogKey,
+            category="notification",
+            idempotency_key=sendLogKey if deliveryStatus == "SENT" else None,
+            metadata={
                 "invoiceId": invoiceId,
                 "template": template,
                 "templateVersion": "1",
                 "deliveryStatus": deliveryStatus,
                 "sentAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             },
-        }).execute()
+        )
         logger.info(f"T-7 payment ready email dispatched for invoice {invoiceId}, delivery={deliveryStatus}")
 
     @staticmethod
@@ -464,7 +469,7 @@ class AnnualRenewalTask:
         if not logs:
             return True
         for log in logs:
-            metadata = log.get("metadata") or {}
+            metadata = log.get("metadata_json") or log.get("metadata") or {}
             if metadata.get("deliveryStatus") == "SENT":
                 return False
         return len(logs) < maxAttempts

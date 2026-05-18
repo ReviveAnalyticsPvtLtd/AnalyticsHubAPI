@@ -6,7 +6,7 @@ Runs as a Celery Beat task at midnight UTC.
 
 Queries subscriptions whose current_period_end falls within 48 hours,
 validates token health, enforces RBI silent-charge thresholds, persists
-payment_attempts before any provider call, and creates a Razorpay Order
+billing event payment attempts before any provider call, and creates a Razorpay Order
 followed by create_recurring_payment against the user's saved token.
 
 All post-payment state changes (expiry bump, invoice creation, dunning)
@@ -18,9 +18,10 @@ __version__ = "1.0.0"
 __author__ = "Rohit Mishra"
 __all__ = ["DailyBillingTask"]
 
-from api.services.billingConfig import MAX_SILENT_RECURRING_AMOUNT_PAISE
-from api.services.billingEngine import computeInvoiceSnapshot
-from api.services.subscriptionFieldUtils import (
+from api.services.billing.billingConfig import MAX_SILENT_RECURRING_AMOUNT_PAISE
+from api.services.billing.billingEngine import computeInvoiceSnapshot
+from api.services.billing.billingEventService import BillingEventService
+from api.services.subscriptions.subscriptionFieldUtils import (
     CANONICAL_SUBSCRIPTION_SELECT,
     subscriptionCustomerId,
     subscriptionDomainCount,
@@ -61,7 +62,7 @@ class DailyBillingTask:
         - RBI silent-charge threshold guard.
         - Token health validation before every charge attempt.
         - Period-based idempotency (DB uniqueness + Redis lock).
-        - payment_attempts ledger for reconciliation readiness.
+        - billing_events payment attempt ledger for reconciliation readiness.
     """
 
     _CHARGE_LOCK_TTL_SECONDS = 72 * 60 * 60
@@ -141,7 +142,7 @@ class DailyBillingTask:
 
     def _auditLog(self, userId: str, eventType: str, **kwargs) -> None:
         """
-        Insert a row into the SubscriptionLog table.
+        Insert an audit row into the unified billing ledger.
 
         Args:
             userId (str): The user ID.
@@ -152,17 +153,15 @@ class DailyBillingTask:
             status = kwargs.pop("status", None)
             metadata = kwargs.pop("metadata", None) or {}
             metadata.update(kwargs)
-            self.client.table("SubscriptionLog").insert(
-                {
-                    "userId": userId,
-                    "eventType": eventType,
-                    "status": status,
-                    "metadata": metadata if metadata else None,
-                }
-            ).execute()
+            BillingEventService(self.client).log_event(
+                user_id=userId,
+                event_type=eventType,
+                event_status=status,
+                metadata=metadata if metadata else None,
+            )
         except Exception as e:
             logger.error(
-                f"SubscriptionLog insert failed for user {userId}, event {eventType}: {e}"
+                f"billing_events insert failed for user {userId}, event {eventType}: {e}"
             )
 
     def _validateTokenHealth(self, userId: str, tokenId: str,
@@ -215,10 +214,10 @@ class DailyBillingTask:
                               cycleKey: str, amount: int,
                               idempotencyKey: str) -> dict | None:
         """
-        Persist a payment_attempts row before the provider call.
+        Persist a structured payment attempt row before the provider call.
 
         Uses the DB partial unique index on (user_id, period_start,
-        period_end, attempt_type) WHERE status IN ('created',
+        period_end, payment_attempt_type) WHERE payment_status IN ('created',
         'pending_provider_ack', 'authorized') to prevent duplicate
         unresolved attempts for the same billing period.
 
@@ -234,27 +233,22 @@ class DailyBillingTask:
         Returns:
             dict | None: The created row, or None if duplicate blocked.
         """
-        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
         try:
-            result = self.client.table("payment_attempts").insert({
-                "user_id": userId,
-                "subscription_id": subscriptionId,
-                "period_start": periodStart,
-                "period_end": periodEnd,
-                "cycle_key": cycleKey,
-                "attempt_type": "token_debit",
-                "status": "created",
-                "amount": amount,
-                "currency": "INR",
-                "attempted_at": now,
-                "idempotency_key": idempotencyKey,
-            }).execute()
-            return result.data[0] if result.data else None
+            return BillingEventService(self.client).create_payment_attempt(
+                user_id=userId,
+                subscription_id=subscriptionId,
+                period_start=periodStart,
+                period_end=periodEnd,
+                cycle_key=cycleKey,
+                amount=amount,
+                currency="INR",
+                idempotency_key=idempotencyKey,
+            )
         except Exception as e:
             errorStr = str(e).lower()
             if "duplicate key" in errorStr or "unique constraint" in errorStr or "23505" in errorStr:
                 logger.info(
-                    f"Duplicate payment_attempt blocked for user {userId}, "
+                    f"Duplicate billing_events payment attempt blocked for user {userId}, "
                     f"cycle {cycleKey} — already has unresolved attempt"
                 )
                 return None
@@ -265,7 +259,7 @@ class DailyBillingTask:
                                     providerOrderId: str = None,
                                     failureReason: str = None) -> None:
         """
-        Transition a payment_attempts row to a new status.
+        Transition a billing_events payment attempt row to a new status.
 
         Args:
             attemptId (str): The UUID of the payment attempt.
@@ -274,23 +268,16 @@ class DailyBillingTask:
             providerOrderId (str): Razorpay order ID, if available.
             failureReason (str): Reason string for failed/precheck_failed.
         """
-        updateData = {"status": status}
-        if providerPaymentId:
-            updateData["provider_payment_id"] = providerPaymentId
-        if providerOrderId:
-            updateData["provider_order_id"] = providerOrderId
-        if failureReason:
-            updateData["failure_reason"] = failureReason[:2000]
-        if status in ("captured", "failed", "expired", "cancelled", "precheck_failed"):
-            updateData["completed_at"] = datetime.datetime.now(
-                datetime.timezone.utc
-            ).isoformat()
         try:
-            self.client.table("payment_attempts").update(
-                updateData
-            ).eq("id", attemptId).execute()
+            BillingEventService(self.client).update_payment_attempt(
+                event_id=attemptId,
+                payment_status=status,
+                provider_payment_id=providerPaymentId,
+                provider_order_id=providerOrderId,
+                failure_reason=failureReason,
+            )
         except Exception as e:
-            logger.error(f"Failed to update payment_attempt {attemptId}: {e}")
+            logger.error(f"Failed to update billing event payment attempt {attemptId}: {e}")
 
     def _createOrGetRenewalInvoiceSnapshot(self, userId: str, subscription: dict, snapshot) -> dict:
         """
@@ -425,7 +412,7 @@ class DailyBillingTask:
         falls within 48 hours.
 
         Enforces threshold guard, token precheck, period-based idempotency,
-        and payment_attempts ledger persistence before any provider call.
+        and billing_events payment-attempt persistence before any provider call.
 
         Returns:
             dict: Counts of queued, skipped, and errored charges.

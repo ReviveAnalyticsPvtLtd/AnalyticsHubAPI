@@ -21,6 +21,7 @@ __all__ = ["BillingMetricsService"]
 
 
 from supabase import create_client
+from api.services.billing.billingEventService import BillingEventService
 from utils.logger import logger
 import datetime
 import os
@@ -54,8 +55,8 @@ class BillingMetricsService:
     """
     Observability service for billing system health monitoring.
 
-    Collects operational metrics from payment_attempts, WebhookEvents,
-    and SubscriptionLog tables and evaluates them against configurable
+    Collects operational metrics from billing_events and WebhookEvents
+    and evaluates them against configurable
     alert thresholds.
     """
 
@@ -151,7 +152,7 @@ class BillingMetricsService:
     def _collectRecurringMetrics(self, windowStart: str) -> dict:
         """
         Count recurring charge outcomes (queued, captured, failed) within
-        the metrics window using SubscriptionLog events.
+        the metrics window using billing_events.
 
         Args:
             windowStart: ISO timestamp for the start of the window.
@@ -207,16 +208,17 @@ class BillingMetricsService:
 
     def _collectReconciliationMetrics(self) -> dict:
         """
-        Count current unresolved payment_attempts and recent
+        Count current unresolved billing event payment attempts and recent
         reconciliation anomaly reports.
 
         Returns:
             dict: Current unresolved count and anomaly counts.
         """
         unresolved = (
-            self.client.table("payment_attempts")
+            self.client.table("billing_events")
             .select("id", count="exact")
-            .in_("status", ["created", "pending_provider_ack"])
+            .eq("event_category", "payment_attempt")
+            .in_("payment_status", ["created", "pending_provider_ack", "authorized"])
             .execute()
         )
         unresolvedCount = unresolved.count if hasattr(unresolved, "count") and unresolved.count is not None else len(unresolved.data)
@@ -242,20 +244,20 @@ class BillingMetricsService:
 
     def _countLogEvents(self, eventType: str, windowStart: str) -> int:
         """
-        Count SubscriptionLog entries of a given eventType within the window.
+        Count billing_events entries of a given eventType within the window.
 
         Args:
-            eventType: The SubscriptionLog eventType to count.
+            eventType: The billing event type to count.
             windowStart: ISO timestamp for the start of the window.
 
         Returns:
             int: Number of matching log entries.
         """
         result = (
-            self.client.table("SubscriptionLog")
+            self.client.table("billing_events")
             .select("id", count="exact")
-            .eq("eventType", eventType)
-            .gte("created_at", windowStart)
+            .eq("event_type", eventType)
+            .gte("occurred_at", windowStart)
             .execute()
         )
         return result.count if hasattr(result, "count") and result.count is not None else len(result.data)
@@ -278,7 +280,7 @@ class BillingMetricsService:
 
     def _persistAlerts(self, alerts: list[dict]) -> None:
         """
-        Log triggered alerts to SubscriptionLog for dashboard visibility.
+        Log triggered alerts to billing_events for dashboard visibility.
 
         Args:
             alerts: List of triggered alert dicts.
@@ -286,15 +288,16 @@ class BillingMetricsService:
         now = datetime.datetime.now(datetime.timezone.utc).isoformat()
         for alert in alerts:
             try:
-                self.client.table("SubscriptionLog").insert({
-                    "userId": "system",
-                    "eventType": f"billing.alert.{alert['alertType']}",
-                    "status": alert["severity"],
-                    "metadata": {
+                BillingEventService(self.client).log_event(
+                    user_id="system",
+                    event_type=f"billing.alert.{alert['alertType']}",
+                    event_status=alert["severity"],
+                    category="system",
+                    metadata={
                         **alert,
                         "triggeredAt": now,
                     },
-                }).execute()
+                )
                 logger.warning(
                     f"Billing alert triggered: {alert['alertType']} "
                     f"(severity={alert['severity']}, value={alert['actualValue']})"

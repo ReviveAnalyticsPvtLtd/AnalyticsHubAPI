@@ -16,8 +16,8 @@ from api.models import (
     RegeneratePaymentArtifactRequest,
     ReplayWebhookEventRequest,
 )
-from api.services.billingMetricsService import BillingMetricsService
-from api.services.reconciliationService import ReconciliationService
+from api.services.billing.billingMetricsService import BillingMetricsService
+from api.services.billing.reconciliationService import ReconciliationService
 from utils.exceptionHandler import CustomException, raiseHttpException
 from fastapi.responses import ORJSONResponse
 from fastapi import APIRouter, Depends, HTTPException, status

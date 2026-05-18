@@ -1,8 +1,8 @@
 """
 reconciliationTask.py
 
-Periodic reconciliation scheduler for payment_attempts that remain
-in unresolved states (created, pending_provider_ack).
+Periodic reconciliation scheduler for billing event payment attempts that remain
+in unresolved states (created, pending_provider_ack, authorized).
 
 Runs every 15 minutes via Celery Beat. For each stale attempt,
 queries Razorpay for the authoritative payment/order status and
@@ -40,7 +40,7 @@ def _getSupabaseClient():
 
 class ReconciliationTask:
     """
-    Reconciliation scheduler that finalizes stale payment_attempts by
+    Reconciliation scheduler that finalizes stale billing event payment attempts by
     querying the Razorpay API for authoritative payment/order status.
     """
 
@@ -82,9 +82,10 @@ class ReconciliationTask:
         cutoff = (now - datetime.timedelta(minutes=_STALE_THRESHOLD_MINUTES)).isoformat()
 
         staleAttempts = (
-            self.client.table("payment_attempts")
-            .select("id, provider_payment_id, provider_order_id, user_id, status")
-            .in_("status", ["created", "pending_provider_ack"])
+            self.client.table("billing_events")
+            .select("id, provider_payment_id, provider_order_id, user_id, payment_status")
+            .eq("event_category", "payment_attempt")
+            .in_("payment_status", ["created", "pending_provider_ack", "authorized"])
             .lte("attempted_at", cutoff)
             .limit(_BATCH_LIMIT)
             .execute()
@@ -104,10 +105,11 @@ class ReconciliationTask:
                 finalStatus = self._resolveAttempt(attempt)
                 if finalStatus:
                     updateData = {
-                        "status": finalStatus,
+                        "event_status": finalStatus,
+                        "payment_status": finalStatus,
                         "completed_at": now.isoformat(),
                     }
-                    self.client.table("payment_attempts").update(
+                    self.client.table("billing_events").update(
                         updateData
                     ).eq("id", attemptId).execute()
                     resolved += 1
@@ -128,7 +130,7 @@ class ReconciliationTask:
         Checks by provider_payment_id first, falls back to provider_order_id.
 
         Args:
-            attempt (dict): The payment_attempts row.
+            attempt (dict): The billing event payment-attempt row.
 
         Returns:
             str | None: The resolved status (captured/failed/expired) or None
@@ -142,7 +144,7 @@ class ReconciliationTask:
         if orderId:
             return self._resolveByOrderId(orderId)
 
-        if attempt.get("status") == "created":
+        if attempt.get("payment_status") == "created":
             return "failed"
 
         return None
@@ -196,7 +198,7 @@ class ReconciliationTask:
     @staticmethod
     def _mapPaymentStatus(razorpayStatus: str) -> str | None:
         """
-        Map a Razorpay payment status to a payment_attempts terminal status.
+        Map a Razorpay payment status to a billing event payment status.
 
         Args:
             razorpayStatus (str): The Razorpay payment status string.
@@ -221,17 +223,18 @@ class ReconciliationTask:
             dict: Summary counts of detected anomalies.
         """
         try:
-            from api.services.reconciliationService import ReconciliationService
+            from api.services.billing.reconciliationService import ReconciliationService
             service = ReconciliationService()
             report = service.generateReport()
             summary = report.get("summary", {})
 
             if summary.get("totalAnomalies", 0) > 0:
-                self.client.table("SubscriptionLog").insert({
-                    "userId": "system",
-                    "eventType": "reconciliation.anomaly_report",
-                    "status": "ANOMALIES_DETECTED",
-                    "metadata": summary,
+                self.client.table("billing_events").insert({
+                    "user_id": "system",
+                    "event_category": "reconciliation",
+                    "event_type": "reconciliation.anomaly_report",
+                    "event_status": "ANOMALIES_DETECTED",
+                    "metadata_json": summary,
                 }).execute()
                 logger.warning(
                     f"Reconciliation anomalies detected: {summary}"

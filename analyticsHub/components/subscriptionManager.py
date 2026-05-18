@@ -17,7 +17,8 @@ __all__ = ["recalculateSubscriptionDays"]
 from supabase import create_client
 from datetime import datetime, timezone
 from utils.logger import logger
-from api.services.paymentValidationService import parseUtc
+from api.services.billing.billingEventService import BillingEventService
+from api.services.subscriptions.paymentValidationService import parseUtc
 import requests
 import os
 
@@ -34,7 +35,7 @@ def _getSupabaseClient():
 
 def _auditSubscriptionIntegrityIssue(client, userId: str, reason: str, metadata: dict | None = None) -> None:
     """
-    Record subscription lifecycle integrity issues in SubscriptionLog.
+    Record subscription lifecycle integrity issues in billing_events.
 
     Args:
         client: Supabase client.
@@ -43,13 +44,13 @@ def _auditSubscriptionIntegrityIssue(client, userId: str, reason: str, metadata:
         metadata (dict | None): Optional additional context.
     """
     try:
-        payload = {
-            "userId": userId,
-            "eventType": "billing.subscription_row_missing",
-            "status": "INTEGRITY_ERROR",
-            "metadata": {"reason": reason, **(metadata or {})},
-        }
-        client.table("SubscriptionLog").insert(payload).execute()
+        BillingEventService(client).log_event(
+            user_id=userId,
+            event_type="billing.subscription_row_missing",
+            event_status="INTEGRITY_ERROR",
+            category="system",
+            metadata={"reason": reason, **(metadata or {})},
+        )
     except Exception as e:
         logger.error(f"Failed to write subscription integrity audit log for user {userId}: {e}")
 

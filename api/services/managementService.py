@@ -15,7 +15,7 @@ from analyticsHub.components.domainKpiMapper import DomainKpiMapper
 from utils.llmOutputParser import parseModelJsonOutput
 from api.commons import updateProjectModifiedAt
 from utils.exceptionHandler import CustomException
-from api.services.subscriptionFieldUtils import (
+from api.services.subscriptions.subscriptionFieldUtils import (
     CANONICAL_SUBSCRIPTION_SELECT,
     subscriptionExperts,
     toApiPlanFields,

@@ -17,7 +17,8 @@ __author__ = "Rohit Mishra"
 __all__ = ["ReconciliationService"]
 
 
-from api.services.invoiceService import createPaymentArtifact
+from api.services.billing.invoiceService import createPaymentArtifact
+from api.services.billing.billingEventService import BillingEventService
 from supabase import create_client
 from utils.logger import logger
 import razorpay
@@ -102,8 +103,8 @@ class ReconciliationService:
 
     def _findStaleAttempts(self, now: datetime.datetime) -> list[dict]:
         """
-        Find payment_attempts that remain in unresolved states
-        (created, pending_provider_ack) beyond the configured threshold.
+        Find billing event payment attempts that remain in unresolved states
+        (created, pending_provider_ack, authorized) beyond the configured threshold.
 
         Args:
             now: Current UTC datetime for threshold computation.
@@ -116,12 +117,13 @@ class ReconciliationService:
         ).isoformat()
 
         stale = (
-            self.client.table("payment_attempts")
+            self.client.table("billing_events")
             .select(
-                "id, user_id, subscription_id, status, amount, currency, "
+                "id, user_id, subscription_id, payment_status, amount, currency, "
                 "attempted_at, provider_payment_id, provider_order_id, cycle_key"
             )
-            .in_("status", ["created", "pending_provider_ack"])
+            .eq("event_category", "payment_attempt")
+            .in_("payment_status", ["created", "pending_provider_ack", "authorized"])
             .lte("attempted_at", cutoff)
             .limit(_REPORT_BATCH_LIMIT)
             .execute()
@@ -144,10 +146,10 @@ class ReconciliationService:
 
     def _findProviderMismatches(self, now: datetime.datetime) -> list[dict]:
         """
-        Find payment_attempts marked as captured on the provider (Razorpay)
+        Find billing event payment attempts marked as captured on the provider (Razorpay)
         but whose corresponding internal invoice is not marked as paid.
 
-        Queries payment_attempts with status='captured' and cross-references
+        Queries billing_events with payment_status='captured' and cross-references
         the linked invoice status.
 
         Args:
@@ -157,12 +159,13 @@ class ReconciliationService:
             list[dict]: Mismatch records with provider and internal state.
         """
         captured = (
-            self.client.table("payment_attempts")
+            self.client.table("billing_events")
             .select(
                 "id, user_id, provider_payment_id, provider_order_id, "
-                "amount, status, cycle_key"
+                "amount, payment_status, cycle_key"
             )
-            .eq("status", "captured")
+            .eq("event_category", "payment_attempt")
+            .eq("payment_status", "captured")
             .limit(_REPORT_BATCH_LIMIT)
             .execute()
             .data
@@ -401,7 +404,7 @@ class ReconciliationService:
         """
         Mark a reconciliation anomaly as investigated with an audit note.
 
-        Supports payment_attempts and WebhookEvents entity types.
+        Supports billing event payment attempts and WebhookEvents entity types.
 
         Args:
             entityType: 'payment_attempt' or 'webhook_event'.
@@ -419,8 +422,9 @@ class ReconciliationService:
 
         if entityType == "payment_attempt":
             existing = (
-                self.client.table("payment_attempts")
-                .select("id, status, user_id")
+                self.client.table("billing_events")
+                .select("id, payment_status, user_id")
+                .eq("event_category", "payment_attempt")
                 .eq("id", entityId)
                 .limit(1)
                 .execute()
@@ -429,8 +433,9 @@ class ReconciliationService:
             if not existing:
                 raise ValueError(f"Payment attempt {entityId} not found")
 
-            self.client.table("payment_attempts").update({
-                "status": "investigated",
+            self.client.table("billing_events").update({
+                "event_status": "investigated",
+                "payment_status": "investigated",
                 "failure_reason": f"[INVESTIGATED] {note[:1500]}",
                 "completed_at": now,
             }).eq("id", entityId).execute()
@@ -480,7 +485,7 @@ class ReconciliationService:
 
     def _auditLog(self, userId: str, eventType: str, **kwargs) -> None:
         """
-        Insert a row into the SubscriptionLog table for audit trail.
+        Insert an audit row into the unified billing ledger.
 
         Args:
             userId: The user or admin ID.
@@ -491,13 +496,14 @@ class ReconciliationService:
             status = kwargs.pop("status", None)
             metadata = kwargs.pop("metadata", None) or {}
             metadata.update(kwargs)
-            self.client.table("SubscriptionLog").insert({
-                "userId": userId,
-                "eventType": eventType,
-                "status": status,
-                "metadata": metadata if metadata else None,
-            }).execute()
+            BillingEventService(self.client).log_event(
+                user_id=userId,
+                event_type=eventType,
+                event_status=status,
+                category="reconciliation",
+                metadata=metadata if metadata else None,
+            )
         except Exception as e:
             logger.error(
-                f"SubscriptionLog insert failed for {userId}, event {eventType}: {e}"
+                f"billing_events insert failed for {userId}, event {eventType}: {e}"
             )

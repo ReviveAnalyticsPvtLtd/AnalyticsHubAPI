@@ -1,5 +1,5 @@
 """
-Shared payment and subscription lifecycle validation helpers.
+Shared subscription package payment and lifecycle validation helpers.
 
 The functions in this module are intentionally small and dependency-light so
 endpoint services, webhook handlers, and schedulers can use the same safety

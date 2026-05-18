@@ -5,7 +5,7 @@ Celery Beat scheduler for renewal reminder emails.
 
 Runs daily and sends T-1 and due-today email reminders for
 payment_pending annual renewal invoices. Uses idempotent send-log
-keying (invoice + template + date) via SubscriptionLog and Redis
+keying (invoice + template + date) via billing_events and Redis
 pre-flight locks.
 
 Past-due and suspension transitions are handled by the dedicated
@@ -19,6 +19,7 @@ __all__ = ["RenewalLifecycleTask"]
 
 from supabase import create_client
 from utils.logger import logger
+from api.services.billing.billingEventService import BillingEventService
 import datetime
 import requests
 import json
@@ -76,7 +77,7 @@ class RenewalLifecycleTask:
         """
         Send T-1 and due-today reminders for payment_pending invoices.
 
-        Uses SubscriptionLog as a send-log to enforce idempotent
+        Uses billing_events as a send-log to enforce idempotent
         delivery keyed by (invoice_id, template, date).
 
         Returns:
@@ -122,11 +123,11 @@ class RenewalLifecycleTask:
                 skipped += 1
                 continue
             existingLog = (
-                self.client.table("SubscriptionLog")
-                .select("id, metadata")
-                .eq("userId", userId)
-                .eq("eventType", f"email.{template}")
-                .eq("status", sendLogKey)
+                self.client.table("billing_events")
+                .select("id, metadata_json")
+                .eq("user_id", userId)
+                .eq("event_type", f"email.{template}")
+                .eq("event_status", sendLogKey)
                 .execute()
                 .data
             )
@@ -156,18 +157,20 @@ class RenewalLifecycleTask:
                     skipped += 1
                     continue
 
-                self.client.table("SubscriptionLog").insert({
-                    "userId": userId,
-                    "eventType": f"email.{template}",
-                    "status": sendLogKey,
-                    "metadata": {
+                BillingEventService(self.client).log_event(
+                    user_id=userId,
+                    event_type=f"email.{template}",
+                    event_status=sendLogKey,
+                    category="notification",
+                    idempotency_key=sendLogKey if deliveryStatus == "SENT" else None,
+                    metadata={
                         "invoiceId": invoiceId,
                         "template": template,
                         "templateVersion": "1",
                         "deliveryStatus": deliveryStatus,
                         "sentAt": now.isoformat(),
                     },
-                }).execute()
+                )
                 sent += 1
             except Exception as e:
                 logger.error(
@@ -226,7 +229,7 @@ class RenewalLifecycleTask:
         if not logs:
             return True
         for log in logs:
-            metadata = log.get("metadata") or {}
+            metadata = log.get("metadata_json") or log.get("metadata") or {}
             if metadata.get("deliveryStatus") == "SENT":
                 return False
         return len(logs) < maxAttempts

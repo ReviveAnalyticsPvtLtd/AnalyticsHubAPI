@@ -24,7 +24,8 @@ __author__ = "Rohit Mishra"
 __all__ = ["PastDueSuspensionTask"]
 
 
-from api.services.invoiceService import transitionToPastDue, transitionToSuspended
+from api.services.billing.invoiceService import transitionToPastDue, transitionToSuspended
+from api.services.billing.billingEventService import BillingEventService
 from supabase import create_client
 from utils.logger import logger
 import datetime
@@ -198,7 +199,7 @@ class PastDueSuspensionTask:
         """
         Send a suspension notice email via the configured edge function.
 
-        Uses SubscriptionLog as a send-log with dedupe key
+        Uses billing_events as a send-log with dedupe key
         (invoiceId, template) to enforce exactly-once delivery.
 
         Args:
@@ -215,11 +216,11 @@ class PastDueSuspensionTask:
             return
 
         existingLog = (
-            self.client.table("SubscriptionLog")
-            .select("id, metadata")
-            .eq("userId", userId)
-            .eq("eventType", f"email.{template}")
-            .eq("status", sendLogKey)
+            self.client.table("billing_events")
+            .select("id, metadata_json")
+            .eq("user_id", userId)
+            .eq("event_type", f"email.{template}")
+            .eq("event_status", sendLogKey)
             .execute()
             .data
         )
@@ -269,18 +270,20 @@ class PastDueSuspensionTask:
             deliveryStatus = "DELIVERY_FAILED"
             logger.error(f"Suspension notice send failed for user {userId}: {e}")
 
-        self.client.table("SubscriptionLog").insert({
-            "userId": userId,
-            "eventType": f"email.{template}",
-            "status": sendLogKey,
-            "metadata": {
+        BillingEventService(self.client).log_event(
+            user_id=userId,
+            event_type=f"email.{template}",
+            event_status=sendLogKey,
+            category="notification",
+            idempotency_key=sendLogKey if deliveryStatus == "SENT" else None,
+            metadata={
                 "invoiceId": invoiceId,
                 "template": template,
                 "templateVersion": "1",
                 "deliveryStatus": deliveryStatus,
                 "sentAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             },
-        }).execute()
+        )
         logger.info(f"Suspension notice dispatched for user {userId}, delivery={deliveryStatus}")
 
     @staticmethod
@@ -289,7 +292,7 @@ class PastDueSuspensionTask:
         if not logs:
             return True
         for log in logs:
-            metadata = log.get("metadata") or {}
+            metadata = log.get("metadata_json") or log.get("metadata") or {}
             if metadata.get("deliveryStatus") == "SENT":
                 return False
         return len(logs) < maxAttempts

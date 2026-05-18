@@ -17,7 +17,7 @@ __author__ = "Rohit Mishra"
 __all__ = ["computeTax"]
 
 
-from api.services.taxConfigLoader import getTaxConfig
+from api.services.billing.taxConfigLoader import getTaxConfig
 from utils.logger import logger
 from decimal import Decimal, ROUND_HALF_UP
 from dataclasses import dataclass, asdict

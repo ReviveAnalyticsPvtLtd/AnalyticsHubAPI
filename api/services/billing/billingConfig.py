@@ -1,7 +1,7 @@
 """
 billingConfig.py
 
-Centralized billing configuration for the annual-plan implementation.
+Centralized billing package configuration for the annual-plan implementation.
 Threshold values and billing-related environment defaults are read once
 at import time and exposed as module-level constants for use across
 services and schedulers.

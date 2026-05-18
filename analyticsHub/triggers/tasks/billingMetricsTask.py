@@ -5,7 +5,7 @@ Periodic billing observability task.
 
 Runs every 30 minutes via Celery Beat. Collects operational metrics
 from the billing system and evaluates them against configured alert
-thresholds. Triggered alerts are persisted to SubscriptionLog for
+thresholds. Triggered alerts are persisted to billing_events for
 dashboard visibility.
 """
 
@@ -22,7 +22,7 @@ class BillingMetricsTask:
     Periodic task for billing system health monitoring.
 
     Collects operational metrics and evaluates alert thresholds
-    every run. Alerts are logged to SubscriptionLog for
+    every run. Alerts are logged to billing_events for
     observability dashboards.
     """
 
@@ -36,7 +36,7 @@ class BillingMetricsTask:
         logger.info("Billing metrics task started")
 
         try:
-            from api.services.billingMetricsService import BillingMetricsService
+            from api.services.billing.billingMetricsService import BillingMetricsService
             service = BillingMetricsService()
             metrics = service.collectMetrics()
             alerts = service.evaluateAlerts()

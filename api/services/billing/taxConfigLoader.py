@@ -1,7 +1,7 @@
 """
 taxConfigLoader.py
 
-Loads, validates, and exposes the V1 tax-rule configuration from a
+Loads, validates, and exposes the billing package V1 tax-rule configuration from a
 local JSON file.  The config is loaded once at import time and cached
 in-memory.  Subsequent calls to ``getTaxConfig()`` return the cached
 object; ``reloadTaxConfig()`` forces a re-read from disk.

@@ -11,7 +11,7 @@ __all__ = ["router"]
 
 from utils.exceptionHandler import CustomException, raiseHttpException
 from api.models import VerifySubscriptionRequest, CreateSubscriptionRequest, AddDomainsRequest, VerifyDomainUpgradeRequest, RemoveDomainRequest, CancelPendingAdditionRequest, CancelSubscriptionRequest, RefundRequest, CreateAnnualRenewalSessionRequest, VerifyAnnualRenewalPaymentRequest
-from api.services.subscriptionService import subscriptionService
+from api.services.subscriptions.subscriptionService import subscriptionService
 from fastapi.responses import ORJSONResponse
 from fastapi import APIRouter, Depends
 from api.commons import verifyToken

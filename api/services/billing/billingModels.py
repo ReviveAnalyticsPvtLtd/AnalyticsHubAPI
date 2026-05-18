@@ -1,13 +1,13 @@
 """
 billingModels.py
 
-Pydantic models and enums for the annual-plan billing system.
+Pydantic models and enums for the annual-plan billing package.
 
 These models define:
     - Domain enums for billing mode, subscription status, invoice status,
       payment attempt status, and payment collection modes.
     - Read/write schemas for ``subscriptions``, extended ``Invoices``,
-      and ``payment_attempts`` billing tables.
+      and ``billing_events`` ledger rows.
 
 All enum values align with the CHECK constraints defined in the SQL
 migration scripts (``docs/annualPlan/sql/``).
@@ -26,7 +26,7 @@ __all__ = [
     "PaymentAttemptStatus",
     "SubscriptionRecord",
     "InvoiceRecord",
-    "PaymentAttemptRecord",
+    "BillingEventRecord",
 ]
 
 
@@ -91,7 +91,7 @@ class InvoiceLifecycleStatus(str, Enum):
 
 
 class PaymentAttemptType(str, Enum):
-    """Matches ``payment_attempts.attempt_type`` CHECK constraint."""
+    """Matches ``billing_events.payment_attempt_type`` CHECK constraint."""
     TOKEN_DEBIT = "token_debit"
     CHECKOUT = "checkout"
     INVOICE_PAY = "invoice_pay"
@@ -100,7 +100,7 @@ class PaymentAttemptType(str, Enum):
 
 
 class PaymentAttemptStatus(str, Enum):
-    """Matches ``payment_attempts.status`` CHECK constraint."""
+    """Matches ``billing_events.payment_status`` CHECK constraint."""
     CREATED = "created"
     PRECHECK_FAILED = "precheck_failed"
     PENDING_PROVIDER_ACK = "pending_provider_ack"
@@ -177,29 +177,35 @@ class InvoiceRecord(BaseModel):
     updated_at: datetime | None = None
 
 
-class PaymentAttemptRecord(BaseModel):
+class BillingEventRecord(BaseModel):
     """
-    Read/write schema for a row in the ``payment_attempts`` table.
+    Read/write schema for a row in the unified ``billing_events`` table.
     """
     id: str | None = None
-    invoice_id: str | None = None
     user_id: str
     subscription_id: str | None = None
-    period_start: datetime | None = None
-    period_end: datetime | None = None
-    cycle_key: str | None = None
+    invoice_id: str | None = None
+    webhook_event_id: str | None = None
+    event_category: str
+    event_type: str
+    event_status: str | None = None
+    payment_attempt_type: PaymentAttemptType | None = None
+    payment_status: PaymentAttemptStatus | None = None
     provider: str = "razorpay"
     provider_payment_id: str | None = None
     provider_order_id: str | None = None
     provider_invoice_id: str | None = None
     provider_payment_link_id: str | None = None
-    attempt_type: PaymentAttemptType
-    status: PaymentAttemptStatus = PaymentAttemptStatus.CREATED
+    period_start: datetime | None = None
+    period_end: datetime | None = None
+    cycle_key: str | None = None
     amount: int | None = None
     currency: str = "INR"
     failure_reason: str | None = None
+    idempotency_key: str | None = None
+    metadata_json: dict = Field(default_factory=dict)
     attempted_at: datetime | None = None
     completed_at: datetime | None = None
-    idempotency_key: str | None = None
+    occurred_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
