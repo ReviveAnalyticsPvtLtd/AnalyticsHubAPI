@@ -2,8 +2,8 @@
 pdfTableExtractor.py
 
 Extracts tables from PDF pages by rasterizing them to images with PyMuPDF
-and sending them to a Vision Language Model (VLM) via an OpenAI-compatible
-API. Supports Groq, OpenRouter, and OpenAI through a configurable base URL.
+and sending them to a Gemini Vision Language Model (VLM) via LangChain's
+ChatGoogleGenerativeAI integration.
 
 Response validation is enforced with Pydantic models to guarantee consistent
 output regardless of the upstream model.
@@ -21,9 +21,10 @@ __all__ = [
 
 from utils.exceptionHandler import CustomException
 from analyticsHub.utils import readYaml, getConfig
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, field_validator
 from utils.logger import logger
-from openai import OpenAI, AsyncOpenAI
 from typing import Any
 import asyncio
 import base64
@@ -114,17 +115,10 @@ class PdfTableExtractor:
         self.maxRetries = config.getint("PDFTABLE", "maxRetries", fallback=2)
         self.retryDelay = config.getfloat("PDFTABLE", "retryDelay", fallback=2.0)
         self.maxConcurrency = config.getint("PDFTABLE", "maxConcurrency", fallback=5)
-
-        baseUrl = config.get("PDFTABLE", "baseUrl")
-        apiKeyEnv = config.get("PDFTABLE", "apiKeyEnv", fallback="GROQ_API_KEY")
-        apiKey = os.environ.get(apiKeyEnv, "")
-        self.client = OpenAI(
-            base_url=baseUrl,
-            api_key=apiKey,
-        )
-        self.asyncClient = AsyncOpenAI(
-            base_url=baseUrl,
-            api_key=apiKey,
+        self.llm = ChatGoogleGenerativeAI(
+            model=self.model,
+            temperature=self.temperature,
+            max_tokens=self.maxTokens,
         )
 
     @staticmethod
@@ -137,6 +131,34 @@ class PdfTableExtractor:
         b64 = base64.b64encode(imgBytes).decode("utf-8")
         del imgBytes
         return b64
+
+    @staticmethod
+    def _normalizeModelText(content: Any) -> str:
+        """Normalize model output content to plain text."""
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            textParts: list[str] = []
+            for part in content:
+                if isinstance(part, str):
+                    textParts.append(part)
+                    continue
+                if isinstance(part, dict):
+                    partText = part.get("text")
+                    if isinstance(partText, str):
+                        textParts.append(partText)
+                        continue
+            normalized = "\n".join(p.strip() for p in textParts if p and p.strip())
+            if normalized:
+                return normalized
+        return str(content)
+
+    @classmethod
+    def _responseToText(cls, response: Any) -> str:
+        content = getattr(response, "content", response)
+        return cls._normalizeModelText(content)
 
     def extractPage(self, b64Image: str) -> PageExtractionResult:
         """
@@ -152,30 +174,22 @@ class PdfTableExtractor:
                     f"PdfTableExtractor: VLM call attempt {attempt} "
                     f"(model={self.model})."
                 )
-                completion = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": [{"type": "text", "text": self.prompt}],
-                        },
-                        {
-                            "role": "user",
-                            "content": [
+                response = self.llm.invoke(
+                    [
+                        SystemMessage(content=self.prompt),
+                        HumanMessage(
+                            content=[
                                 {
                                     "type": "image_url",
                                     "image_url": {
                                         "url": f"data:image/jpeg;base64,{b64Image}"
                                     },
                                 }
-                            ],
-                        },
-                    ],
-                    temperature=self.temperature,
-                    max_tokens=self.maxTokens,
-                    stream=False,
+                            ]
+                        ),
+                    ]
                 )
-                raw = completion.choices[0].message.content
+                raw = self._responseToText(response)
                 return self._parseAndValidate(raw)
 
             except Exception as e:
@@ -207,7 +221,7 @@ class PdfTableExtractor:
     async def extractPageAsync(self, b64Image: str) -> PageExtractionResult:
         """
         Async variant of extractPage. Sends a page image to the VLM and
-        returns validated extraction results using the AsyncOpenAI client.
+        returns validated extraction results using ChatGoogleGenerativeAI.
 
         Raises CustomException on rate-limit errors or after exhausting retries.
         """
@@ -219,30 +233,22 @@ class PdfTableExtractor:
                     f"PdfTableExtractor: async VLM call attempt {attempt} "
                     f"(model={self.model})."
                 )
-                completion = await self.asyncClient.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": [{"type": "text", "text": self.prompt}],
-                        },
-                        {
-                            "role": "user",
-                            "content": [
+                response = await self.llm.ainvoke(
+                    [
+                        SystemMessage(content=self.prompt),
+                        HumanMessage(
+                            content=[
                                 {
                                     "type": "image_url",
                                     "image_url": {
                                         "url": f"data:image/jpeg;base64,{b64Image}"
                                     },
                                 }
-                            ],
-                        },
-                    ],
-                    temperature=self.temperature,
-                    max_tokens=self.maxTokens,
-                    stream=False,
+                            ]
+                        ),
+                    ]
                 )
-                raw = completion.choices[0].message.content
+                raw = self._responseToText(response)
                 return self._parseAndValidate(raw)
 
             except Exception as e:
@@ -351,17 +357,17 @@ class PdfTableExtractor:
                 f"PdfTableExtractor: requesting merge plan for "
                 f"{len(fragments)} fragments."
             )
-            completion = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": self.mergePrompt},
-                    {"role": "user", "content": summaryText},
-                ],
+            mergeLlm = self.llm.bind(
                 temperature=0.0,
                 max_tokens=self.maxTokens,
-                stream=False,
             )
-            raw = completion.choices[0].message.content
+            response = mergeLlm.invoke(
+                [
+                    SystemMessage(content=self.mergePrompt),
+                    HumanMessage(content=summaryText),
+                ]
+            )
+            raw = self._responseToText(response)
             text = raw.strip()
             if text.startswith("```"):
                 text = text.split("\n", 1)[-1]
