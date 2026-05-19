@@ -193,7 +193,8 @@ class AuthenticationService:
                     statusCode=401,
                     uiMessage="Email or password is incorrect."
                 )
-            sessionStartTime = datetime.datetime.utcnow()
+            sessionStartTime = datetime.datetime.now(datetime.timezone.utc)
+            expiresAt = sessionStartTime + datetime.timedelta(hours=24)
             tokenPayload = {
                 "userId": dataSlice["userId"],
                 "email": loginDetails.email,
@@ -205,7 +206,9 @@ class AuthenticationService:
                 "email": dataSlice["email"],
                 "accessToken": accessToken,
                 "sessionStartTime": str(sessionStartTime),
-                "lastActivity": str(sessionStartTime)
+                "lastActivity": str(sessionStartTime),
+                "createdAt": str(sessionStartTime),
+                "expiresAt": str(expiresAt)
             }).execute()
             now = datetime.datetime.now(timezone.utc)
             subscriptionStatus = resolve_subscription_status(
@@ -262,7 +265,7 @@ class AuthenticationService:
 
             response = self.client.table("Users").select("*").eq("email", loginDetails.email).execute()
             userData = {}
-            sessionStartTime = datetime.datetime.utcnow()
+            sessionStartTime = datetime.datetime.now(datetime.timezone.utc)
 
             if response.data:
                 userData = response.data[0]
@@ -308,6 +311,8 @@ class AuthenticationService:
                     "workspaceName": "Default"
                 }).execute()
 
+            sessionStartTime = datetime.datetime.now(datetime.timezone.utc)
+            expiresAt = sessionStartTime + datetime.timedelta(hours=24)
             tokenPayload = {
                 "userId": userData["userId"],
                 "email": userData["email"],
@@ -319,7 +324,9 @@ class AuthenticationService:
                 "email": userData["email"],
                 "accessToken": accessToken,
                 "sessionStartTime": str(sessionStartTime),
-                "lastActivity": str(sessionStartTime)
+                "lastActivity": str(sessionStartTime),
+                "createdAt": str(sessionStartTime),
+                "expiresAt": str(expiresAt)
             }).execute()
 
             return {
