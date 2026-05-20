@@ -65,8 +65,11 @@ def _verifyTokenInternal(credentials: HTTPAuthorizationCredentials, checkExpiry:
         expiresAtStr = sessionData.get("expiresAt")
         if expiresAtStr:
             try:
-                # Replace space with T for ISO format compatibility if needed
-                expiresAt = datetime.fromisoformat(expiresAtStr.replace(" ", "T"))
+                # Use dateutil parser to handle all possible timestamp formats robustly
+                from dateutil import parser
+                expiresAt = parser.parse(expiresAtStr)
+                if expiresAt.tzinfo is None:
+                    expiresAt = expiresAt.replace(tzinfo=timezone.utc)
                 if datetime.now(timezone.utc) > expiresAt:
                     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has expired")
             except ValueError:
