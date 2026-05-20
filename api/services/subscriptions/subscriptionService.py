@@ -260,6 +260,89 @@ class SubscriptionService:
             updateData["paidAt"] = paidAt
         self.client.table("Invoices").update(updateData).eq("id", invoiceId).execute()
 
+    def _finalizeCapturedAnnualRenewalPayment(
+        self,
+        invoice: dict,
+        subscription: dict,
+        payment: dict,
+        userId: str,
+    ) -> dict:
+        """
+        Finalize a dashboard annual renewal after server-side Razorpay capture validation.
+        """
+        invoiceId = invoice["id"]
+        invoiceStatus = (invoice.get("status") or "").lower()
+        if invoiceStatus == "paid":
+            return {
+                "verified": True,
+                "finalized": True,
+                "alreadyFinalized": True,
+                "invoiceStatus": "PAID",
+                "awaitingWebhookFinalization": False,
+            }
+
+        paymentId = payment.get("id")
+        orderId = payment.get("order_id") or invoice.get("razorpay_order_id")
+        previousExpiry = parseUtc(subscription.get("current_period_end")) or utcNow()
+        previousExpiryNaive = previousExpiry.replace(tzinfo=None)
+        newExpiry = previousExpiryNaive + relativedelta(years=1)
+        paidAtDt = utcFromTimestamp(payment.get("captured_at")) or utcNow()
+        paidAt = paidAtDt.isoformat()
+        existingMetadata = invoice.get("metadata_json")
+        metadata = dict(existingMetadata) if isinstance(existingMetadata, dict) else {}
+        metadata.update({
+            "flow": "annual_renewal_dashboard_verify",
+            "verified": True,
+            "verifiedAt": utcNow().isoformat(),
+            "finalized": True,
+            "finalizedAt": paidAt,
+            "awaitingWebhookFinalization": False,
+        })
+
+        self.client.table("subscriptions").update({
+            "status": "active",
+            "current_period_start": previousExpiryNaive.isoformat(),
+            "current_period_end": newExpiry.isoformat(),
+            "renewal_due_at": newExpiry.isoformat(),
+        }).eq("id", subscription["id"]).execute()
+
+        self.client.table("Invoices").update({
+            "status": "PAID",
+            "razorpay_order_id": orderId,
+            "razorpayPaymentId": paymentId,
+            "paidAt": paidAt,
+            "metadata_json": metadata,
+        }).eq("id", invoiceId).execute()
+
+        previousStatus = subscription.get("status", "")
+        self._auditLog(
+            userId,
+            "billing.annual_renewal_charged",
+            paymentId=paymentId,
+            amount=payment.get("amount"),
+            currency=payment.get("currency", "INR"),
+            status="CHARGED",
+            metadata={
+                "invoiceId": invoiceId,
+                "orderId": orderId,
+                "previousExpiry": str(previousExpiryNaive),
+                "newExpiry": str(newExpiry),
+                "flow": "dashboard_verify_captured",
+                "restoredFrom": previousStatus if previousStatus in ("past_due", "suspended") else None,
+            },
+        )
+
+        logger.info(
+            f"Annual renewal finalized from dashboard verify for user {userId}, "
+            f"invoice {invoiceId}, new expiry {newExpiry}"
+        )
+        return {
+            "verified": True,
+            "finalized": True,
+            "invoiceStatus": "PAID",
+            "awaitingWebhookFinalization": False,
+        }
+
     @staticmethod
     def _isSubscriptionActive(status: str | None) -> bool:
         """
@@ -1842,10 +1925,10 @@ class SubscriptionService:
             logger.error(exception)
             raise exception
 
-    def verifyAnnualRenewalPayment(self, payload: dict, token: str) -> None:
+    def verifyAnnualRenewalPayment(self, payload: dict, token: str) -> dict:
         """
         Verify the Razorpay Order checkout signature for an annual renewal
-        payment and mark the attempt as verified pending webhook finalization.
+        payment and finalize captured payments immediately.
 
         Validates:
             - HMAC SHA256 signature.
@@ -1888,7 +1971,7 @@ class SubscriptionService:
             invoice = self.client.table("Invoices") \
                 .select(
                     "id, userId, subscription_id, total_amount, amount, currency, status, "
-                    "razorpay_order_id, billing_reason"
+                    "razorpay_order_id, billing_reason, metadata_json"
                 ) \
                 .eq("id", invoiceId) \
                 .limit(1) \
@@ -1906,7 +1989,13 @@ class SubscriptionService:
                     f"Invoice {invoiceId} already resolved ({invoiceStatus}), "
                     f"skipping verification"
                 )
-                return
+                return {
+                    "verified": True,
+                    "finalized": invoiceStatus == "paid",
+                    "alreadyFinalized": True,
+                    "invoiceStatus": invoiceStatus.upper(),
+                    "awaitingWebhookFinalization": False,
+                }
             if invoiceStatus not in ("upcoming", "payment_pending"):
                 raise Exception(
                     f"Invoice {invoiceId} is not in payable state for verification "
@@ -1998,6 +2087,14 @@ class SubscriptionService:
                     f"Currency mismatch: expected={expectedCurrency}, actual={actualCurrency}"
                 )
 
+            if (payment.get("status") or "").lower() == "captured":
+                return self._finalizeCapturedAnnualRenewalPayment(
+                    invoice=invoice,
+                    subscription=subscription,
+                    payment=payment,
+                    userId=userId,
+                )
+
             self.client.table("Invoices").update({
                 "razorpay_order_id": orderId,
                 "razorpayPaymentId": paymentId,
@@ -2024,6 +2121,12 @@ class SubscriptionService:
                 f"Annual renewal verified for user {userId}, "
                 f"invoice {invoiceId}, awaiting webhook finalization"
             )
+            return {
+                "verified": True,
+                "finalized": False,
+                "invoiceStatus": "PAYMENT_PENDING",
+                "awaitingWebhookFinalization": True,
+            }
         except PaymentValidationError as e:
             exception = self._paymentValidationException(e)
             logger.error(exception)

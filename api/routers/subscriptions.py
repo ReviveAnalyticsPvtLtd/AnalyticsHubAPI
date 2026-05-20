@@ -335,15 +335,21 @@ async def verifyAnnualRenewalPayment(
         ORJSONResponse: Verification result.
     """
     try:
-        subscriptionService.verifyAnnualRenewalPayment(
+        result = subscriptionService.verifyAnnualRenewalPayment(
             payload=payload.dict(),
             token=token
         )
+        message = (
+            "Annual renewal payment verified and finalized."
+            if result.get("finalized")
+            else "Annual renewal payment verified. Awaiting webhook finalization."
+        )        
         return ORJSONResponse(
             status_code=200,
             content={
                 "status": "SUCCESS",
-                "message": "Annual renewal payment verified. Awaiting webhook finalization."
+                "message": message,
+                "data": result,
             }
         )
     except CustomException as e:
