@@ -42,15 +42,24 @@ def _verifyTokenInternal(credentials: HTTPAuthorizationCredentials, checkExpiry:
         payload = jwt.decode(token, os.environ["SECRET_KEY"], algorithms=["HS256"])
         tokenEmail = payload.get("email")
         if not tokenEmail:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload: missing email")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, 
+                detail={"status": "FAILURE", "message": "Invalid token payload: missing email"}
+            )
     except JWTError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token: failed to decode")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, 
+            detail={"status": "FAILURE", "message": "Invalid token: failed to decode"}
+        )
 
     # 2. Check existence in database
     response = client.table("Sessions").select("*").eq("accessToken", token).limit(1).execute()
     
     if not response.data:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, 
+            detail={"status": "FAILURE", "message": "Invalid or expired token"}
+        )
     
     sessionData = response.data[0]
     dbEmail = sessionData.get("email")
@@ -58,7 +67,10 @@ def _verifyTokenInternal(credentials: HTTPAuthorizationCredentials, checkExpiry:
     # 3. Cross-validate email (JWT vs DB)
     if tokenEmail != dbEmail:
         logger.error(f"Token email mismatch: JWT({tokenEmail}) vs DB({dbEmail})")
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token validation failed: identity mismatch")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, 
+            detail={"status": "FAILURE", "message": "Token validation failed: identity mismatch"}
+        )
     
     # 4. Optional Expiry Check
     if checkExpiry:
@@ -71,12 +83,21 @@ def _verifyTokenInternal(credentials: HTTPAuthorizationCredentials, checkExpiry:
                 if expiresAt.tzinfo is None:
                     expiresAt = expiresAt.replace(tzinfo=timezone.utc)
                 if datetime.now(timezone.utc) > expiresAt:
-                    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has expired")
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED, 
+                        detail={"status": "FAILURE", "message": "Token has expired"}
+                    )
             except ValueError:
                 logger.error(f"Failed to parse expiry time: {expiresAtStr}")
-                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token expiry format")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED, 
+                    detail={"status": "FAILURE", "message": "Invalid token expiry format"}
+                )
         else:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expiry information missing")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, 
+                detail={"status": "FAILURE", "message": "Token expiry information missing"}
+            )
 
     client.table("Sessions").update({"lastActivity": str(datetime.now(timezone.utc))}).eq("accessToken", token).execute()
     return token
