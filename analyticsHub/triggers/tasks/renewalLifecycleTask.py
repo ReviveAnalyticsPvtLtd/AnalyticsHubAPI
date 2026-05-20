@@ -20,6 +20,7 @@ __all__ = ["RenewalLifecycleTask"]
 from supabase import create_client
 from utils.logger import logger
 from api.services.billing.billingEventService import BillingEventService
+from api.services.billing.invoiceService import buildDashboardRenewalUrl
 import datetime
 import requests
 import json
@@ -89,7 +90,7 @@ class RenewalLifecycleTask:
 
         invoices = (
             self.client.table("Invoices")
-            .select("id, userId, subscription_id, due_date, total_amount, currency, shortUrl")
+            .select("id, userId, subscription_id, due_date, total_amount, currency")
             .eq("status", "payment_pending")
             .eq("billing_reason", "renewal")
             .not_.is_("due_date", "null")
@@ -186,7 +187,7 @@ class RenewalLifecycleTask:
 
         Args:
             user: User row (email, fullName).
-            invoice: Invoice row (total_amount, currency, shortUrl, due_date).
+            invoice: Invoice row (id, total_amount, currency, due_date).
             template: Template identifier (renewal_reminder_t1 / renewal_reminder_due_today).
         """
         emailUrl = os.environ.get("RENEWAL_REMINDER_EMAIL_URL")
@@ -201,7 +202,7 @@ class RenewalLifecycleTask:
             "templateVersion": "1",
             "amount": invoice.get("total_amount", 0),
             "currency": invoice.get("currency", "INR"),
-            "paymentUrl": invoice.get("shortUrl", ""),
+            "paymentUrl": buildDashboardRenewalUrl(str(invoice.get("id", ""))),
             "dueDate": invoice.get("due_date", ""),
         }
 

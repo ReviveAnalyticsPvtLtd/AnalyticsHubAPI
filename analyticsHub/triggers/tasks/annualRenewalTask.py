@@ -13,10 +13,9 @@ Runs daily and handles two distinct timeline windows:
 
     T-7 sweep:
         Finds upcoming renewal invoices whose due_date is within 7 days,
-        freezes next-cycle pricing, and creates a
-        Razorpay Invoice payment artifact via
-        invoiceService.createPaymentArtifact. Sends a T-7 payment
-        ready email with the pay link.
+        freezes next-cycle pricing for dashboard Checkout via
+        invoiceService.prepareDashboardRenewalInvoice. Sends a T-7
+        payment ready email with the app billing link.
 """
 
 __version__ = "1.0.0"
@@ -25,8 +24,9 @@ __all__ = ["AnnualRenewalTask"]
 
 
 from api.services.billing.invoiceService import (
+    buildDashboardRenewalUrl,
     createUpcomingRenewalInvoice,
-    createPaymentArtifact,
+    prepareDashboardRenewalInvoice,
 )
 from api.services.billing.billingEventService import BillingEventService
 from api.services.subscriptions.subscriptionFieldUtils import (
@@ -60,7 +60,7 @@ class AnnualRenewalTask:
 
     Executes two sweeps per run:
         1. T-30: Create upcoming renewal invoices + send awareness email.
-        2. T-7: Create payment artifacts, send pay link email.
+        2. T-7: Prepare dashboard payment, send app billing link email.
     """
 
     def __init__(self):
@@ -156,12 +156,12 @@ class AnnualRenewalTask:
 
     def _sweepT7(self) -> dict:
         """
-        Find upcoming renewal invoices due within 7 days and create
-        Razorpay payment artifacts. Sends T-7 payment ready
-        email with the pay link on successful artifact creation.
+        Find upcoming renewal invoices due within 7 days and prepare
+        dashboard Checkout payment. Sends T-7 payment ready email with
+        the app billing link on successful preparation.
 
         Returns:
-            dict: Counts of created, skipped, and errored artifacts.
+            dict: Counts of prepared, skipped, and errored invoices.
         """
         now = datetime.datetime.now(datetime.timezone.utc)
         windowEnd = (now + datetime.timedelta(days=7)).isoformat()
@@ -220,14 +220,14 @@ class AnnualRenewalTask:
                     continue
                 subscription = subscriptionRows[0]
 
-                result = createPaymentArtifact(invoice, userRows[0])
+                result = prepareDashboardRenewalInvoice(invoice)
                 if result:
                     self._sendT7Email(userRows[0], result, subscription)
                     created += 1
                 else:
                     skipped += 1
             except Exception as e:
-                logger.error(f"T-7: Error creating artifact for invoice {invoice['id']}: {e}")
+                logger.error(f"T-7: Error preparing dashboard payment for invoice {invoice['id']}: {e}")
                 errors += 1
 
         return {"created": created, "skipped": skipped, "errors": errors}
@@ -332,15 +332,14 @@ class AnnualRenewalTask:
 
     def _sendT7Email(self, user: dict, artifact: dict, subscription: dict) -> None:
         """
-        Send a T-7 payment ready email with the Razorpay pay link
-        and a dashboard fallback link.
+        Send a T-7 payment ready email with the app dashboard renewal link.
 
         Uses billing_events as an idempotent send-log keyed by
         invoiceId + template to ensure the email is sent exactly once.
 
         Args:
             user: User row (email, fullName).
-            artifact: The updated invoice row with shortUrl, total_amount.
+            artifact: The updated invoice row with total_amount.
         """
         template = "renewal_payment_ready_t7"
         invoiceId = artifact.get("id", "")
@@ -370,8 +369,10 @@ class AnnualRenewalTask:
             logger.info("T-7 email skipped: RENEWAL_REMINDER_EMAIL_URL not configured")
             return
 
-        dashboardBaseUrl = os.environ.get("DASHBOARD_BASE_URL", "")
-        dashboardFallbackLink = f"{dashboardBaseUrl}/billing" if dashboardBaseUrl else ""
+        metadata = artifact.get("metadata_json") if isinstance(artifact.get("metadata_json"), dict) else {}
+        dashboardRenewalUrl = metadata.get("dashboardRenewalUrl") or buildDashboardRenewalUrl(
+            str(invoiceId)
+        )
 
         payload = {
             "email": user.get("email", ""),
@@ -380,8 +381,8 @@ class AnnualRenewalTask:
             "templateVersion": "1",
             "amount": artifact.get("total_amount", 0),
             "currency": artifact.get("currency", "INR"),
-            "paymentUrl": artifact.get("shortUrl", ""),
-            "dashboardFallbackUrl": dashboardFallbackLink,
+            "paymentUrl": dashboardRenewalUrl,
+            "dashboardFallbackUrl": dashboardRenewalUrl,
             "dueDate": artifact.get("due_date", ""),
             "domainCount": subscriptionRenewalDomainCount(subscription),
         }

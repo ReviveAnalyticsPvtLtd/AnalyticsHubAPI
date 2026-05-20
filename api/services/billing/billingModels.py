@@ -59,6 +59,7 @@ class PaymentCollectionMode(str, Enum):
     """Matches ``subscriptions.payment_collection_mode`` CHECK constraint."""
     SILENT_TOKEN = "silent_token"
     AUTHENTICATED_CHECKOUT = "authenticated_checkout"
+    # Legacy/historical hosted invoice-link mode; annual renewals use Checkout.
     INVOICE_LINK = "invoice_link"
 
 
@@ -75,6 +76,7 @@ class InvoicePaymentFlow(str, Enum):
     """Matches ``Invoices.payment_flow`` CHECK constraint."""
     TOKEN_CHARGE = "token_charge"
     RAZORPAY_ORDER_CHECKOUT = "razorpay_order_checkout"
+    # Legacy/historical hosted artifact flows retained for old rows/webhooks.
     RAZORPAY_INVOICE = "razorpay_invoice"
     RAZORPAY_PAYMENT_LINK = "razorpay_payment_link"
 
