@@ -1791,7 +1791,6 @@ class SubscriptionService:
             order = self.razorpayClient.order.create({
                 "amount": int(totalAmount),
                 "currency": invoice.get("currency", "INR"),
-                "customer_id": customerId,
                 "notes": {
                     "userId": userId,
                     "type": "annual_renewal",

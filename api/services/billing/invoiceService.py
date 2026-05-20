@@ -320,13 +320,18 @@ def createPaymentArtifact(invoice: dict, user: dict) -> dict | None:
         "billingReason": "renewal",
         "pricingVersion": snapshot.pricing_version,
     }
+    customerDetails = {
+        "name": user.get("fullName") or user.get("email") or "Customer",
+        "email": user.get("email", ""),
+        "contact": user.get("phoneNumber", ""),
+    }
     now = datetime.datetime.now(datetime.timezone.utc)
     expireByDt = periodStartDt if periodStartDt > now else now + datetime.timedelta(days=7)
 
     try:
         rzpInvoice = razorpayClient.invoice.create({
             "type": "invoice",
-	            "customer_id": subscriptionCustomerId(subscription),
+            "customer": customerDetails,
             "line_items": [
                 {
                     "name": f"Annual Renewal - {domainCount} domain(s)",
@@ -354,11 +359,7 @@ def createPaymentArtifact(invoice: dict, user: dict) -> dict | None:
                 "currency": "INR",
                 "accept_partial": False,
                 "description": f"Annual Renewal - {domainCount} domain(s)",
-                "customer": {
-                    "name": user.get("fullName", ""),
-                    "email": user.get("email", ""),
-                    "contact": user.get("phoneNumber", ""),
-                },
+                "customer": customerDetails,
                 "expire_by": int(expireByDt.timestamp()) if expireByDt else None,
                 "notify": {"sms": False, "email": False},
                 "reference_id": str(invoiceId),
