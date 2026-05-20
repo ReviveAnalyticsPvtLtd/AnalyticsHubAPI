@@ -331,7 +331,7 @@ class WebhookService:
         Look up an internal invoice by primary key.
         """
         result = self.client.table("Invoices") \
-            .select("id, userId, total_amount, amount, currency, status, razorpay_order_id") \
+            .select("id, userId, total_amount, amount, currency, status, razorpay_order_id, metadata_json") \
             .eq("id", invoiceId) \
             .limit(1) \
             .execute()
@@ -356,13 +356,17 @@ class WebhookService:
         """
         Mark an internal invoice as failed from webhook failure signal.
         """
+        existingInvoice = self._findInvoiceById(invoiceId) or {}
+        existingMetadata = existingInvoice.get("metadata_json")
+        metadata = dict(existingMetadata) if isinstance(existingMetadata, dict) else {}
+        metadata.update({
+            "error_code": errorCode,
+            "error_description": errorDescription,
+            "updated_by": "webhook_payment_failed",
+        })
         self.client.table("Invoices").update({
             "status": "FAILED",
-            "metadata_json": {
-                "error_code": errorCode,
-                "error_description": errorDescription,
-                "updated_by": "webhook_payment_failed",
-            }
+            "metadata_json": metadata,
         }).eq("id", invoiceId).execute()
 
     def _markHostedArtifactExpired(
@@ -376,15 +380,19 @@ class WebhookService:
         Mark the provider artifact as expired while keeping the internal renewal
         invoice regenerable by clearing stale provider IDs.
         """
+        existingInvoice = self._findInvoiceById(invoiceId) or {}
+        existingMetadata = existingInvoice.get("metadata_json")
+        metadata = dict(existingMetadata) if isinstance(existingMetadata, dict) else {}
+        metadata.update({
+            "artifactExpired": True,
+            "artifactType": artifactType,
+            "artifactId": artifactId,
+            "expiredAt": utcNow().isoformat(),
+        })
         updateData = {
             "status": "expired",
             "shortUrl": None,
-            "metadata_json": {
-                "artifactExpired": True,
-                "artifactType": artifactType,
-                "artifactId": artifactId,
-                "expiredAt": utcNow().isoformat(),
-            },
+            "metadata_json": metadata,
         }
         if artifactType == "razorpay_invoice":
             updateData["razorpayInvoiceId"] = None

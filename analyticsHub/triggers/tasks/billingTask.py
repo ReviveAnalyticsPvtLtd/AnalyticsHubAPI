@@ -23,8 +23,9 @@ from api.services.billing.billingEngine import computeInvoiceSnapshot
 from api.services.billing.billingEventService import BillingEventService
 from api.services.subscriptions.subscriptionFieldUtils import (
     CANONICAL_SUBSCRIPTION_SELECT,
+    buildRenewalPricingMetadata,
     subscriptionCustomerId,
-    subscriptionDomainCount,
+    subscriptionRenewalDomainCount,
     subscriptionExperts,
     subscriptionPendingRemovals,
     subscriptionRecurringFailures,
@@ -326,6 +327,7 @@ class DailyBillingTask:
             "metadata_json": {
                 "flow": "monthly_renewal_scheduler",
                 "billingMode": "monthly_recurring",
+                **buildRenewalPricingMetadata(subscription, periodEnd),
             },
         }
         created = self.client.table("Invoices").insert(payload).execute().data
@@ -481,16 +483,7 @@ class DailyBillingTask:
                     skipped += 1
                     continue
 
-                self._processPendingRemovals(subscription)
-                subscription = (
-                    self.client.table("subscriptions")
-                    .select(CANONICAL_SUBSCRIPTION_SELECT)
-                    .eq("id", subscriptionId)
-                    .limit(1)
-                    .execute()
-                    .data[0]
-                )
-                domainCount = subscriptionDomainCount(subscription)
+                domainCount = subscriptionRenewalDomainCount(subscription)
 
                 if domainCount < 1:
                     logger.warning(

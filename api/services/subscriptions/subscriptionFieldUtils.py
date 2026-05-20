@@ -16,6 +16,9 @@ __all__ = [
     "subscriptionExperts",
     "subscriptionPendingRemovals",
     "subscriptionPendingAdditions",
+    "subscriptionRenewalExperts",
+    "subscriptionRenewalDomainCount",
+    "buildRenewalPricingMetadata",
     "subscriptionDomainCount",
     "subscriptionBillingState",
     "subscriptionCustomerId",
@@ -69,6 +72,29 @@ def subscriptionPendingRemovals(subscription: dict | None) -> list[str]:
 def subscriptionPendingAdditions(subscription: dict | None) -> list[dict]:
     value = (subscription or {}).get("pending_additions")
     return value if isinstance(value, list) else []
+
+
+def subscriptionRenewalExperts(subscription: dict | None) -> list[str]:
+    currentExperts = subscriptionExperts(subscription)
+    pendingRemovals = set(subscriptionPendingRemovals(subscription))
+    return [expert for expert in currentExperts if expert not in pendingRemovals]
+
+
+def subscriptionRenewalDomainCount(subscription: dict | None) -> int:
+    return len(subscriptionRenewalExperts(subscription))
+
+
+def buildRenewalPricingMetadata(subscription: dict | None, effectiveAt) -> dict:
+    currentDomains = subscriptionExperts(subscription)
+    renewalDomains = subscriptionRenewalExperts(subscription)
+    pendingApplied = [domain for domain in subscriptionPendingRemovals(subscription) if domain in currentDomains]
+    return {
+        "currentDomains": currentDomains,
+        "renewalDomains": renewalDomains,
+        "pendingRemovalsAppliedForPricing": pendingApplied,
+        "entitlementChangeEffectiveAt": str(effectiveAt) if effectiveAt is not None else None,
+        "renewalDomainCount": len(renewalDomains),
+    }
 
 
 def subscriptionDomainCount(subscription: dict | None) -> int:

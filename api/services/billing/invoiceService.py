@@ -26,9 +26,9 @@ __all__ = [
 from api.services.billing.billingEngine import computeInvoiceSnapshot
 from api.services.subscriptions.subscriptionFieldUtils import (
     SUBSCRIPTION_BILLING_FIELDS_SELECT,
+    buildRenewalPricingMetadata,
     subscriptionBillingState,
-    subscriptionCustomerId,
-    subscriptionDomainCount,
+    subscriptionRenewalDomainCount,
 )
 from supabase import create_client
 from utils.logger import logger
@@ -160,7 +160,7 @@ def createUpcomingRenewalInvoice(subscription: dict, user: dict) -> dict | None:
         )
         return None
 
-    domainCount = subscriptionDomainCount(subscription)
+    domainCount = subscriptionRenewalDomainCount(subscription)
     if domainCount < 1:
         logger.warning(
             f"Subscription {subscriptionId} has 0 domains, skipping invoice creation"
@@ -183,6 +183,7 @@ def createUpcomingRenewalInvoice(subscription: dict, user: dict) -> dict | None:
         return None
 
     dueDate = periodEndDt.isoformat()
+    renewalMetadata = buildRenewalPricingMetadata(subscription, dueDate)
 
     payload = {
         "userId": userId,
@@ -208,6 +209,7 @@ def createUpcomingRenewalInvoice(subscription: dict, user: dict) -> dict | None:
             "flow": "annual_renewal_scheduler_t30",
             "billingMode": "annual_prepaid",
             "estimate": True,
+            **renewalMetadata,
         },
     }
 
@@ -286,7 +288,7 @@ def createPaymentArtifact(invoice: dict, user: dict) -> dict | None:
         return None
 
     subscription = subscription[0]
-    domainCount = subscriptionDomainCount(subscription)
+    domainCount = subscriptionRenewalDomainCount(subscription)
     if domainCount < 1:
         logger.warning(f"User has 0 domains for invoice {invoiceId}, skipping artifact")
         return None
@@ -374,6 +376,8 @@ def createPaymentArtifact(invoice: dict, user: dict) -> dict | None:
             )
             return None
 
+    existingMetadata = invoice.get("metadata_json") if isinstance(invoice.get("metadata_json"), dict) else {}
+    renewalMetadata = buildRenewalPricingMetadata(subscription, invoice.get("period_start"))
     updatePayload = {
         "razorpayInvoiceId": razorpayInvoiceId,
         "razorpay_payment_link_id": razorpayPaymentLinkId,
@@ -391,10 +395,12 @@ def createPaymentArtifact(invoice: dict, user: dict) -> dict | None:
         "pricing_version": snapshot.pricing_version,
         "pricing_reference_snapshot_json": snapshot.pricing_reference_snapshot_json,
         "metadata_json": {
+            **existingMetadata,
             "flow": "annual_renewal_scheduler_t7",
             "billingMode": "annual_prepaid",
             "estimate": False,
             "frozen": True,
+            **renewalMetadata,
         },
     }
     client.table("Invoices").update(updatePayload).eq("id", invoiceId).execute()

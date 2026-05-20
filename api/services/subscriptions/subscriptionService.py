@@ -260,6 +260,42 @@ class SubscriptionService:
             updateData["paidAt"] = paidAt
         self.client.table("Invoices").update(updateData).eq("id", invoiceId).execute()
 
+    def _markPayableRenewalArtifactsForRegeneration(self, subscriptionId: str) -> None:
+        """
+        Clear stale provider artifact IDs when pending removals change after a
+        renewal artifact was already created.
+        """
+        invoices = self.client.table("Invoices") \
+            .select(
+                "id, status, billing_reason, razorpayInvoiceId, "
+                "razorpay_payment_link_id, shortUrl, metadata_json"
+            ) \
+            .eq("subscription_id", subscriptionId) \
+            .eq("billing_reason", "renewal") \
+            .execute().data
+
+        payableStatuses = {"upcoming", "payment_pending", "expired"}
+        for invoice in invoices or []:
+            status = (invoice.get("status") or "").lower()
+            hasArtifact = bool(invoice.get("razorpayInvoiceId") or invoice.get("razorpay_payment_link_id"))
+            if status not in payableStatuses or not hasArtifact:
+                continue
+            existingMetadata = invoice.get("metadata_json")
+            metadata = dict(existingMetadata) if isinstance(existingMetadata, dict) else {}
+            metadata.update({
+                "regenerationRequired": True,
+                "regenerationReason": "pending_removals_changed",
+                "regenerationSource": "removeDomain",
+                "regenerationMarkedAt": utcNow().isoformat(),
+            })
+            self.client.table("Invoices").update({
+                "status": "expired",
+                "razorpayInvoiceId": None,
+                "razorpay_payment_link_id": None,
+                "shortUrl": None,
+                "metadata_json": metadata,
+            }).eq("id", invoice["id"]).execute()
+
     def _finalizeCapturedAnnualRenewalPayment(
         self,
         invoice: dict,
@@ -626,7 +662,6 @@ class SubscriptionService:
                 item["state"] = "expired"
                 changed = True
             elif order["status"] == "created":
-                # Order still unpaid — expire if older than threshold
                 requestedAt = item.get("requestedAt")
                 if requestedAt:
                     try:
@@ -1139,7 +1174,6 @@ class SubscriptionService:
                 if d in currentExperts:
                     raise Exception(f"Domain '{d}' is already in your subscription")
                 if d in activePending:
-                    # Self-healing: resolve the stale entry instead of blocking
                     staleItem = next(
                         (item for item in pendingAdditions
                          if item["domain"] == d and item.get("state") == "awaiting_payment"),
@@ -1155,7 +1189,6 @@ class SubscriptionService:
                             except Exception:
                                 staleOrderStatus = "fetch_failed"
                         if staleOrderStatus == "paid":
-                            # Payment went through but activation was missed — activate now
                             notes = staleOrder.get("notes", {})
                             self._activatePaidDomains(
                                 userId=userId,
@@ -1163,15 +1196,12 @@ class SubscriptionService:
                                 targetQuantity=int(notes.get("targetQuantity", 0)),
                                 referenceId=staleOrderId,
                             )
-                            # Refresh state after activation
                             subscription = self._getCanonicalSubscription(userId=userId, required=True)
                             currentExperts = subscriptionExperts(subscription)
                             pendingAdditions = subscriptionPendingAdditions(subscription)
                             if d in currentExperts:
-                                # Already activated — skip this domain
                                 continue
                         else:
-                            # Order is unpaid / expired / fetch failed — remove stale entry
                             pendingAdditions.remove(staleItem)
                             activePending = [item["domain"] for item in pendingAdditions
                                              if item.get("state") not in ("failed", "activated")]
@@ -1550,6 +1580,7 @@ class SubscriptionService:
             self.client.table("subscriptions").update({
                 "pending_removals": pendingRemovals
             }).eq("id", subscription["id"]).execute()
+            self._markPayableRenewalArtifactsForRegeneration(subscription["id"])
             domainCount = subscriptionDomainCount(subscription) or len(currentExperts)
             for domain in normalizedDomains:
                 self._auditLog(
@@ -2095,15 +2126,19 @@ class SubscriptionService:
                     userId=userId,
                 )
 
+            existingMetadata = invoice.get("metadata_json")
+            metadata = dict(existingMetadata) if isinstance(existingMetadata, dict) else {}
+            metadata.update({
+                "flow": "annual_renewal_dashboard_verify",
+                "verified": True,
+                "verifiedAt": utcNow().isoformat(),
+                "awaitingWebhookFinalization": True,
+            })
+
             self.client.table("Invoices").update({
                 "razorpay_order_id": orderId,
                 "razorpayPaymentId": paymentId,
-                "metadata_json": {
-                    "flow": "annual_renewal_dashboard_verify",
-                    "verified": True,
-                    "verifiedAt": utcNow().isoformat(),
-                    "awaitingWebhookFinalization": True,
-                },
+                "metadata_json": metadata,
             }).eq("id", invoiceId).execute()
 
             self._auditLog(

@@ -337,7 +337,7 @@ class ReconciliationService:
             .select(
                 "id, subscription_id, userId, status, due_date, period_start, "
                 "period_end, razorpayInvoiceId, razorpay_payment_link_id, "
-                "total_amount, currency, billing_reason"
+                "total_amount, currency, billing_reason, metadata_json"
             )
             .eq("id", invoiceId)
             .limit(1)

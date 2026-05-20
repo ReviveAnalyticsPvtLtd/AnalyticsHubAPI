@@ -16,6 +16,7 @@ from analyticsHub.triggers.tasks.renewalLifecycleTask import RenewalLifecycleTas
 from analyticsHub.triggers.tasks.annualRenewalTask import AnnualRenewalTask
 from analyticsHub.triggers.tasks.reconciliationTask import ReconciliationTask
 from analyticsHub.triggers.tasks.billingMetricsTask import BillingMetricsTask
+from analyticsHub.triggers.tasks.entitlementBoundaryTask import EntitlementBoundaryTask
 from analyticsHub.triggers.tasks.billingTask import DailyBillingTask
 from celery.schedules import crontab
 from celery import Celery
@@ -78,6 +79,7 @@ class CeleryWrapper:
             - 00:30 UTC daily: Annual renewal T-30/T-7 sweep + emails.
             - 02:00 UTC daily: Renewal reminder emails (T-1, due-today).
             - Every 30 min: Past-due and suspension transitions.
+            - Every 30 min: Pending entitlement removals at period boundary.
             - Every 15 min: Reconciliation sweep.
             - Every 30 min: Billing metrics and alert evaluation.
         """
@@ -100,6 +102,10 @@ class CeleryWrapper:
         @self._app.task(name=f"{self.name}.pastDueSuspension")
         def runPastDueSuspension():
             return PastDueSuspensionTask().execute()
+
+        @self._app.task(name=f"{self.name}.entitlementBoundary")
+        def runEntitlementBoundary():
+            return EntitlementBoundaryTask().execute()
 
         @self._app.task(name=f"{self.name}.reconciliation")
         def runReconciliation():
@@ -124,6 +130,10 @@ class CeleryWrapper:
             },
             "past-due-suspension-every-30min": {
                 "task": f"{self.name}.pastDueSuspension",
+                "schedule": crontab(minute="*/30"),
+            },
+            "entitlement-boundary-every-30min": {
+                "task": f"{self.name}.entitlementBoundary",
                 "schedule": crontab(minute="*/30"),
             },
             "reconciliation-every-15min": {
