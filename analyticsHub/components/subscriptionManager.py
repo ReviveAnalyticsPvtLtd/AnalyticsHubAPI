@@ -18,7 +18,10 @@ from supabase import create_client
 from datetime import datetime, timezone
 from utils.logger import logger
 from api.services.billing.billingEventService import BillingEventService
-from api.services.subscriptions.paymentValidationService import parseUtc
+from api.services.subscriptions.paymentValidationService import (
+    mergeSubscriptionLifecycleSnapshot,
+    parseUtc,
+)
 import requests
 import os
 
@@ -75,7 +78,7 @@ def recalculateSubscriptionDays() -> None:
     client = _getSupabaseClient()
     now = datetime.now(timezone.utc)
     subscriptions = client.table("subscriptions") \
-        .select("id, user_id, current_period_start, current_period_end, status, billing_mode") \
+        .select("id, user_id, current_period_start, current_period_end, status, billing_mode, billing_state") \
         .not_.is_("current_period_end", "null") \
         .execute().data
 
@@ -102,8 +105,6 @@ def recalculateSubscriptionDays() -> None:
     for subscription in subscriptions:
         billingMode = subscription.get("billing_mode", "monthly_recurring")
         currentStatus = (subscription.get("status") or "").lower()
-        if billingMode == "annual_prepaid" and currentStatus != "cancelled":
-            continue
 
         expiryRaw = subscription["current_period_end"]
         expiry = parseUtc(expiryRaw)
@@ -111,12 +112,23 @@ def recalculateSubscriptionDays() -> None:
             continue
 
         deltaDays = (expiry.date() - now.date()).days
+        snapshotStatus = "expired" if deltaDays < 0 else currentStatus
+        billingState = mergeSubscriptionLifecycleSnapshot(
+            subscription.get("billing_state"),
+            currentPeriodEnd=expiryRaw,
+            status=snapshotStatus,
+            now=now,
+        )
+        updatePayload = {"billing_state": billingState}
 
         if deltaDays < 0:
             if currentStatus not in ("expired", "suspended"):
-                client.table("subscriptions").update({
-                    "status": "expired"
-                }).eq("id", subscription["id"]).execute()
+                updatePayload["status"] = "expired"
+
+        client.table("subscriptions").update(updatePayload).eq("id", subscription["id"]).execute()
+
+        if billingMode == "annual_prepaid" and currentStatus != "cancelled":
+            continue
 
         if deltaDays == 2:
             userData = client.table("Users") \

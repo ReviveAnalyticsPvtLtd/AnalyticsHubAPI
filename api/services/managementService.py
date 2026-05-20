@@ -20,6 +20,10 @@ from api.services.subscriptions.subscriptionFieldUtils import (
     subscriptionExperts,
     toApiPlanFields,
 )
+from api.services.subscriptions.paymentValidationService import (
+    calculateSubscriptionDaysLeft,
+    mergeSubscriptionLifecycleSnapshot,
+)
 from concurrent.futures import ProcessPoolExecutor
 from utils.logger import logger
 from urllib.request import urlopen
@@ -33,7 +37,6 @@ from api.models import (
 from jose import jwt
 import pandas as pd
 import datetime
-from dateutil import parser
 import orjson
 import json
 import uuid
@@ -934,7 +937,24 @@ class ManagementService:
                 uiMessage="Subscription data is not available. Please contact support."
             )
         return subscription[0]
-        
+
+    def _refreshLifecycleSnapshot(self, userId: str, subscription: dict) -> int:
+        expiryStr = subscription.get("current_period_end")
+        daysLeft = calculateSubscriptionDaysLeft(expiryStr)
+        billingState = mergeSubscriptionLifecycleSnapshot(
+            subscription.get("billing_state"),
+            currentPeriodEnd=expiryStr,
+            status=subscription.get("status"),
+        )
+        try:
+            self.client.table("subscriptions").update({
+                "billing_state": billingState
+            }).eq("user_id", userId).execute()
+            subscription["billing_state"] = billingState
+        except Exception as e:
+            logger.warning(f"Failed to update lifecycle snapshot for user {userId}: {e}")
+        return daysLeft
+	        
     def getUserProfile(self, token: str) -> dict:
         """
         Retrieve user profile details from the Users table.
@@ -979,17 +999,10 @@ class ManagementService:
             record = userRecord[0]
             subscription = self._getCanonicalSubscription(userId)
             planFields = toApiPlanFields(subscription)
-            subscriptionDaysLeft = 0
             expiryStr = subscription.get("current_period_end")
             if expiryStr == "None":
                 expiryStr = None
-            if expiryStr:
-                try:
-                    expiry = parser.isoparse(expiryStr)
-                    delta = (expiry - datetime.datetime.utcnow()).days
-                    subscriptionDaysLeft = max(0, delta)
-                except (ValueError, TypeError):
-                    subscriptionDaysLeft = 0
+            subscriptionDaysLeft = self._refreshLifecycleSnapshot(userId, subscription)
             currentStatus = self._mapSubscriptionStatusForProfile(subscription.get("status"))
             nextBilling = None
             if currentStatus == "ACTIVE":
@@ -1114,15 +1127,8 @@ class ManagementService:
             record = updatedUserRecord[0]
             subscription = self._getCanonicalSubscription(userId)
             planFields = toApiPlanFields(subscription)
-            subscriptionDaysLeft = 0
             expiryStr = subscription.get("current_period_end")
-            if expiryStr:
-                try:
-                    expiry = parser.isoparse(expiryStr)
-                    delta = (expiry - datetime.datetime.utcnow()).days
-                    subscriptionDaysLeft = max(0, delta)
-                except (ValueError, TypeError):
-                    subscriptionDaysLeft = 0
+            subscriptionDaysLeft = self._refreshLifecycleSnapshot(userId, subscription)
             currentStatus = self._mapSubscriptionStatusForProfile(subscription.get("status"))
             nextBilling = None
             if currentStatus == "ACTIVE":

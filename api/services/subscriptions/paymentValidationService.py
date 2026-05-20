@@ -13,6 +13,8 @@ __all__ = [
     "utcNow",
     "utcFromTimestamp",
     "parseUtc",
+    "calculateSubscriptionDaysLeft",
+    "mergeSubscriptionLifecycleSnapshot",
     "isPeriodExpired",
     "isAccessActive",
     "blocksNewCheckout",
@@ -41,12 +43,63 @@ def utcFromTimestamp(timestamp: int | float | str | None) -> datetime.datetime |
 
 
 def parseUtc(value) -> datetime.datetime | None:
-    if value in (None, "", "None", "null"):
+    try:
+        if value in (None, "", "None", "null"):
+            return None
+        parsed = parser.isoparse(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=datetime.timezone.utc)
+        return parsed.astimezone(datetime.timezone.utc)
+    except (TypeError, ValueError, OverflowError):
         return None
-    parsed = parser.isoparse(str(value).replace("Z", "+00:00"))
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=datetime.timezone.utc)
-    return parsed.astimezone(datetime.timezone.utc)
+
+
+def _coerceUtc(value: datetime.datetime | None = None) -> datetime.datetime:
+    current = value or utcNow()
+    if current.tzinfo is None:
+        return current.replace(tzinfo=datetime.timezone.utc)
+    return current.astimezone(datetime.timezone.utc)
+
+
+def calculateSubscriptionDaysLeft(
+    currentPeriodEnd,
+    now: datetime.datetime | None = None,
+) -> int:
+    """
+    Calculate calendar days remaining from a subscription period end.
+
+    ``current_period_end`` remains authoritative; this helper only derives a
+    safe runtime/display value from it.
+    """
+    periodEnd = parseUtc(currentPeriodEnd)
+    if not periodEnd:
+        return 0
+    current = _coerceUtc(now)
+    return max(0, (periodEnd.date() - current.date()).days)
+
+
+def mergeSubscriptionLifecycleSnapshot(
+    billingState: dict | None,
+    *,
+    currentPeriodEnd,
+    status: str | None,
+    now: datetime.datetime | None = None,
+) -> dict:
+    """
+    Merge a dynamic lifecycle snapshot into existing subscription billing_state.
+    """
+    current = _coerceUtc(now)
+    merged = dict(billingState or {})
+    merged["lifecycle_snapshot"] = {
+        "subscription_days_left": calculateSubscriptionDaysLeft(
+            currentPeriodEnd,
+            now=current,
+        ),
+        "calculated_at": current.isoformat(),
+        "current_period_end": currentPeriodEnd,
+        "status": (status or "").lower() or None,
+    }
+    return merged
 
 
 def isPeriodExpired(subscription: dict | None, now: datetime.datetime | None = None) -> bool:

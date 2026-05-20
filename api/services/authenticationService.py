@@ -17,6 +17,10 @@ __all__ = ["authenticationService"]
 from utils.exceptionHandler import CustomException
 from utils.logger import logger
 from api.commons import client
+from api.services.subscriptions.paymentValidationService import (
+    calculateSubscriptionDaysLeft,
+    mergeSubscriptionLifecycleSnapshot,
+)
 from api.models import (
     OnboardingDetails,
     LoginWithProvider,
@@ -77,12 +81,31 @@ class AuthenticationService:
 
     def _getSubscriptionSnapshot(self, userId: str) -> dict | None:
         response = self.client.table("subscriptions") \
-            .select("billing_mode, status, current_period_start, current_period_end") \
+            .select("billing_mode, status, current_period_start, current_period_end, billing_state") \
             .eq("user_id", userId) \
             .order("updated_at", desc=True) \
             .limit(1) \
             .execute().data
         return response[0] if response else None
+
+    def _refreshLifecycleSnapshot(self, userId: str, subscription: dict | None) -> int:
+        if not subscription:
+            return 0
+        expiryStr = subscription.get("current_period_end")
+        daysLeft = calculateSubscriptionDaysLeft(expiryStr)
+        billingState = mergeSubscriptionLifecycleSnapshot(
+            subscription.get("billing_state"),
+            currentPeriodEnd=expiryStr,
+            status=subscription.get("status"),
+        )
+        try:
+            self.client.table("subscriptions").update({
+                "billing_state": billingState
+            }).eq("user_id", userId).execute()
+            subscription["billing_state"] = billingState
+        except Exception as e:
+            logger.warning(f"Failed to update lifecycle snapshot for user {userId}: {e}")
+        return daysLeft
 
     def _createDefaultSubscriptionRow(self, userId: str) -> None:
         """
@@ -280,7 +303,7 @@ class AuthenticationService:
                     statusCode=401,
                     uiMessage="Email or password is incorrect."
                 )
-            sessionStartTime = datetime.datetime.utcnow()
+            sessionStartTime = datetime.datetime.now(datetime.timezone.utc)
             tokenPayload = {
                 "userId": dataSlice["userId"],
                 "email": loginDetails.email,
@@ -300,6 +323,10 @@ class AuthenticationService:
                 subscription.get("billing_mode") if subscription else None,
                 subscription.get("status") if subscription else None,
             )
+            subscriptionDaysLeft = self._refreshLifecycleSnapshot(
+                dataSlice["userId"],
+                subscription,
+            )
             return {
                 "status": "SUCCESS",
                 "userId": dataSlice["userId"],
@@ -310,6 +337,7 @@ class AuthenticationService:
                 "subscriptionStatus": subscriptionStatus,
                 "subscriptionStart": subscription.get("current_period_start") if subscription else None,
                 "subscriptionExpiry": subscription.get("current_period_end") if subscription else None,
+                "subscriptionDaysLeft": subscriptionDaysLeft,
                 "subscriptionPlan": subscriptionPlan,
             }
         except CustomException:
@@ -349,7 +377,7 @@ class AuthenticationService:
 
             response = self.client.table("Users").select("*").eq("email", loginDetails.email).execute()
             userData = {}
-            sessionStartTime = datetime.datetime.utcnow()
+            sessionStartTime = datetime.datetime.now(datetime.timezone.utc)
 
             if response.data:
                 userData = response.data[0]
@@ -358,6 +386,10 @@ class AuthenticationService:
                 subscriptionPlan = self._mapBillingModeToPlan(
                     subscription.get("billing_mode") if subscription else None,
                     subscription.get("status") if subscription else None,
+                )
+                subscriptionDaysLeft = self._refreshLifecycleSnapshot(
+                    userData["userId"],
+                    subscription,
                 )
             else:
                 userId = str(uuid.uuid4())
@@ -386,6 +418,7 @@ class AuthenticationService:
                     subscription.get("billing_mode"),
                     subscription.get("status"),
                 )
+                subscriptionDaysLeft = self._refreshLifecycleSnapshot(userId, subscription)
 
             tokenPayload = {
                 "userId": userData["userId"],
@@ -409,7 +442,8 @@ class AuthenticationService:
                 "onboarded": 1 if userData.get("onboarded") else 0,
                 "currentWorkspaceId": userData["currentWorkspaceId"],
                 "subscriptionStatus": subscriptionStatus,
-                "subscriptionPlan": subscriptionPlan 
+                "subscriptionPlan": subscriptionPlan,
+                "subscriptionDaysLeft": subscriptionDaysLeft,
             }
         except CustomException:
             raise
