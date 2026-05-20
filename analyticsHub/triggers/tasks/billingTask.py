@@ -189,7 +189,8 @@ class DailyBillingTask:
         except Exception as e:
             return {"valid": False, "reason": f"token_fetch_failed: {e}"}
 
-        if token.get("customer_id") != customerId:
+        tokenCustomerId = token.get("customer_id")
+        if tokenCustomerId and tokenCustomerId != customerId:
             return {"valid": False, "reason": "token_customer_mismatch"}
 
         if not token.get("recurring"):
