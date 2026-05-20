@@ -2154,8 +2154,17 @@ class SubscriptionService:
                 algorithms = ["HS256"]
             )
             userId = decodedToken.get("userId")
+            invoiceFields = (
+                "id, userId, status, amount, currency, razorpayPaymentId, "
+                "razorpay_order_id, subscription_id, billing_reason, payment_flow, "
+                "requires_customer_auth, due_date, expires_at, period_start, period_end, "
+                "amount_before_tax, tax_amount, total_amount, tax_breakdown_json, "
+                "tax_rule_version, place_of_supply_snapshot, pricing_version, "
+                "pricing_reference_snapshot_json, metadata_json, paidAt, createdAt, "
+                "created_at, updated_at"
+            )
             result = self.client.table("Invoices") \
-                .select("*") \
+                .select(invoiceFields) \
                 .eq("userId", userId) \
                 .order("createdAt", desc=True) \
                 .execute()

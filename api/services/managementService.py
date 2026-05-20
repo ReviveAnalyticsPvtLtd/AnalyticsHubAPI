@@ -1028,7 +1028,6 @@ class ManagementService:
 	                    "pendingRemovals": planFields["pendingRemovals"],
                     "subscriptionDaysLeft": subscriptionDaysLeft,
                     "billingMode": subscription.get("billing_mode"),
-                    "paymentCollectionMode": subscription.get("payment_collection_mode"),
                     "renewalDueAt": subscription.get("renewal_due_at"),
                 }
             }
@@ -1154,7 +1153,6 @@ class ManagementService:
 	                    "pendingRemovals": planFields["pendingRemovals"],
                     "subscriptionDaysLeft": subscriptionDaysLeft,
                     "billingMode": subscription.get("billing_mode"),
-                    "paymentCollectionMode": subscription.get("payment_collection_mode"),
                     "renewalDueAt": subscription.get("renewal_due_at"),
                 }
             }
