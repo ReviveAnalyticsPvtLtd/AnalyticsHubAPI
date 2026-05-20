@@ -169,7 +169,7 @@ class AnnualRenewalTask:
         invoices = (
             self.client.table("Invoices")
             .select("id, subscription_id, userId, status, due_date, period_start, period_end, "
-                    "razorpayInvoiceId, razorpay_payment_link_id, total_amount, currency, metadata_json")
+                    "total_amount, currency, metadata_json")
             .in_("status", ["upcoming", "payment_pending", "expired"])
             .eq("billing_reason", "renewal")
             .not_.is_("due_date", "null")
@@ -187,10 +187,6 @@ class AnnualRenewalTask:
         errors = 0
 
         for invoice in invoices:
-            if invoice.get("razorpayInvoiceId") or invoice.get("razorpay_payment_link_id"):
-                skipped += 1
-                continue
-
             userId = invoice.get("userId", "")
             try:
                 userRows = (

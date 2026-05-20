@@ -2,8 +2,8 @@
 Admin-only billing reconciliation and observability endpoints.
 
 These endpoints expose billing operational actions for support/engineering:
-reconciliation reports, webhook replay, expired artifact regeneration,
-investigation notes, and billing metric snapshots.
+reconciliation reports, webhook replay, investigation notes, and billing
+metric snapshots.
 """
 
 __version__ = "1.0.0"
@@ -13,7 +13,6 @@ __all__ = ["router"]
 
 from api.models import (
     MarkReconciliationInvestigatedRequest,
-    RegeneratePaymentArtifactRequest,
     ReplayWebhookEventRequest,
 )
 from api.services.billing.billingMetricsService import BillingMetricsService
@@ -118,29 +117,6 @@ async def replayWebhookEvent(
     try:
         result = ReconciliationService().replayWebhookEvent(
             eventId=payload.eventId,
-            adminUserId=adminUserId,
-        )
-        return ORJSONResponse(
-            status_code=200,
-            content={"status": "SUCCESS", "data": result},
-        )
-    except CustomException as e:
-        raiseHttpException(e)
-    except Exception as e:
-        raiseHttpException(CustomException(e))
-
-
-@router.post("/reconciliation/artifacts/regenerate")
-async def regenerateExpiredArtifact(
-    payload: RegeneratePaymentArtifactRequest,
-    adminUserId=Depends(verifyBillingAdmin),
-):
-    """
-    Regenerate a Razorpay Invoice/Payment Link for a payable renewal invoice.
-    """
-    try:
-        result = ReconciliationService().regenerateExpiredArtifact(
-            invoiceId=payload.invoiceId,
             adminUserId=adminUserId,
         )
         return ORJSONResponse(

@@ -8,8 +8,7 @@ Provides:
       captured-on-provider-but-unpaid-internal mismatches,
       and duplicate/late webhook anomalies.
     - Safe manual actions: replay webhook processing by event ID,
-      regenerate expired payment artifacts, and mark investigated
-      mismatches with audit notes.
+      and mark investigated mismatches with audit notes.
 """
 
 __version__ = "1.0.0"
@@ -17,11 +16,9 @@ __author__ = "Rohit Mishra"
 __all__ = ["ReconciliationService"]
 
 
-from api.services.billing.invoiceService import createPaymentArtifact
 from api.services.billing.billingEventService import BillingEventService
 from supabase import create_client
 from utils.logger import logger
-import razorpay
 import datetime
 import os
 
@@ -42,21 +39,6 @@ def _getSupabaseClient():
     return create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
 
 
-def _getRazorpayClient() -> razorpay.Client:
-    """
-    Create an authenticated Razorpay client.
-
-    Returns:
-        razorpay.Client: Razorpay client instance.
-    """
-    return razorpay.Client(
-        auth=(
-            os.environ.get("RAZORPAY_KEY_ID", ""),
-            os.environ.get("RAZORPAY_KEY_SECRET", ""),
-        )
-    )
-
-
 class ReconciliationService:
     """
     Admin-facing reconciliation service for detecting billing anomalies
@@ -65,7 +47,6 @@ class ReconciliationService:
 
     def __init__(self):
         self.client = _getSupabaseClient()
-        self.razorpayClient = _getRazorpayClient()
 
     def generateReport(self) -> dict:
         """
@@ -315,89 +296,6 @@ class ReconciliationService:
                 },
             )
             raise
-
-    def regenerateExpiredArtifact(self, invoiceId: str, adminUserId: str) -> dict:
-        """
-        Regenerate a Razorpay payment artifact for an expired internal
-        invoice. Clears stale provider IDs so createPaymentArtifact
-        can re-create the artifact.
-
-        Args:
-            invoiceId: The internal invoice ID to regenerate.
-            adminUserId: The admin user initiating the regeneration.
-
-        Returns:
-            dict: The regenerated invoice row with new artifact IDs.
-
-        Raises:
-            ValueError: If the invoice is not found or not in expired state.
-        """
-        invoice = (
-            self.client.table("Invoices")
-            .select(
-                "id, subscription_id, userId, status, due_date, period_start, "
-                "period_end, razorpayInvoiceId, razorpay_payment_link_id, "
-                "total_amount, currency, billing_reason, metadata_json"
-            )
-            .eq("id", invoiceId)
-            .limit(1)
-            .execute()
-            .data
-        )
-        if not invoice:
-            raise ValueError(f"Invoice {invoiceId} not found")
-        invoice = invoice[0]
-
-        invoiceStatus = (invoice.get("status") or "").lower()
-        if invoiceStatus not in ("expired", "payment_pending", "upcoming"):
-            raise ValueError(
-                f"Invoice {invoiceId} is in '{invoiceStatus}' state — "
-                f"only expired/payment_pending/upcoming invoices can be regenerated"
-            )
-
-        self.client.table("Invoices").update({
-            "razorpayInvoiceId": None,
-            "razorpay_payment_link_id": None,
-            "shortUrl": None,
-            "status": "expired",
-        }).eq("id", invoiceId).execute()
-
-        invoice["razorpayInvoiceId"] = None
-        invoice["razorpay_payment_link_id"] = None
-
-        userId = invoice.get("userId", "")
-        userRows = (
-            self.client.table("Users")
-            .select(
-                "userId, email, fullName, phoneNumber"
-            )
-            .eq("userId", userId)
-            .limit(1)
-            .execute()
-            .data
-        )
-        if not userRows:
-            raise ValueError(f"User {userId} not found for invoice {invoiceId}")
-
-        result = createPaymentArtifact(invoice, userRows[0])
-        if not result:
-            raise RuntimeError(
-                f"Payment artifact regeneration failed for invoice {invoiceId}"
-            )
-
-        self._auditLog(
-            adminUserId, "reconciliation.artifact_regenerated",
-            status="SUCCESS",
-            metadata={
-                "invoiceId": invoiceId,
-                "userId": userId,
-                "newRazorpayInvoiceId": result.get("razorpayInvoiceId"),
-                "newPaymentLinkId": result.get("razorpay_payment_link_id"),
-            },
-        )
-
-        logger.info(f"Payment artifact regenerated for invoice {invoiceId}")
-        return result
 
     def markInvestigated(self, entityType: str, entityId: str,
                          adminUserId: str, note: str) -> dict:

@@ -19,7 +19,6 @@ __all__ = [
     "createUpcomingRenewalInvoice",
     "prepareDashboardRenewalInvoice",
     "buildDashboardRenewalUrl",
-    "createPaymentArtifact",
     "transitionToPastDue",
     "transitionToSuspended",
 ]
@@ -35,7 +34,6 @@ from api.services.subscriptions.subscriptionFieldUtils import (
 from supabase import create_client
 from utils.logger import logger
 from dateutil.relativedelta import relativedelta
-import razorpay
 import datetime
 import redis
 import os
@@ -52,21 +50,6 @@ def _getSupabaseClient():
         Client: A Supabase client instance.
     """
     return create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
-
-
-def _getRazorpayClient() -> razorpay.Client:
-    """
-    Create an authenticated Razorpay client.
-
-    Returns:
-        razorpay.Client: Razorpay client instance.
-    """
-    return razorpay.Client(
-        auth=(
-            os.environ.get("RAZORPAY_KEY_ID", ""),
-            os.environ.get("RAZORPAY_KEY_SECRET", ""),
-        )
-    )
 
 
 def _getRedisClient() -> redis.Redis:
@@ -109,7 +92,7 @@ def createUpcomingRenewalInvoice(subscription: dict, user: dict) -> dict | None:
     prevent duplicate invoices for the same subscription period.
 
     The pricing snapshot is estimated at this stage and will be
-    recomputed and frozen at T-7 before payment artifact creation.
+    recomputed and frozen at T-7 before app Checkout payment.
 
     Args:
         subscription: Row from the subscriptions table.
@@ -191,7 +174,7 @@ def createUpcomingRenewalInvoice(subscription: dict, user: dict) -> dict | None:
         "userId": userId,
         "subscription_id": subscriptionId,
         "billing_reason": "renewal",
-        "payment_flow": "razorpay_invoice",
+        "payment_flow": "razorpay_order_checkout",
         "requires_customer_auth": True,
         "period_start": snapshot.period_start,
         "period_end": snapshot.period_end,
@@ -258,8 +241,8 @@ def buildDashboardRenewalUrl(invoiceId: str) -> str:
 def prepareDashboardRenewalInvoice(invoice: dict) -> dict | None:
     """
     Recompute final pricing and freeze a renewal invoice for app-dashboard
-    Razorpay Order Checkout. This does not create Razorpay hosted invoices or
-    payment links.
+    Razorpay Order Checkout. This does not create provider invoices or payment
+    links.
 
     Args:
         invoice: The upcoming/payment_pending invoice row.
@@ -328,13 +311,9 @@ def prepareDashboardRenewalInvoice(invoice: dict) -> dict | None:
         "dashboardRenewalUrl": dashboardRenewalUrl,
     }
     updatePayload = {
-        "razorpayInvoiceId": None,
-        "razorpay_payment_link_id": None,
-        "shortUrl": None,
         "payment_flow": "razorpay_order_checkout",
         "requires_customer_auth": True,
         "status": "payment_pending",
-        "expires_at": None,
         "amount_before_tax": snapshot.amount_before_tax,
         "tax_amount": snapshot.tax.tax_amount,
         "total_amount": snapshot.total_amount,
@@ -351,174 +330,6 @@ def prepareDashboardRenewalInvoice(invoice: dict) -> dict | None:
     logger.info(
         f"Dashboard renewal invoice prepared for invoice {invoiceId}, "
         f"payment_flow=razorpay_order_checkout"
-    )
-    return {**invoice, **updatePayload}
-
-
-def createPaymentArtifact(invoice: dict, user: dict) -> dict | None:
-    """
-    Recompute final pricing, freeze the invoice snapshot, and create a
-    legacy Razorpay Invoice or Payment Link for the renewal invoice.
-
-    If a payment artifact already exists on the invoice, this is a no-op.
-
-    Args:
-        invoice: The upcoming/payment_pending invoice row.
-        user: User row (email, fullName, phoneNumber).
-
-    Returns:
-        dict | None: Updated invoice row with artifact IDs, or None on error.
-    """
-    client = _getSupabaseClient()
-    razorpayClient = _getRazorpayClient()
-    redisClient = _getRedisClient()
-    invoiceId = invoice["id"]
-
-    if invoice.get("razorpayInvoiceId") or invoice.get("razorpay_payment_link_id"):
-        logger.info(
-            f"Payment artifact already exists for invoice {invoiceId}, skipping"
-        )
-        return invoice
-
-    lockKey = f"invoice:artifact:{invoiceId}"
-    if not _acquireAdvisoryLock(redisClient, lockKey, ttlSeconds=180):
-        logger.info(f"Artifact creation lock held for invoice {invoiceId}, skipping")
-        return None
-
-    subscriptionId = invoice.get("subscription_id")
-    subscription = (
-        client.table("subscriptions")
-        .select(f"id, current_period_end, billing_mode, status, {SUBSCRIPTION_BILLING_FIELDS_SELECT}")
-        .eq("id", subscriptionId)
-        .limit(1)
-        .execute()
-        .data
-    )
-    if not subscription:
-        logger.error(f"Subscription {subscriptionId} not found for invoice {invoiceId}")
-        return None
-
-    subscription = subscription[0]
-    domainCount = subscriptionRenewalDomainCount(subscription)
-    if domainCount < 1:
-        logger.warning(f"User has 0 domains for invoice {invoiceId}, skipping artifact")
-        return None
-
-    try:
-        from dateutil import parser as dtparser
-        periodStartDt = dtparser.isoparse(invoice["period_start"])
-        periodEndDt = dtparser.isoparse(invoice["period_end"])
-        snapshot = computeInvoiceSnapshot(
-            billingMode="annual_prepaid",
-            billingReason="renewal",
-            domainCount=domainCount,
-            customerState=subscriptionBillingState(subscription),
-            periodStart=periodStartDt,
-            periodEnd=periodEndDt,
-        )
-    except Exception as e:
-        logger.error(
-            f"Failed to recompute snapshot for invoice {invoiceId}: {e}"
-        )
-        return None
-
-    paymentFlow = "razorpay_invoice"
-    razorpayInvoiceId = ""
-    razorpayPaymentLinkId = ""
-    shortUrl = ""
-    commonNotes = {
-        "invoiceId": invoiceId,
-        "subscriptionId": subscriptionId,
-        "userId": user.get("userId", ""),
-        "billingReason": "renewal",
-        "pricingVersion": snapshot.pricing_version,
-    }
-    customerDetails = {
-        "name": user.get("fullName") or user.get("email") or "Customer",
-        "email": user.get("email", ""),
-        "contact": user.get("phoneNumber", ""),
-    }
-    now = datetime.datetime.now(datetime.timezone.utc)
-    expireByDt = periodStartDt if periodStartDt > now else now + datetime.timedelta(days=7)
-
-    try:
-        rzpInvoice = razorpayClient.invoice.create({
-            "type": "invoice",
-            "customer": customerDetails,
-            "line_items": [
-                {
-                    "name": f"Annual Renewal - {domainCount} domain(s)",
-                    "amount": snapshot.total_amount,
-                    "currency": "INR",
-                    "quantity": 1,
-                }
-            ],
-            "expire_by": int(expireByDt.timestamp()) if expireByDt else None,
-            "sms_notify": 0,
-            "email_notify": 0,
-            "notes": commonNotes,
-        })
-        razorpayInvoiceId = rzpInvoice.get("id", "")
-        shortUrl = rzpInvoice.get("short_url", "")
-    except Exception as invoiceError:
-        logger.warning(
-            f"Razorpay invoice creation failed for invoice {invoiceId}, "
-            f"trying payment link fallback: {invoiceError}"
-        )
-        try:
-            paymentFlow = "razorpay_payment_link"
-            rzpPaymentLink = razorpayClient.payment_link.create({
-                "amount": snapshot.total_amount,
-                "currency": "INR",
-                "accept_partial": False,
-                "description": f"Annual Renewal - {domainCount} domain(s)",
-                "customer": customerDetails,
-                "expire_by": int(expireByDt.timestamp()) if expireByDt else None,
-                "notify": {"sms": False, "email": False},
-                "reference_id": str(invoiceId),
-                "notes": commonNotes,
-            })
-            razorpayPaymentLinkId = rzpPaymentLink.get("id", "")
-            shortUrl = rzpPaymentLink.get("short_url", "")
-        except Exception as paymentLinkError:
-            logger.error(
-                f"Razorpay payment artifact creation failed for invoice {invoiceId}: "
-                f"invoice_error={invoiceError}; payment_link_error={paymentLinkError}"
-            )
-            return None
-
-    existingMetadata = invoice.get("metadata_json") if isinstance(invoice.get("metadata_json"), dict) else {}
-    renewalMetadata = buildRenewalPricingMetadata(subscription, invoice.get("period_start"))
-    updatePayload = {
-        "razorpayInvoiceId": razorpayInvoiceId,
-        "razorpay_payment_link_id": razorpayPaymentLinkId,
-        "shortUrl": shortUrl,
-        "payment_flow": paymentFlow,
-        "status": "payment_pending",
-        "expires_at": expireByDt.isoformat() if expireByDt else None,
-        "amount_before_tax": snapshot.amount_before_tax,
-        "tax_amount": snapshot.tax.tax_amount,
-        "total_amount": snapshot.total_amount,
-        "amount": snapshot.total_amount,
-        "tax_breakdown_json": snapshot.tax.to_dict(),
-        "tax_rule_version": snapshot.tax.tax_rule_version,
-        "place_of_supply_snapshot": snapshot.tax.place_of_supply_snapshot,
-        "pricing_version": snapshot.pricing_version,
-        "pricing_reference_snapshot_json": snapshot.pricing_reference_snapshot_json,
-        "metadata_json": {
-            **existingMetadata,
-            "flow": "annual_renewal_scheduler_t7",
-            "billingMode": "annual_prepaid",
-            "estimate": False,
-            "frozen": True,
-            **renewalMetadata,
-        },
-    }
-    client.table("Invoices").update(updatePayload).eq("id", invoiceId).execute()
-
-    logger.info(
-        f"Payment artifact created for invoice {invoiceId}, "
-        f"razorpayInvoiceId={razorpayInvoiceId}"
     )
     return {**invoice, **updatePayload}
 

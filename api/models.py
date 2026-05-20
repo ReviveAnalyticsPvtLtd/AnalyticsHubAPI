@@ -197,9 +197,6 @@ class VerifyAnnualRenewalPaymentRequest(BaseModel):
 class ReplayWebhookEventRequest(BaseModel):
     eventId: str
 
-class RegeneratePaymentArtifactRequest(BaseModel):
-    invoiceId: str
-
 class MarkReconciliationInvestigatedRequest(BaseModel):
     entityType: str
     entityId: str

@@ -260,15 +260,14 @@ class SubscriptionService:
             updateData["paidAt"] = paidAt
         self.client.table("Invoices").update(updateData).eq("id", invoiceId).execute()
 
-    def _markPayableRenewalArtifactsForRegeneration(self, subscriptionId: str) -> None:
+    def _markPayableRenewalInvoicesForRepricing(self, subscriptionId: str) -> None:
         """
-        Clear stale provider artifact IDs when pending removals change after a
-        renewal artifact was already created.
+        Expire payable renewal invoices when pending removals change so the
+        next dashboard prep recomputes the frozen renewal price.
         """
         invoices = self.client.table("Invoices") \
             .select(
-                "id, status, billing_reason, razorpayInvoiceId, "
-                "razorpay_payment_link_id, shortUrl, metadata_json"
+                "id, status, billing_reason, metadata_json"
             ) \
             .eq("subscription_id", subscriptionId) \
             .eq("billing_reason", "renewal") \
@@ -277,22 +276,18 @@ class SubscriptionService:
         payableStatuses = {"upcoming", "payment_pending", "expired"}
         for invoice in invoices or []:
             status = (invoice.get("status") or "").lower()
-            hasArtifact = bool(invoice.get("razorpayInvoiceId") or invoice.get("razorpay_payment_link_id"))
-            if status not in payableStatuses or not hasArtifact:
+            if status not in payableStatuses:
                 continue
             existingMetadata = invoice.get("metadata_json")
             metadata = dict(existingMetadata) if isinstance(existingMetadata, dict) else {}
             metadata.update({
-                "regenerationRequired": True,
-                "regenerationReason": "pending_removals_changed",
-                "regenerationSource": "removeDomain",
-                "regenerationMarkedAt": utcNow().isoformat(),
+                "repricingRequired": True,
+                "repricingReason": "pending_removals_changed",
+                "repricingSource": "removeDomain",
+                "repricingMarkedAt": utcNow().isoformat(),
             })
             self.client.table("Invoices").update({
                 "status": "expired",
-                "razorpayInvoiceId": None,
-                "razorpay_payment_link_id": None,
-                "shortUrl": None,
                 "metadata_json": metadata,
             }).eq("id", invoice["id"]).execute()
 
@@ -1580,7 +1575,7 @@ class SubscriptionService:
             self.client.table("subscriptions").update({
                 "pending_removals": pendingRemovals
             }).eq("id", subscription["id"]).execute()
-            self._markPayableRenewalArtifactsForRegeneration(subscription["id"])
+            self._markPayableRenewalInvoicesForRepricing(subscription["id"])
             domainCount = subscriptionDomainCount(subscription) or len(currentExperts)
             for domain in normalizedDomains:
                 self._auditLog(
@@ -1768,37 +1763,6 @@ class SubscriptionService:
             logger.error(exception)
             raise exception
 
-    def storeInvoice(self, userId: str, invoiceData: dict) -> None:
-        """
-        Store or update an invoice record in the Invoices table.
-
-        Args:
-            userId (str): The user ID to associate the invoice with.
-            invoiceData (dict): Razorpay invoice entity data.
-        """
-        try:
-            billingStart = invoiceData.get("billing_start")
-            billingEnd = invoiceData.get("billing_end")
-            paidAt = invoiceData.get("paid_at")
-            record = {
-                "userId": userId,
-                "razorpayInvoiceId": invoiceData["id"],
-                "razorpaySubscriptionId": invoiceData.get("subscription_id"),
-                "razorpayPaymentId": invoiceData.get("payment_id"),
-                "amount": invoiceData.get("amount", 0),
-                "currency": invoiceData.get("currency", "INR"),
-                "status": invoiceData.get("status", "paid").upper(),
-                "billingStart": str(utcFromTimestamp(billingStart)) if billingStart else None,
-                "billingEnd": str(utcFromTimestamp(billingEnd)) if billingEnd else None,
-                "paidAt": str(utcFromTimestamp(paidAt)) if paidAt else None,
-                "shortUrl": invoiceData.get("short_url"),
-            }
-            self.client.table("Invoices").upsert(
-                record, on_conflict="razorpayInvoiceId"
-            ).execute()
-        except Exception as e:
-            logger.error(f"Failed to store invoice {invoiceData.get('id')} for user {userId}: {e}")
-
     def createAnnualRenewalPaymentSession(self, invoiceId: str, token: str) -> dict:
         """
         Create or reuse a Razorpay Order for an annual renewal invoice
@@ -1828,7 +1792,7 @@ class SubscriptionService:
                 .select(
                     "id, userId, subscription_id, billing_reason, status, "
                     "total_amount, amount, currency, period_start, period_end, "
-                    "razorpay_order_id, razorpayInvoiceId, razorpay_payment_link_id, "
+                    "razorpay_order_id, "
                     "amount_before_tax, tax_amount, tax_breakdown_json, "
                     "pricing_version, pricing_reference_snapshot_json"
                 ) \

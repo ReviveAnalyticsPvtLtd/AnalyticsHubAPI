@@ -81,8 +81,6 @@ class BillingEventService:
         provider: str = "razorpay",
         provider_order_id: str | None = None,
         provider_payment_id: str | None = None,
-        provider_invoice_id: str | None = None,
-        provider_payment_link_id: str | None = None,
         metadata: dict | None = None,
     ) -> dict | None:
         now = self._now()
@@ -98,8 +96,6 @@ class BillingEventService:
             "provider": provider,
             "provider_payment_id": provider_payment_id,
             "provider_order_id": provider_order_id,
-            "provider_invoice_id": provider_invoice_id,
-            "provider_payment_link_id": provider_payment_link_id,
             "period_start": period_start,
             "period_end": period_end,
             "cycle_key": cycle_key,
@@ -120,8 +116,6 @@ class BillingEventService:
         payment_status: str,
         provider_payment_id: str | None = None,
         provider_order_id: str | None = None,
-        provider_invoice_id: str | None = None,
-        provider_payment_link_id: str | None = None,
         failure_reason: str | None = None,
     ) -> None:
         payload = {
@@ -132,10 +126,6 @@ class BillingEventService:
             payload["provider_payment_id"] = provider_payment_id
         if provider_order_id:
             payload["provider_order_id"] = provider_order_id
-        if provider_invoice_id:
-            payload["provider_invoice_id"] = provider_invoice_id
-        if provider_payment_link_id:
-            payload["provider_payment_link_id"] = provider_payment_link_id
         if failure_reason:
             payload["failure_reason"] = failure_reason[:2000]
         if payment_status in _TERMINAL_PAYMENT_STATUSES:

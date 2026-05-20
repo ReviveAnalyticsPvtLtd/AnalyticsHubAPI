@@ -59,8 +59,6 @@ class PaymentCollectionMode(str, Enum):
     """Matches ``subscriptions.payment_collection_mode`` CHECK constraint."""
     SILENT_TOKEN = "silent_token"
     AUTHENTICATED_CHECKOUT = "authenticated_checkout"
-    # Legacy/historical hosted invoice-link mode; annual renewals use Checkout.
-    INVOICE_LINK = "invoice_link"
 
 
 class InvoiceBillingReason(str, Enum):
@@ -76,9 +74,6 @@ class InvoicePaymentFlow(str, Enum):
     """Matches ``Invoices.payment_flow`` CHECK constraint."""
     TOKEN_CHARGE = "token_charge"
     RAZORPAY_ORDER_CHECKOUT = "razorpay_order_checkout"
-    # Legacy/historical hosted artifact flows retained for old rows/webhooks.
-    RAZORPAY_INVOICE = "razorpay_invoice"
-    RAZORPAY_PAYMENT_LINK = "razorpay_payment_link"
 
 
 class InvoiceLifecycleStatus(str, Enum):
@@ -96,8 +91,6 @@ class PaymentAttemptType(str, Enum):
     """Matches ``billing_events.payment_attempt_type`` CHECK constraint."""
     TOKEN_DEBIT = "token_debit"
     CHECKOUT = "checkout"
-    INVOICE_PAY = "invoice_pay"
-    PAYMENT_LINK_PAY = "payment_link_pay"
     RECONCILIATION_UPDATE = "reconciliation_update"
 
 
@@ -151,8 +144,8 @@ class InvoiceRecord(BaseModel):
     Schema for the extended columns added to ``Invoices`` by
     ``002_extend_invoices.sql``.
 
-    Existing legacy columns (``userId``, ``razorpayInvoiceId``, etc.)
-    are not duplicated here; this covers only the new fields.
+    Existing base columns (``userId``, ``razorpayPaymentId``, etc.)
+    are not duplicated here; this covers only the annual billing fields.
     """
     id: str | None = None
     subscription_id: str | None = None
@@ -160,10 +153,8 @@ class InvoiceRecord(BaseModel):
     payment_flow: InvoicePaymentFlow | None = None
     requires_customer_auth: bool = False
     razorpay_order_id: str | None = None
-    razorpay_payment_link_id: str | None = None
     provider_receipt: str | None = None
     due_date: datetime | None = None
-    expires_at: datetime | None = None
     period_start: datetime | None = None
     period_end: datetime | None = None
     amount_before_tax: int | None = None
@@ -196,8 +187,6 @@ class BillingEventRecord(BaseModel):
     provider: str = "razorpay"
     provider_payment_id: str | None = None
     provider_order_id: str | None = None
-    provider_invoice_id: str | None = None
-    provider_payment_link_id: str | None = None
     period_start: datetime | None = None
     period_end: datetime | None = None
     cycle_key: str | None = None
