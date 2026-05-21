@@ -10,8 +10,8 @@ __all__ = ["router"]
 
 
 from utils.exceptionHandler import CustomException, raiseHttpException
-from api.models import VerifySubscriptionRequest, CreateSubscriptionRequest, AddDomainsRequest, VerifyDomainUpgradeRequest, RemoveDomainRequest, CancelPendingAdditionRequest, CancelSubscriptionRequest, RefundRequest
-from api.services.subscriptionService import subscriptionService
+from api.models import VerifySubscriptionRequest, CreateSubscriptionRequest, AddDomainsRequest, VerifyDomainUpgradeRequest, RemoveDomainRequest, CancelPendingAdditionRequest, CancelSubscriptionRequest, RefundRequest, CreateAnnualRenewalSessionRequest, VerifyAnnualRenewalPaymentRequest
+from api.services.subscriptions.subscriptionService import subscriptionService
 from fastapi.responses import ORJSONResponse
 from fastapi import APIRouter, Depends
 from api.commons import verifyToken
@@ -60,7 +60,12 @@ async def createSubscription(request: CreateSubscriptionRequest, token=Depends(v
         ORJSONResponse: Subscription details required for checkout.
     """
     try:
-        result = subscriptionService.createSubscription(domains=request.domains, contact=request.contact, token=token)
+        result = subscriptionService.createSubscription(
+            domains=request.domains,
+            contact=request.contact,
+            billingMode=request.billingMode,
+            token=token
+        )
         return ORJSONResponse(status_code=200, content=result)
     except CustomException as e:
         raiseHttpException(e)
@@ -276,6 +281,75 @@ async def getInvoices(token=Depends(verifyToken)):
             content={
                 "status": "SUCCESS",
                 "invoices": result
+            }
+        )
+    except CustomException as e:
+        raiseHttpException(e)
+
+
+@router.post("/createAnnualRenewalPaymentSession")
+async def createAnnualRenewalPaymentSession(
+    request: CreateAnnualRenewalSessionRequest,
+    token=Depends(verifyToken)
+):
+    """
+    Create or reuse a Razorpay Order for an annual renewal invoice.
+
+    Args:
+        request (CreateAnnualRenewalSessionRequest): Invoice ID to pay.
+        token: Authorization token dependency.
+
+    Returns:
+        ORJSONResponse: Checkout session payload.
+    """
+    try:
+        result = subscriptionService.createAnnualRenewalPaymentSession(
+            invoiceId=request.invoiceId,
+            token=token
+        )
+        return ORJSONResponse(
+            status_code=200,
+            content={
+                "status": "SUCCESS",
+                "message": "Annual renewal payment session created.",
+                "data": result
+            }
+        )
+    except CustomException as e:
+        raiseHttpException(e)
+
+
+@router.post("/verifyAnnualRenewalPayment")
+async def verifyAnnualRenewalPayment(
+    payload: VerifyAnnualRenewalPaymentRequest,
+    token=Depends(verifyToken)
+):
+    """
+    Verify the Razorpay checkout signature for an annual renewal payment.
+
+    Args:
+        payload (VerifyAnnualRenewalPaymentRequest): Razorpay checkout callback.
+        token: Authorization token dependency.
+
+    Returns:
+        ORJSONResponse: Verification result.
+    """
+    try:
+        result = subscriptionService.verifyAnnualRenewalPayment(
+            payload=payload.dict(),
+            token=token
+        )
+        message = (
+            "Annual renewal payment verified and finalized."
+            if result.get("finalized")
+            else "Annual renewal payment verified. Awaiting webhook finalization."
+        )        
+        return ORJSONResponse(
+            status_code=200,
+            content={
+                "status": "SUCCESS",
+                "message": message,
+                "data": result,
             }
         )
     except CustomException as e:

@@ -146,20 +146,23 @@ class DeleteDashboardElement(BaseModel):
     id: str
 
 class VerifySubscriptionRequest(BaseModel):
-    domains: list[str]
     razorpayOrderId: str
     razorpayPaymentId: str
     razorpaySignature: str
 
+    class Config:
+        extra = "forbid"
+
 class CreateSubscriptionRequest(BaseModel):
     domains: list[str]
     contact: str
+    billingMode: str | None = "monthly_recurring"
 
 class AddDomainsRequest(BaseModel):
     domains: list[str]
 
 class VerifyDomainUpgradeRequest(BaseModel):
-    domains: list[str]
+    domains: list[str] | None = None
     razorpayOrderId: str
     razorpayPaymentId: str
     razorpaySignature: str
@@ -181,6 +184,23 @@ class SubscriptionStatus(str, Enum):
     PENDING_CANCELLATION = "PENDING_CANCELLATION"
     PAUSED = "PAUSED"
     EXPIRED = "EXPIRED"
+
+class CreateAnnualRenewalSessionRequest(BaseModel):
+    invoiceId: str
+
+class VerifyAnnualRenewalPaymentRequest(BaseModel):
+    invoiceId: str
+    razorpayOrderId: str
+    razorpayPaymentId: str
+    razorpaySignature: str
+
+class ReplayWebhookEventRequest(BaseModel):
+    eventId: str
+
+class MarkReconciliationInvestigatedRequest(BaseModel):
+    entityType: str
+    entityId: str
+    note: str
 
 class RefundRequest(BaseModel):
     paymentId: str

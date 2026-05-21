@@ -15,6 +15,15 @@ from analyticsHub.components.domainKpiMapper import DomainKpiMapper
 from utils.llmOutputParser import parseModelJsonOutput
 from api.commons import updateProjectModifiedAt
 from utils.exceptionHandler import CustomException
+from api.services.subscriptions.subscriptionFieldUtils import (
+    CANONICAL_SUBSCRIPTION_SELECT,
+    subscriptionExperts,
+    toApiPlanFields,
+)
+from api.services.subscriptions.paymentValidationService import (
+    calculateSubscriptionDaysLeft,
+    mergeSubscriptionLifecycleSnapshot,
+)
 from concurrent.futures import ProcessPoolExecutor
 from utils.logger import logger
 from urllib.request import urlopen
@@ -28,9 +37,6 @@ from api.models import (
 from jose import jwt
 import pandas as pd
 import datetime
-from dateutil import parser
-from datetime import timezone
-from analyticsHub.components.subscriptionStatus import resolve_subscription_status
 import orjson
 import json
 import uuid
@@ -225,7 +231,8 @@ class ManagementService:
             )
             data = pd.DataFrame(self.client.table("Workspaces").select("*").execute().data)
             data = data[data["ownerId"] == decodedToken["userId"]]
-            subscribedExperts = [x.strip() for x in self.client.table("Users").select("subscribedExperts").eq("userId", decodedToken["userId"]).execute().data[0]["subscribedExperts"].split(",")]
+            subscription = self._getCanonicalSubscription(decodedToken["userId"])
+            subscribedExperts = subscriptionExperts(subscription)
             response = {
                 "workspaces": data.to_dict(orient = "records"),
                 "aiExperts": {
@@ -884,7 +891,70 @@ class ManagementService:
             )
             logger.error(exception)
             raise exception
-        
+
+    @staticmethod
+    def _mapSubscriptionStatusForProfile(status: str | None) -> str:
+        normalized = (status or "").strip().lower()
+        mapping = {
+            "none": "NONE",
+            "trial": "TRIAL",
+            "active": "ACTIVE",
+            "renewal_upcoming": "ACTIVE",
+            "payment_pending": "ACTIVE",
+            "past_due": "PAUSED",
+            "suspended": "PAUSED",
+            "cancelled": "CANCELLED",
+            "expired": "EXPIRED",
+        }
+        return mapping.get(normalized, "NONE")
+
+    @staticmethod
+    def _mapBillingModeToPlanType(billingMode: str | None, status: str | None = None) -> str:
+        normalizedStatus = (status or "").strip().lower()
+        if normalizedStatus == "trial":
+            return "free"
+        if normalizedStatus == "none":
+            return "none"
+        if billingMode == "none":
+            return "none"
+        if billingMode == "monthly_recurring":
+            return "pro"
+        if billingMode == "annual_prepaid":
+            return "annual"
+        return "none"
+
+    def _getCanonicalSubscription(self, userId: str) -> dict:
+        subscription = self.client.table("subscriptions") \
+            .select(CANONICAL_SUBSCRIPTION_SELECT) \
+            .eq("user_id", userId) \
+            .order("updated_at", desc=True) \
+            .limit(1) \
+            .execute().data
+        if not subscription:
+            raise CustomException(
+                ValueError("Missing subscription row"),
+                statusCode=409,
+                uiMessage="Subscription data is not available. Please contact support."
+            )
+        return subscription[0]
+
+    def _refreshLifecycleSnapshot(self, userId: str, subscription: dict) -> int:
+        expiryStr = subscription.get("current_period_end")
+        daysLeft = calculateSubscriptionDaysLeft(expiryStr)
+        billingState = mergeSubscriptionLifecycleSnapshot(
+            subscription.get("billing_state"),
+            currentPeriodEnd=expiryStr,
+            status=subscription.get("status"),
+        )
+        try:
+            self.client.table("subscriptions").update({
+                "billing_state": billingState
+            }).eq("user_id", userId).execute()
+            subscription["billing_state"] = billingState
+        except Exception as e:
+            logger.warning(f"Failed to update lifecycle snapshot for user {userId}: {e}")
+        return daysLeft
+	        
     def getUserProfile(self, token: str) -> dict:
         """
         Retrieve user profile details from the Users table.
@@ -916,13 +986,7 @@ class ManagementService:
                     "profileImage",
                     "companyName",
                     "role",
-                    "profileBio",
-                    "subscriptionPlan",
-                    "subscribedExperts",
-                    "subscriptionStatus",
-                    "subscriptionExpiry",
-                    "domainCount",
-                    "pendingRemovals"
+	                    "profileBio"
                 ) \
                 .eq("userId", userId) \
                 .execute().data
@@ -933,31 +997,16 @@ class ManagementService:
                     uiMessage="User profile not found."
                 )
             record = userRecord[0]
-            subscribedExperts = record.get("subscribedExperts")
-            if subscribedExperts:
-                aiExpertsList = [x.strip() for x in subscribedExperts.split(",") if x.strip()]
-            else:
-                aiExpertsList = []
-            subscriptionDaysLeft = 0
-            expiryStr = record.get("subscriptionExpiry")
+            subscription = self._getCanonicalSubscription(userId)
+            planFields = toApiPlanFields(subscription)
+            expiryStr = subscription.get("current_period_end")
             if expiryStr == "None":
                 expiryStr = None
-            if expiryStr:
-                try:
-                    expiry = parser.isoparse(expiryStr)
-                    delta = (expiry - datetime.datetime.utcnow()).days
-                    subscriptionDaysLeft = max(0, delta)
-                except (ValueError, TypeError):
-                    subscriptionDaysLeft = 0
-            now = datetime.datetime.now(timezone.utc)
-            currentStatus = resolve_subscription_status(
-                record.get("subscriptionStatus"),
-                record.get("subscriptionExpiry"),
-                now,
-            )
+            subscriptionDaysLeft = self._refreshLifecycleSnapshot(userId, subscription)
+            currentStatus = self._mapSubscriptionStatusForProfile(subscription.get("status"))
             nextBilling = None
-            if currentStatus in ("ACTIVE", "PENDING_CANCELLATION") and expiryStr:
-                nextBilling = expiryStr
+            if currentStatus == "ACTIVE":
+                nextBilling = subscription.get("renewal_due_at") or expiryStr
             profileResponse = {
                 "userId": record.get("userId"),
                 "userName": record.get("fullName"),
@@ -967,17 +1016,24 @@ class ManagementService:
                 "position": record.get("role"),
                 "bio": record.get("profileBio"),
                 "plan": {
-                    "planType": record.get("subscriptionPlan"),
+                    "planType": self._mapBillingModeToPlanType(
+                        subscription.get("billing_mode"),
+                        subscription.get("status"),
+                    ),
                     "status": currentStatus,
-                    "planExpire": record.get("subscriptionExpiry"),
+                    "planExpire": expiryStr,
                     "nextBilling": nextBilling,
-                    "subscribedExperts": aiExpertsList,
-                    "domainCount": record.get("domainCount") or len(aiExpertsList),
-                    "pendingRemovals": record.get("pendingRemovals") or [],
-                    "subscriptionDaysLeft": subscriptionDaysLeft
+	                    "subscribedExperts": planFields["subscribedExperts"],
+	                    "domainCount": planFields["domainCount"],
+	                    "pendingRemovals": planFields["pendingRemovals"],
+                    "subscriptionDaysLeft": subscriptionDaysLeft,
+                    "billingMode": subscription.get("billing_mode"),
+                    "renewalDueAt": subscription.get("renewal_due_at"),
                 }
             }
             return profileResponse
+        except CustomException:
+            raise
         except Exception as e:
             exception = CustomException(
                 e,
@@ -1063,40 +1119,19 @@ class ManagementService:
                     "profileImage",
                     "companyName",
                     "role",
-                    "profileBio",
-                    "subscriptionPlan",
-                    "subscribedExperts",
-                    "subscriptionStatus",
-                    "subscriptionExpiry",
-                    "domainCount",
-                    "pendingRemovals"
+	                    "profileBio"
                 ) \
                 .eq("userId", userId) \
                 .execute().data
             record = updatedUserRecord[0]
-            subscribedExperts = record.get("subscribedExperts")
-            if subscribedExperts:
-                aiExpertsList = [x.strip() for x in subscribedExperts.split(",") if x.strip()]
-            else:
-                aiExpertsList = []
-            subscriptionDaysLeft = 0
-            expiryStr = record.get("subscriptionExpiry")
-            if expiryStr:
-                try:
-                    expiry = parser.isoparse(expiryStr)
-                    delta = (expiry - datetime.datetime.utcnow()).days
-                    subscriptionDaysLeft = max(0, delta)
-                except (ValueError, TypeError):
-                    subscriptionDaysLeft = 0
-            now = datetime.datetime.now(timezone.utc)
-            currentStatus = resolve_subscription_status(
-                record.get("subscriptionStatus"),
-                record.get("subscriptionExpiry"),
-                now,
-            )
+            subscription = self._getCanonicalSubscription(userId)
+            planFields = toApiPlanFields(subscription)
+            expiryStr = subscription.get("current_period_end")
+            subscriptionDaysLeft = self._refreshLifecycleSnapshot(userId, subscription)
+            currentStatus = self._mapSubscriptionStatusForProfile(subscription.get("status"))
             nextBilling = None
-            if currentStatus in ("ACTIVE", "PENDING_CANCELLATION") and expiryStr:
-                nextBilling = expiryStr
+            if currentStatus == "ACTIVE":
+                nextBilling = subscription.get("renewal_due_at") or expiryStr
             profileResponse = {
                 "userId": record.get("userId"),
                 "userName": record.get("fullName"),
@@ -1106,17 +1141,24 @@ class ManagementService:
                 "position": record.get("role"),
                 "bio": record.get("profileBio"),
                 "plan": {
-                    "planType": record.get("subscriptionPlan"),
+                    "planType": self._mapBillingModeToPlanType(
+                        subscription.get("billing_mode"),
+                        subscription.get("status"),
+                    ),
                     "status": currentStatus,
-                    "planExpire": record.get("subscriptionExpiry"),
+                    "planExpire": expiryStr,
                     "nextBilling": nextBilling,
-                    "subscribedExperts": aiExpertsList,
-                    "domainCount": record.get("domainCount") or len(aiExpertsList),
-                    "pendingRemovals": record.get("pendingRemovals") or [],
-                    "subscriptionDaysLeft": subscriptionDaysLeft
+	                    "subscribedExperts": planFields["subscribedExperts"],
+	                    "domainCount": planFields["domainCount"],
+	                    "pendingRemovals": planFields["pendingRemovals"],
+                    "subscriptionDaysLeft": subscriptionDaysLeft,
+                    "billingMode": subscription.get("billing_mode"),
+                    "renewalDueAt": subscription.get("renewal_due_at"),
                 }
             }
             return profileResponse
+        except CustomException:
+            raise
         except Exception as e:
             exception = CustomException(
                 e,
