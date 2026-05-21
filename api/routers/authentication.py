@@ -13,7 +13,7 @@ from utils.exceptionHandler import CustomException, raiseHttpException
 from api.services.authenticationService import authenticationService
 from fastapi import APIRouter, Depends
 from fastapi.responses import ORJSONResponse
-from api.commons import verifyToken
+from api.commons import verifyToken, verifyTokenWithExpiry
 from api.models import (
     OnboardingDetails,
     LoginWithProvider,
@@ -23,6 +23,19 @@ from api.models import (
 )
 
 router = APIRouter()
+
+@router.get("/verify")
+async def verify(token = Depends(verifyTokenWithExpiry)):
+    """
+    Verify the provided access token. This endpoint specifically checks for token existence and expiry.
+
+    Args:
+        token: Authorization token (injected by FastAPI).
+
+    Returns:
+        ORJSONResponse: Success status.
+    """
+    return ORJSONResponse(status_code=200, content={"status": "SUCCESS", "message": "Token is valid and has not expired."})
 
 @router.post("/signUp")
 async def signup(signupDetails: SignUp):

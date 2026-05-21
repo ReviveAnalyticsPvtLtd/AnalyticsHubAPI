@@ -12,7 +12,8 @@ from api.routers import authentication, manager, dataLoader, reporting, utils, b
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from utils.logger import logger
-from fastapi import FastAPI
+from fastapi.responses import ORJSONResponse
+from fastapi import FastAPI, Request, HTTPException
 import psutil
 import os
 
@@ -24,6 +25,24 @@ app = FastAPI(
     docs_url = "/documentation/docs",
     redoc_url = "/documentation/redoc"
 )
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """
+    Global exception handler for HTTPException.
+    
+    If the detail is a dict containing 'status' and 'message', it returns a 
+    flat response. Otherwise, it returns the standard detail format.
+    """
+    if isinstance(exc.detail, dict) and "status" in exc.detail and "message" in exc.detail:
+        return ORJSONResponse(
+            status_code=exc.status_code,
+            content=exc.detail
+        )
+    return ORJSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail}
+    )
 
 app.add_middleware(
     CORSMiddleware,

@@ -304,6 +304,7 @@ class AuthenticationService:
                     uiMessage="Email or password is incorrect."
                 )
             sessionStartTime = datetime.datetime.now(datetime.timezone.utc)
+            expiresAt = sessionStartTime + datetime.timedelta(hours=24)
             tokenPayload = {
                 "userId": dataSlice["userId"],
                 "email": loginDetails.email,
@@ -315,7 +316,9 @@ class AuthenticationService:
                 "email": dataSlice["email"],
                 "accessToken": accessToken,
                 "sessionStartTime": str(sessionStartTime),
-                "lastActivity": str(sessionStartTime)
+                "lastActivity": str(sessionStartTime),
+                "createdAt": str(sessionStartTime),
+                "expiresAt": str(expiresAt)
             }).execute()
             subscription = self._ensureSubscriptionSnapshot(dataSlice["userId"])
             subscriptionStatus = self._mapSubscriptionStatus(subscription.get("status") if subscription else None)
@@ -420,6 +423,8 @@ class AuthenticationService:
                 )
                 subscriptionDaysLeft = self._refreshLifecycleSnapshot(userId, subscription)
 
+            sessionStartTime = datetime.datetime.now(datetime.timezone.utc)
+            expiresAt = sessionStartTime + datetime.timedelta(hours=24)
             tokenPayload = {
                 "userId": userData["userId"],
                 "email": userData["email"],
@@ -431,7 +436,9 @@ class AuthenticationService:
                 "email": userData["email"],
                 "accessToken": accessToken,
                 "sessionStartTime": str(sessionStartTime),
-                "lastActivity": str(sessionStartTime)
+                "lastActivity": str(sessionStartTime),
+                "createdAt": str(sessionStartTime),
+                "expiresAt": str(expiresAt)
             }).execute()
 
             return {
