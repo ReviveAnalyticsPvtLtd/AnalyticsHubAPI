@@ -240,7 +240,7 @@ class AuthenticationService:
         
     def loginWithProvider(self, loginDetails: LoginWithProvider) -> dict:
         """
-        Authenticate or register a user using a third-party provider (Google/GitHub).
+        Authenticate or register a user using a third-party provider (Google/Azure AD).
         
         If the user does not exist:
         - Creates a new user record with a 12-day free trial.
@@ -253,14 +253,23 @@ class AuthenticationService:
         Raises:
             CustomException:
                 422 - Invalid provider payload
+                400 - Unsupported or disabled provider
                 500 - Provider login failure
         """
         try:
-            if not loginDetails.email:
+            if not loginDetails.email or not loginDetails.provider:
                 raise CustomException(
                     ValueError("Invalid provider login payload"),
                     statusCode=422,
                     uiMessage="Invalid login details. Please check the form."
+                )
+
+            provider = loginDetails.provider.value
+            if provider not in ["google", "azure-ad"]:
+                raise CustomException(
+                    ValueError(f"Unsupported authentication provider: {loginDetails.provider}"),
+                    statusCode=400,
+                    uiMessage="Unsupported authentication provider. Please use Google or Azure AD."
                 )
 
             response = self.client.table("Users").select("*").eq("email", loginDetails.email).execute()
@@ -288,7 +297,7 @@ class AuthenticationService:
                 subscriptionPlan = "none"
                 userId = str(uuid.uuid4())
                 workspaceId = str(uuid.uuid4())
-                passwordString = f"{loginDetails.sub}{loginDetails.id}{loginDetails.nodeId}{os.environ['SECRET_KEY']}"
+                passwordString = f"{loginDetails.sub}{os.environ['SECRET_KEY']}"
                 hashedPassword = hashlib.md5(passwordString.encode("utf-8")).hexdigest()
                 
                 subscriptionStart = sessionStartTime

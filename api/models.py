@@ -9,12 +9,14 @@ class Login(BaseModel):
     email: str
     password: str
 
+class ProviderEnum(str, Enum):
+    GOOGLE = "google"
+    AZURE_AD = "azure-ad"
+
 class LoginWithProvider(BaseModel):
     email: str
-    provider: str
-    sub: str | None = None
-    id: str | None = None
-    nodeId: str | None = None
+    provider: ProviderEnum
+    sub: str
 
 class OnboardingDetails(BaseModel):
     usage: str
