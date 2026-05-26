@@ -17,6 +17,10 @@ __all__ = ["authenticationService"]
 from utils.exceptionHandler import CustomException
 from utils.logger import logger
 from api.commons import client
+from api.services.subscriptions.paymentValidationService import (
+    calculateSubscriptionDaysLeft,
+    mergeSubscriptionLifecycleSnapshot,
+)
 from api.models import (
     OnboardingDetails,
     LoginWithProvider,
@@ -25,15 +29,8 @@ from api.models import (
     SignUp
 )
 from jose import jwt
-import pandas as pd
 import datetime
-from datetime import timezone
 import hashlib
-from analyticsHub.components.subscriptionStatus import (
-    coerce_subscription_expiry,
-    parse_expiry_utc,
-    resolve_subscription_status,
-)
 import uuid
 import os
 
@@ -50,6 +47,116 @@ class AuthenticationService:
         """
         logger.info("Initializing Authentication Service.")
         self.client = client
+
+    @staticmethod
+    def _mapSubscriptionStatus(status: str | None) -> str:
+        normalized = (status or "").strip().lower()
+        mapping = {
+            "none": "NONE",
+            "trial": "TRIAL",
+            "active": "ACTIVE",
+            "renewal_upcoming": "ACTIVE",
+            "payment_pending": "ACTIVE",
+            "past_due": "PAUSED",
+            "suspended": "PAUSED",
+            "cancelled": "CANCELLED",
+            "expired": "EXPIRED",
+        }
+        return mapping.get(normalized, "NONE")
+
+    @staticmethod
+    def _mapBillingModeToPlan(billingMode: str | None, status: str | None = None) -> str:
+        normalizedStatus = (status or "").strip().lower()
+        if normalizedStatus == "trial":
+            return "free"
+        if normalizedStatus == "none":
+            return "none"
+        if billingMode == "none":
+            return "none"
+        if billingMode == "monthly_recurring":
+            return "pro"
+        if billingMode == "annual_prepaid":
+            return "annual"
+        return "none"
+
+    def _getSubscriptionSnapshot(self, userId: str) -> dict | None:
+        response = self.client.table("subscriptions") \
+            .select("billing_mode, status, current_period_start, current_period_end, billing_state") \
+            .eq("user_id", userId) \
+            .order("updated_at", desc=True) \
+            .limit(1) \
+            .execute().data
+        return response[0] if response else None
+
+    def _refreshLifecycleSnapshot(self, userId: str, subscription: dict | None) -> int:
+        if not subscription:
+            return 0
+        expiryStr = subscription.get("current_period_end")
+        daysLeft = calculateSubscriptionDaysLeft(expiryStr)
+        billingState = mergeSubscriptionLifecycleSnapshot(
+            subscription.get("billing_state"),
+            currentPeriodEnd=expiryStr,
+            status=subscription.get("status"),
+        )
+        try:
+            self.client.table("subscriptions").update({
+                "billing_state": billingState
+            }).eq("user_id", userId).execute()
+            subscription["billing_state"] = billingState
+        except Exception as e:
+            logger.warning(f"Failed to update lifecycle snapshot for user {userId}: {e}")
+        return daysLeft
+
+    def _createDefaultSubscriptionRow(self, userId: str) -> None:
+        """
+        Create a canonical placeholder subscription row for a newly created user.
+
+        This enforces the hard-cutover rule: subscription lifecycle fields must be
+        sourced from the subscriptions table only (never from Users columns).
+        """
+        self.client.table("subscriptions").insert({
+            "user_id": userId,
+            "billing_mode": "none",
+            "status": "none",
+            "auto_renew_enabled": False,
+            "payment_collection_mode": "authenticated_checkout",
+            "default_currency": "INR",
+            "current_period_start": None,
+            "current_period_end": None,
+            "renewal_due_at": None,
+            "subscribed_experts": [],
+            "domain_count": 0,
+            "pending_removals": [],
+            "pending_additions": [],
+            "billing_state": {},
+            "razorpay_customer_id": None,
+            "razorpay_token_id": None,
+            "subscription_anchor_day": None,
+            "recurring_failures": 0,
+            "cancellation_reason": None,
+        }).execute()
+
+    def _ensureSubscriptionSnapshot(self, userId: str) -> dict:
+        """
+        Ensure a canonical subscription row exists and return it.
+        """
+        snapshot = self._getSubscriptionSnapshot(userId)
+        if snapshot:
+            return snapshot
+        try:
+            self._createDefaultSubscriptionRow(userId)
+        except Exception as createError:
+            logger.warning(
+                f"Default subscription row create attempt failed for user {userId}: {createError}"
+            )
+        snapshot = self._getSubscriptionSnapshot(userId)
+        if snapshot:
+            return snapshot
+        raise CustomException(
+            ValueError("Missing subscription row"),
+            statusCode=409,
+            uiMessage="Subscription data is not available. Please contact support."
+        )
 
     def signup(self, signupDetails: SignUp) -> str:
         """
@@ -93,9 +200,7 @@ class AuthenticationService:
                 "userId": response.user.id,
                 "email": signupDetails.email,
                 "password": hashedPassword,
-                "currentWorkspaceId": workspaceId,
-                "subscriptionPlan": "none",
-                "subscriptionStatus": "NONE"
+                "currentWorkspaceId": workspaceId
             }).execute()
             self.client.table("Workspaces").insert({
                 "id": workspaceId,
@@ -103,6 +208,7 @@ class AuthenticationService:
                 "ownerEmail": signupDetails.email,
                 "workspaceName": "Default"
             }).execute()
+            self._ensureSubscriptionSnapshot(response.user.id)
             return response.user.id
         except CustomException:
             raise
@@ -179,15 +285,19 @@ class AuthenticationService:
                     statusCode=401,
                     uiMessage="Email or password is incorrect."
                 )
-            allData = pd.DataFrame(
-                self.client.table("Users")
-                .select("userId", "email", "password", "onboarded",
-                        "currentWorkspaceId", "subscriptionStart",
-                        "subscriptionExpiry", "subscriptionPlan", "subscriptionStatus")
+            userRows = self.client.table("Users") \
+                .select("userId, email, password, onboarded, currentWorkspaceId") \
+                .eq("email", loginDetails.email) \
+                .limit(1) \
                 .execute().data
-            )
-            dataSlice = allData[allData["email"] == loginDetails.email].iloc[0]
-            if dataSlice["password"] != hashedPassword:
+            if not userRows:
+                raise CustomException(
+                    ValueError("Invalid credentials"),
+                    statusCode=401,
+                    uiMessage="Email or password is incorrect."
+                )
+            dataSlice = userRows[0]
+            if dataSlice.get("password") != hashedPassword:
                 raise CustomException(
                     ValueError("Invalid credentials"),
                     statusCode=401,
@@ -210,23 +320,28 @@ class AuthenticationService:
                 "createdAt": str(sessionStartTime),
                 "expiresAt": str(expiresAt)
             }).execute()
-            now = datetime.datetime.now(timezone.utc)
-            subscriptionStatus = resolve_subscription_status(
-                dataSlice.get("subscriptionStatus"),
-                dataSlice.get("subscriptionExpiry"),
-                now,
+            subscription = self._ensureSubscriptionSnapshot(dataSlice["userId"])
+            subscriptionStatus = self._mapSubscriptionStatus(subscription.get("status") if subscription else None)
+            subscriptionPlan = self._mapBillingModeToPlan(
+                subscription.get("billing_mode") if subscription else None,
+                subscription.get("status") if subscription else None,
+            )
+            subscriptionDaysLeft = self._refreshLifecycleSnapshot(
+                dataSlice["userId"],
+                subscription,
             )
             return {
                 "status": "SUCCESS",
                 "userId": dataSlice["userId"],
                 "email": dataSlice["email"],
                 "accessToken": accessToken,
-                "onboarded": int(dataSlice["onboarded"]),
+                "onboarded": int(bool(dataSlice.get("onboarded"))),
                 "currentWorkspaceId": dataSlice["currentWorkspaceId"],
                 "subscriptionStatus": subscriptionStatus,
-                "subscriptionStart": dataSlice["subscriptionStart"],
-                "subscriptionExpiry": dataSlice["subscriptionExpiry"],
-                "subscriptionPlan": dataSlice.get("subscriptionPlan") or "none"
+                "subscriptionStart": subscription.get("current_period_start") if subscription else None,
+                "subscriptionExpiry": subscription.get("current_period_end") if subscription else None,
+                "subscriptionDaysLeft": subscriptionDaysLeft,
+                "subscriptionPlan": subscriptionPlan,
             }
         except CustomException:
             raise
@@ -278,39 +393,29 @@ class AuthenticationService:
 
             if response.data:
                 userData = response.data[0]
-                now = datetime.datetime.now(timezone.utc)
-                subscriptionStatus = resolve_subscription_status(
-                    userData.get("subscriptionStatus"),
-                    userData.get("subscriptionExpiry"),
-                    now,
+                subscription = self._ensureSubscriptionSnapshot(userData["userId"])
+                subscriptionStatus = self._mapSubscriptionStatus(subscription.get("status") if subscription else None)
+                subscriptionPlan = self._mapBillingModeToPlan(
+                    subscription.get("billing_mode") if subscription else None,
+                    subscription.get("status") if subscription else None,
                 )
-                exp_str = coerce_subscription_expiry(userData.get("subscriptionExpiry"))
-                if exp_str is None:
-                    subscriptionPlan = userData.get("subscriptionPlan") or "none"
-                else:
-                    subscriptionPlan = userData.get("subscriptionPlan")
-                    exp_dt = parse_expiry_utc(exp_str)
-                    if not subscriptionPlan and exp_dt and exp_dt <= now:
-                        subscriptionPlan = "EXPIRED"
+                subscriptionDaysLeft = self._refreshLifecycleSnapshot(
+                    userData["userId"],
+                    subscription,
+                )
             else:
-                subscriptionStatus = "NONE"
-                subscriptionPlan = "none"
                 userId = str(uuid.uuid4())
                 workspaceId = str(uuid.uuid4())
                 passwordString = f"{loginDetails.sub}{os.environ['SECRET_KEY']}"
                 hashedPassword = hashlib.md5(passwordString.encode("utf-8")).hexdigest()
                 
-                subscriptionStart = sessionStartTime
-                subscriptionExpiry = sessionStartTime + datetime.timedelta(days=12)
                 userData = {
                     "userId": userId,
                     "email": loginDetails.email,
                     "password": hashedPassword,
                     "createdAt": str(sessionStartTime),
                     "onboarded": False,
-                    "currentWorkspaceId": workspaceId,
-                    "subscriptionPlan": "none",
-                    "subscriptionStatus": "NONE"
+                    "currentWorkspaceId": workspaceId
                 }
                 self.client.table("Users").insert(userData).execute()
                 self.client.table("Workspaces").insert({
@@ -319,6 +424,13 @@ class AuthenticationService:
                     "ownerEmail": loginDetails.email,
                     "workspaceName": "Default"
                 }).execute()
+                subscription = self._ensureSubscriptionSnapshot(userId)
+                subscriptionStatus = self._mapSubscriptionStatus(subscription.get("status"))
+                subscriptionPlan = self._mapBillingModeToPlan(
+                    subscription.get("billing_mode"),
+                    subscription.get("status"),
+                )
+                subscriptionDaysLeft = self._refreshLifecycleSnapshot(userId, subscription)
 
             sessionStartTime = datetime.datetime.now(datetime.timezone.utc)
             expiresAt = sessionStartTime + datetime.timedelta(hours=24)
@@ -346,7 +458,8 @@ class AuthenticationService:
                 "onboarded": 1 if userData.get("onboarded") else 0,
                 "currentWorkspaceId": userData["currentWorkspaceId"],
                 "subscriptionStatus": subscriptionStatus,
-                "subscriptionPlan": subscriptionPlan 
+                "subscriptionPlan": subscriptionPlan,
+                "subscriptionDaysLeft": subscriptionDaysLeft,
             }
         except CustomException:
             raise

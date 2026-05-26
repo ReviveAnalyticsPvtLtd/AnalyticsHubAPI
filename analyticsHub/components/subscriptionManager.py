@@ -3,6 +3,10 @@ analyticsHub/components/subscriptionManager.py
 
 This module provides utility functions for managing user subscription expiry
 calculations and sending warning emails when subscriptions are about to expire.
+
+Reads all lifecycle data from the canonical ``subscriptions`` table.
+If a subscription row is missing for a user, logs a data-integrity
+error and skips mutation (no fallback to legacy Users columns).
 """
 
 __version__ = "1.0.0"
@@ -12,8 +16,12 @@ __all__ = ["recalculateSubscriptionDays"]
 
 from supabase import create_client
 from datetime import datetime, timezone
-from dateutil import parser
-from loguru import logger
+from utils.logger import logger
+from api.services.billing.billingEventService import BillingEventService
+from api.services.subscriptions.paymentValidationService import (
+    mergeSubscriptionLifecycleSnapshot,
+    parseUtc,
+)
 import requests
 import os
 
@@ -28,12 +36,37 @@ def _getSupabaseClient():
     return create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
 
 
+def _auditSubscriptionIntegrityIssue(client, userId: str, reason: str, metadata: dict | None = None) -> None:
+    """
+    Record subscription lifecycle integrity issues in billing_events.
+
+    Args:
+        client: Supabase client.
+        userId (str): Internal user ID.
+        reason (str): Machine-readable reason for the integrity failure.
+        metadata (dict | None): Optional additional context.
+    """
+    try:
+        BillingEventService(client).log_event(
+            user_id=userId,
+            event_type="billing.subscription_row_missing",
+            event_status="INTEGRITY_ERROR",
+            category="system",
+            metadata={"reason": reason, **(metadata or {})},
+        )
+    except Exception as e:
+        logger.error(f"Failed to write subscription integrity audit log for user {userId}: {e}")
+
+
 def recalculateSubscriptionDays() -> None:
     """
-    Recalculates subscription days left for all users with a subscription expiry date.
-    Updates the subscriptionDaysLeft field in the Users table. Expired subscriptions
-    are immediately set to expired status (no grace period). Sends warning emails
-    when exactly 2 days are remaining.
+    Recalculates subscription lifecycle status from canonical subscriptions rows.
+
+    Expired subscriptions are immediately set to expired status (no grace period).
+    Sends warning emails when exactly 2 days are remaining until current_period_end.
+
+    Annual prepaid subscriptions are managed by dedicated renewal schedulers,
+    except cancelled rows, which are expired here once their paid period ends.
 
     Returns:
         None
@@ -44,38 +77,79 @@ def recalculateSubscriptionDays() -> None:
     edgeFunctionUrl = os.environ["FREE_TRIAL_EXPIRY_WARNING_EMAIL_URL"]
     client = _getSupabaseClient()
     now = datetime.now(timezone.utc)
-    users = client.table("Users") \
-        .select("userId, email, fullName, subscriptionStart, subscriptionExpiry, subscriptionDaysLeft, subscriptionStatus") \
-        .not_.is_("subscriptionExpiry", "null") \
+    subscriptions = client.table("subscriptions") \
+        .select("id, user_id, current_period_start, current_period_end, status, billing_mode, billing_state") \
+        .not_.is_("current_period_end", "null") \
         .execute().data
-    for user in users:
-        expiryRaw = user["subscriptionExpiry"]
-        expiry = parser.parse(expiryRaw)
-        if expiry.tzinfo is None:
-            expiry = expiry.replace(tzinfo=timezone.utc)
-        else:
-            expiry = expiry.astimezone(timezone.utc)
+
+    subscriptionUserIds = {s.get("user_id") for s in subscriptions if s.get("user_id")}
+    try:
+        users = client.table("Users") \
+            .select("userId") \
+            .execute().data
+        userIds = {user.get("userId") for user in users if user.get("userId")}
+        for userId in userIds:
+            if userId not in subscriptionUserIds:
+                logger.error(
+                    f"Data integrity issue: missing subscriptions row for user {userId}"
+                )
+                _auditSubscriptionIntegrityIssue(
+                    client=client,
+                    userId=userId,
+                    reason="missing_canonical_subscription_row",
+                    metadata={},
+                )
+    except Exception as e:
+        logger.error(f"Failed subscription integrity precheck in recalculateSubscriptionDays: {e}")
+
+    for subscription in subscriptions:
+        billingMode = subscription.get("billing_mode", "monthly_recurring")
+        currentStatus = (subscription.get("status") or "").lower()
+
+        expiryRaw = subscription["current_period_end"]
+        expiry = parseUtc(expiryRaw)
+        if not expiry:
+            continue
+
         deltaDays = (expiry.date() - now.date()).days
+        snapshotStatus = "expired" if deltaDays < 0 else currentStatus
+        billingState = mergeSubscriptionLifecycleSnapshot(
+            subscription.get("billing_state"),
+            currentPeriodEnd=expiryRaw,
+            status=snapshotStatus,
+            now=now,
+        )
+        updatePayload = {"billing_state": billingState}
+
         if deltaDays < 0:
-            newDaysLeft = -1
-            st = user.get("subscriptionStatus")
-            if st not in ("EXPIRED", "CANCELLED", "PAUSED"):
-                client.table("Users").update({
-                    "subscriptionStatus": "EXPIRED"
-                }).eq("userId", user["userId"]).execute()
-        else:
-            newDaysLeft = deltaDays
-        client.table("Users") \
-            .update({"subscriptionDaysLeft": newDaysLeft}) \
-            .eq("userId", user["userId"]) \
-            .execute()
-        if newDaysLeft == 2:
+            if currentStatus not in ("expired", "suspended"):
+                updatePayload["status"] = "expired"
+
+        client.table("subscriptions").update(updatePayload).eq("id", subscription["id"]).execute()
+
+        if billingMode == "annual_prepaid" and currentStatus != "cancelled":
+            continue
+
+        if deltaDays == 2:
+            userData = client.table("Users") \
+                .select("email, fullName") \
+                .eq("userId", subscription["user_id"]) \
+                .limit(1) \
+                .execute().data
+            if not userData:
+                logger.warning(
+                    f"Skipping warning email: user not found for subscription "
+                    f"{subscription['id']}"
+                )
+                continue
+            user = userData[0]
             _sendSubscriptionWarningMail(
                 edgeFunctionUrl = edgeFunctionUrl,
                 email = user["email"],
                 fullName = user["fullName"],
-                subscriptionStart = user["subscriptionStart"]
+                subscriptionStart = subscription.get("current_period_start")
             )
+
     logger.info("Subscription days recalculation completed (UTC)")
     return
 

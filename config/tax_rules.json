@@ -1,0 +1,31 @@
+{
+  "version": "tax_v1",
+  "default_currency": "INR",
+  "rules": [
+    {
+      "product_tax_code": "saas_subscription",
+      "jurisdiction_scope": "IN",
+      "effective_from": "2026-04-01T00:00:00Z",
+      "effective_to": null,
+      "rule": {
+        "type": "gst",
+        "intra_state": {
+          "cgst": 9,
+          "sgst": 9
+        },
+        "inter_state": {
+          "igst": 18
+        },
+        "cess": 0,
+        "rounding": {
+          "mode": "HALF_UP",
+          "scale": 2
+        },
+        "place_of_supply": {
+          "basis": "customer_state",
+          "fallback": "seller_state"
+        }
+      }
+    }
+  ]
+}
