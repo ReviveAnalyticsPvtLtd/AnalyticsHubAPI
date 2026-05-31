@@ -757,14 +757,19 @@ class ManagementService:
         """
         try:
             userId = jwt.decode(token = token, key = os.environ["SECRET_KEY"], algorithms = ["HS256"]).get("userId")
-            allProjects = pd.DataFrame(self.client.table("Projects").select("*").execute().data)
-            allProjects = allProjects[allProjects["ownerUserId"] == userId]
             allTriggers = list()
-            if allProjects["triggers"].isna().all():
-                pass
-            else:
-                for trigger in allProjects["triggers"]:
-                    allTriggers += trigger.split(", ")
+            allProjects = self.client.table("Projects").select("*").execute().data or []
+            for project in allProjects:
+                if project.get("ownerUserId") != userId:
+                    continue
+                triggers = project.get("triggers")
+                if not triggers or pd.isna(triggers):
+                    continue
+                allTriggers += [
+                    trigger.strip()
+                    for trigger in str(triggers).split(",")
+                    if trigger.strip()
+                ]
             return allTriggers
         except Exception as e:
             exception = CustomException(e)

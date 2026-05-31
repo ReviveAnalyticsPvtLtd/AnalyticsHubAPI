@@ -34,6 +34,7 @@ import io
 import os
 import gc
 import re
+import csv
 
 class DataLoadService:
     """
@@ -79,6 +80,19 @@ class DataLoadService:
                     )
         return df
 
+    @staticmethod
+    def _detectCsvDelimiter(fileBytes: bytes) -> str:
+        sample = fileBytes[:8192].decode("utf-8-sig", errors="ignore")
+        try:
+            return csv.Sniffer().sniff(sample, delimiters=",;\t|").delimiter
+        except csv.Error:
+            return ","
+
+    @classmethod
+    def _readCsvUpload(cls, fileBytes: bytes) -> pd.DataFrame:
+        delimiter = cls._detectCsvDelimiter(fileBytes)
+        return pd.read_csv(io.BytesIO(fileBytes), sep=delimiter, parse_dates=True)
+
     async def loadCsvData(self, projectId: Annotated[str, Form()], files: list[UploadFile]) -> None:
         """
         Load CSV files into project storage.
@@ -104,9 +118,8 @@ class DataLoadService:
                         uiMessage="Unsupported file type. Upload CSV files only."
                     )
                 with tempfile.NamedTemporaryFile(delete=True, suffix=".parquet") as temp:
-                    pd.read_csv(io.BytesIO(await file.read()), parse_dates=True).to_parquet(
-                        temp.name, compression="snappy"
-                    )
+                    df = self._readCsvUpload(await file.read())
+                    self._sanitizeDfForParquet(df).to_parquet(temp.name, compression="snappy")
                     sanitizedName = self._sanitizeFileName(file.filename)
                     self.client.storage.from_("AnalyticsHub").upload(
                         file=temp.name,
