@@ -48,6 +48,21 @@ class AuthenticationService:
         logger.info("Initializing Authentication Service.")
         self.client = client
 
+    def _createTemporaryClient(self):
+        """
+        Create a temporary Supabase client to perform user-level authentication operations
+        without polluting the global client's admin session state.
+        """
+        from supabase import create_client, ClientOptions
+        return create_client(
+            supabase_url=os.environ["SUPABASE_URL"],
+            supabase_key=os.environ["SUPABASE_KEY"],
+            options=ClientOptions(
+                auto_refresh_token=False,
+                persist_session=False,
+            )
+        )
+
     @staticmethod
     def _mapSubscriptionStatus(status: str | None) -> str:
         normalized = (status or "").strip().lower()
@@ -271,7 +286,12 @@ class AuthenticationService:
                     statusCode=401,
                     uiMessage="Email or password is incorrect."
                 )
-            if not user.email_confirmed_at:
+            email_confirmed_at = (
+                user.get("email_confirmed_at") or user.get("confirmed_at")
+                if isinstance(user, dict)
+                else getattr(user, "email_confirmed_at", None) or getattr(user, "confirmed_at", None)
+            )
+            if not email_confirmed_at:
                 raise CustomException(
                     ValueError("Email not confirmed"),
                     statusCode=401,
@@ -284,7 +304,8 @@ class AuthenticationService:
                 .execute().data
             if not userRows:
                 try:
-                    self.client.auth.sign_in_with_password(
+                    tempClient = self._createTemporaryClient()
+                    tempClient.auth.sign_in_with_password(
                         {"email": loginDetails.email, "password": hashedPassword}
                     )
                 except Exception as auth_error:
