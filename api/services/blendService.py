@@ -1,7 +1,7 @@
 """
 blendService.py
 
-This module provides the BlendService class, which encapsulates business logic for creating data blends, retrieving data sources, and extracting fields from sources for AnalyticsHub projects. It interacts with the Supabase client and manages blend configurations and metadata in storage.
+This module provides the BlendService class, which encapsulates business logic for creating data blends, retrieving data sources, and extracting fields from sources for NubrixAI projects. It interacts with the Supabase client and manages blend configurations and metadata in storage.
 """
 
 __version__ = "1.0.0"
@@ -53,7 +53,7 @@ class BlendService:
                 "blendOn": blendDetails.blendOn,
                 "joinTypes": blendDetails.joinTypes
             }
-            if "blendConfig.json" in [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = blendDetails.projectId)]:
+            if "blendConfig.json" in [x.get("name") for x in self.client.storage.from_("NubrixAI").list(path = blendDetails.projectId)]:
                 fileUrl = os.environ["FILE_URL"].format(projectId = blendDetails.projectId, fileName = "blendConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
                 blendConfig = json.loads(urlopen(fileUrl).read())
                 blendConfig[blendDetails.blendName] = joinConfig
@@ -62,7 +62,7 @@ class BlendService:
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(blendConfig, indent=4).encode("utf-8"))
                 buffer.seek(0)
-                _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{blendDetails.projectId}/blendConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
+                _ = self.client.storage.from_("NubrixAI").upload(path = f"{blendDetails.projectId}/blendConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
             updateProjectModifiedAt(blendDetails.projectId)
             return
         except Exception as e:
@@ -84,7 +84,7 @@ class BlendService:
             CustomException: For any errors during retrieval.
         """
         try:
-            if "blendConfig.json" in [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = projectId)]:
+            if "blendConfig.json" in [x.get("name") for x in self.client.storage.from_("NubrixAI").list(path = projectId)]:
                 blendConfigUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "blendConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
                 blendConfig = json.loads(urlopen(blendConfigUrl).read())
                 blendedTables = list(blendConfig.keys())
@@ -121,7 +121,7 @@ class BlendService:
             CustomException: For any errors during extraction.
         """
         try:
-            allFiles = [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = details.projectId)]
+            allFiles = [x.get("name") for x in self.client.storage.from_("NubrixAI").list(path = details.projectId)]
             metadataUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             metadata = json.loads(urlopen(metadataUrl).read())
             if details.tableName in metadata.keys():

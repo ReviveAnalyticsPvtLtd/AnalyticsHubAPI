@@ -1,7 +1,7 @@
 """
 dashboardService.py
 
-This module provides the DashboardService class, which encapsulates business logic for managing dashboards, pages, widgets, and data retrieval for AnalyticsHub projects. It interacts with the Supabase client and manages dashboard configurations and widget data in storage.
+This module provides the DashboardService class, which encapsulates business logic for managing dashboards, pages, widgets, and data retrieval for NubrixAI projects. It interacts with the Supabase client and manages dashboard configurations and widget data in storage.
 """
 
 __version__ = "1.0.0"
@@ -168,7 +168,7 @@ class DashboardService:
         """
         try:
             pageId = str(uuid.uuid4())
-            if "dashboardConfig.json" in [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = details.projectId)]:
+            if "dashboardConfig.json" in [x.get("name") for x in self.client.storage.from_("NubrixAI").list(path = details.projectId)]:
                 fileUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "dashboardConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
                 dashboardConfig = json.loads(urlopen(fileUrl).read())
                 dashboardConfig[pageId] = {"name": details.pageName, "widgets": []}
@@ -177,7 +177,7 @@ class DashboardService:
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(dashboardConfig, indent=4).encode("utf-8"))
                 buffer.seek(0)
-                _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/dashboardConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"})   
+                _ = self.client.storage.from_("NubrixAI").upload(path = f"{details.projectId}/dashboardConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"})   
             updateProjectModifiedAt(details.projectId)
             return pageId
         except Exception as e:
@@ -199,7 +199,7 @@ class DashboardService:
             CustomException: For any errors during retrieval.
         """
         try:
-            if "dashboardConfig.json" in [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = projectId)]:
+            if "dashboardConfig.json" in [x.get("name") for x in self.client.storage.from_("NubrixAI").list(path = projectId)]:
                 fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "dashboardConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
                 dashboardConfig = json.loads(urlopen(fileUrl).read())
                 pages = [{"pageName": dashboardConfig[x]["name"], "pageId": x} for x in dashboardConfig.keys()]
@@ -246,7 +246,7 @@ class DashboardService:
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(dashboardConfig, indent=4).encode("utf-8"))
                 buffer.seek(0)
-                _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/dashboardConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"}) 
+                _ = self.client.storage.from_("NubrixAI").upload(path = f"{details.projectId}/dashboardConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"}) 
             updateProjectModifiedAt(details.projectId)
             return widgetId     
         except Exception as e:
@@ -297,7 +297,7 @@ class DashboardService:
                 with io.BytesIO() as buffer:
                     buffer.write(json.dumps(dashboardConfig, indent=4).encode("utf-8"))
                     buffer.seek(0)
-                    _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/dashboardConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"})    
+                    _ = self.client.storage.from_("NubrixAI").upload(path = f"{details.projectId}/dashboardConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"})    
             else:
                 raise ValueError("Filters and Refresh cannot be implemented simultaneously.")
             return pageInfo
@@ -337,7 +337,7 @@ class DashboardService:
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(dashboardConfig, indent = 4).encode("utf-8"))
                 buffer.seek(0)
-                self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/dashboardConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
+                self.client.storage.from_("NubrixAI").upload(path = f"{details.projectId}/dashboardConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
             updateProjectModifiedAt(details.projectId)
             return pageInfo
         except Exception as e:
@@ -372,7 +372,7 @@ class DashboardService:
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(dashboardConfig, indent=4).encode("utf-8"))
                 buffer.seek(0)
-                _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/dashboardConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"}) 
+                _ = self.client.storage.from_("NubrixAI").upload(path = f"{details.projectId}/dashboardConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"}) 
             updateProjectModifiedAt(details.projectId)
             return 
         except Exception as e:
@@ -394,7 +394,7 @@ class DashboardService:
             CustomException: For any errors during retrieval.
         """
         try:
-            dataTables = ["".join(os.path.splitext(x.get("name"))[:-1]) for x in client.storage.from_("AnalyticsHub").list(path = projectId) if x.get("name").endswith(".parquet")]
+            dataTables = ["".join(os.path.splitext(x.get("name"))[:-1]) for x in client.storage.from_("NubrixAI").list(path = projectId) if x.get("name").endswith(".parquet")]
             with ThreadPoolExecutor(max_workers = 5) as executor:
                 results = executor.map(self._getDataTypes, [projectId] * len(dataTables), dataTables)
             results = list(results)
@@ -430,7 +430,7 @@ class DashboardService:
         
     def pullDataInParallel(self, projectId: str) -> dict:
         """
-        Retrieve data from multiple databases in parallel and upload results to the AnalyticsHub storage bucket.
+        Retrieve data from multiple databases in parallel and upload results to the NubrixAI storage bucket.
 
         Args:
             projectId (str): The project identifier used to locate the connections.json file.
@@ -442,7 +442,7 @@ class DashboardService:
             CustomException: For any errors encountered during data extraction or upload.
         """
         try:
-            if "connections.json" in [x.get("name") for x in client.storage.from_("AnalyticsHub").list(path = projectId)]:
+            if "connections.json" in [x.get("name") for x in client.storage.from_("NubrixAI").list(path = projectId)]:
                 databaseConnectionsUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "connections.json").replace(".parquet", "") + f"?cb={int(time.time())}"
                 databaseConnections = json.loads(urlopen(databaseConnectionsUrl).read())
             else:
@@ -455,7 +455,7 @@ class DashboardService:
             for result in results:
                 with tempfile.NamedTemporaryFile(delete = True, suffix = ".parquet") as temp:
                     results[result].to_parquet(temp.name, compression = "snappy")
-                    _ = self.client.storage.from_("AnalyticsHub").upload(
+                    _ = self.client.storage.from_("NubrixAI").upload(
                         file = temp.name,
                         path = f"{projectId}/{result + '.parquet'}",
                         file_options = {"upsert": "true"}

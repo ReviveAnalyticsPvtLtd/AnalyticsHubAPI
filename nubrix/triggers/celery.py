@@ -1,5 +1,5 @@
 """
-Celery application setup for AnalyticsHub.
+Celery application setup for NubrixAI.
 
 This module defines a Celery application wrapper for managing background tasks,
 specifically for generating and sending forecasts. It configures the Celery app
@@ -10,14 +10,14 @@ __version__ = "1.0.0"
 __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["celeryApp"]
 
-from analyticsHub.triggers.tasks.pastDueSuspensionTask import PastDueSuspensionTask
-from analyticsHub.triggers.tasks.generateForecasts import GenerateForecasts
-from analyticsHub.triggers.tasks.renewalLifecycleTask import RenewalLifecycleTask
-from analyticsHub.triggers.tasks.annualRenewalTask import AnnualRenewalTask
-from analyticsHub.triggers.tasks.reconciliationTask import ReconciliationTask
-from analyticsHub.triggers.tasks.billingMetricsTask import BillingMetricsTask
-from analyticsHub.triggers.tasks.entitlementBoundaryTask import EntitlementBoundaryTask
-from analyticsHub.triggers.tasks.billingTask import DailyBillingTask
+from nubrix.triggers.tasks.pastDueSuspensionTask import PastDueSuspensionTask
+from nubrix.triggers.tasks.generateForecasts import GenerateForecasts
+from nubrix.triggers.tasks.renewalLifecycleTask import RenewalLifecycleTask
+from nubrix.triggers.tasks.annualRenewalTask import AnnualRenewalTask
+from nubrix.triggers.tasks.reconciliationTask import ReconciliationTask
+from nubrix.triggers.tasks.billingMetricsTask import BillingMetricsTask
+from nubrix.triggers.tasks.entitlementBoundaryTask import EntitlementBoundaryTask
+from nubrix.triggers.tasks.billingTask import DailyBillingTask
 from celery.schedules import crontab
 from celery import Celery
 import os
@@ -147,4 +147,4 @@ class CeleryWrapper:
         }
         self._app.conf.timezone = "UTC"
 
-celeryApp = CeleryWrapper("AnalyticsHub").app
+celeryApp = CeleryWrapper("NubrixAI").app

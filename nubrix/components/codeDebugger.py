@@ -13,7 +13,7 @@ __all__ = ["CodeDebugger"]
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
 from langchain_google_genai import ChatGoogleGenerativeAI
-from analyticsHub.utils import readYaml, getConfig
+from nubrix.utils import readYaml, getConfig
 from utils.exceptionHandler import CustomException
 from langchain_core.prompts import PromptTemplate
 from langchain_core.messages import AIMessage

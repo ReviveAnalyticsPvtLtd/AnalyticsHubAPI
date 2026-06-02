@@ -1,7 +1,7 @@
 """
 utils.py
 
-Utility functions for AnalyticsHub project.
+Utility functions for NubrixAI project.
 This module provides helper functions for Supabase client creation, token verification, YAML reading, and configuration file parsing.
 """
 

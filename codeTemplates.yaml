@@ -160,7 +160,7 @@ panelChartWithBlend: |
                 from geopy.geocoders import Nominatim
                 from geopy.extra.rate_limiter import RateLimiter
                 import math
-                geolocator = Nominatim(user_agent="AnalyticsHub", timeout=10)
+                geolocator = Nominatim(user_agent="NubrixAI", timeout=10)
                 rate_limited_geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1.0)
 
             def geocode_with_cache(value, geocode_func):
@@ -390,7 +390,7 @@ panelChartWithoutBlend: |
                 from geopy.geocoders import Nominatim
                 from geopy.extra.rate_limiter import RateLimiter
                 import math
-                geolocator = Nominatim(user_agent="AnalyticsHub", timeout=10)
+                geolocator = Nominatim(user_agent="NubrixAI", timeout=10)
                 rate_limited_geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1.0)
 
             def geocode_with_cache(value, geocode_func):

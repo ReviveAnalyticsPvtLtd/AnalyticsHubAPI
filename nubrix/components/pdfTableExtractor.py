@@ -20,7 +20,7 @@ __all__ = [
 ]
 
 from utils.exceptionHandler import CustomException
-from analyticsHub.utils import readYaml, getConfig
+from nubrix.utils import readYaml, getConfig
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, field_validator

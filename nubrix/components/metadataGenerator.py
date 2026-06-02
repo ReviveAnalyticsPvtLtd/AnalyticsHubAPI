@@ -18,7 +18,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
 from utils.exceptionHandler import CustomException
-from analyticsHub.utils import readYaml, getConfig
+from nubrix.utils import readYaml, getConfig
 from langchain_core.messages import AIMessage
 from dataclasses import dataclass
 from utils.logger import logger

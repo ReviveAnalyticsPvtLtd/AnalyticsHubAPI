@@ -16,7 +16,7 @@ from fastapi import status, APIRouter, Depends, WebSocket, WebSocketDisconnect
 from api.models import SpeechToTextModel, ImageToInsightsModel, UpdateDashboardInsightStatus
 from fastapi.security import HTTPAuthorizationCredentials
 from api.services.utilityService import utilityService
-from analyticsHub.triggers.celery import celeryApp
+from nubrix.triggers.celery import celeryApp
 from fastapi.responses import ORJSONResponse
 from api.commons import verifyToken
 import asyncio

@@ -30,7 +30,7 @@ class InsightContextBuilderConfig:
         storageBucket (str): Supabase storage bucket name for project artifacts.
         domainBucket (str): Supabase storage bucket name for domain-specific KPI profiles.
     """
-    storageBucket: str = "AnalyticsHub"
+    storageBucket: str = "NubrixAI"
     domainBucket: str = "DomainSpecificKpis"
 
 

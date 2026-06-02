@@ -1,5 +1,5 @@
 """
-Main entry point for the AnalyticsHub FastAPI application.
+Main entry point for the NubrixAI FastAPI application.
 
 This module initializes the FastAPI app, configures middleware, and includes all API routers for authentication, project management, data loading, blends, reporting, dashboard, and utilities.
 """
@@ -18,8 +18,8 @@ import psutil
 import os
 
 app = FastAPI(
-    title = "AnalyticsHub",
-    summary = "API Endpoints for AnalyticsHub.",
+    title = "NubrixAI",
+    summary = "API Endpoints for NubrixAI.",
     version = "1.0",
     root_path = "/api/latest",
     docs_url = "/documentation/docs",

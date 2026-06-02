@@ -1,17 +1,17 @@
 """
 managementService.py
 
-This module provides the ManagementService class, which encapsulates business logic for project management, metadata generation, editing, deletion, and report generation for AnalyticsHub projects. It interacts with the Supabase client and manages project records, metadata, and reports in storage.
+This module provides the ManagementService class, which encapsulates business logic for project management, metadata generation, editing, deletion, and report generation for NubrixAI projects. It interacts with the Supabase client and manages project records, metadata, and reports in storage.
 """
 __version__ = "1.0.0"
 __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["managementService"] 
 
 
-from analyticsHub.components.metadataGenerator import MetadataGenerator
-from analyticsHub.components.insightGenerator import InsightGenerator
-from analyticsHub.components.reportGenerator import ReportGenerator
-from analyticsHub.components.domainKpiMapper import DomainKpiMapper
+from nubrix.components.metadataGenerator import MetadataGenerator
+from nubrix.components.insightGenerator import InsightGenerator
+from nubrix.components.reportGenerator import ReportGenerator
+from nubrix.components.domainKpiMapper import DomainKpiMapper
 from utils.llmOutputParser import parseModelJsonOutput
 from api.commons import updateProjectModifiedAt
 from utils.exceptionHandler import CustomException
@@ -479,7 +479,7 @@ class ManagementService:
             CustomException: For any errors during metadata generation.
         """
         try:
-            dataFiles = [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = projectId) if x.get("name").endswith(".parquet")]
+            dataFiles = [x.get("name") for x in self.client.storage.from_("NubrixAI").list(path = projectId) if x.get("name").endswith(".parquet")]
             results = ""
             for fileName in dataFiles:
                 dataframeName = fileName.replace(".parquet", "")
@@ -545,7 +545,7 @@ class ManagementService:
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(insights, indent=4).encode("utf-8"))
                 buffer.seek(0)
-                self.client.storage.from_("AnalyticsHub").upload(path = f"{projectId}/insights.json", file = buffer.getvalue(), file_options = {"upsert": "true"})    
+                self.client.storage.from_("NubrixAI").upload(path = f"{projectId}/insights.json", file = buffer.getvalue(), file_options = {"upsert": "true"})    
             updateProjectModifiedAt(projectId)
             return insights
         except Exception as e:
@@ -587,7 +587,7 @@ class ManagementService:
             CustomException: For any errors during metadata generation or upload.
         """
         try:
-            files = self.client.storage.from_("AnalyticsHub").list(projectId)
+            files = self.client.storage.from_("NubrixAI").list(projectId)
             filenames = [x.get("name") for x in files]
             if "metadata.json" in filenames:
                 fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
@@ -612,7 +612,7 @@ class ManagementService:
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(jsonData, indent=4).encode("utf-8"))
                 buffer.seek(0)
-                self.client.storage.from_("AnalyticsHub").upload(path = f"{projectId}/metadata.json", file = buffer.getvalue(), file_options = {"upsert": "true"})     
+                self.client.storage.from_("NubrixAI").upload(path = f"{projectId}/metadata.json", file = buffer.getvalue(), file_options = {"upsert": "true"})     
             updateProjectModifiedAt(projectId)
             return jsonData
         except Exception as e:
@@ -634,7 +634,7 @@ class ManagementService:
             CustomException: For any errors during retrieval.
         """
         try:
-            files = self.client.storage.from_("AnalyticsHub").list(projectId)
+            files = self.client.storage.from_("NubrixAI").list(projectId)
             filenames = [x.get("name") for x in files]
             if "metadata.json" not in filenames:
                 return dict()
@@ -686,7 +686,7 @@ class ManagementService:
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(jsonData, indent=4).encode("utf-8"))
                 buffer.seek(0)
-                self.client.storage.from_("AnalyticsHub").upload(path = f"{modifiedMetadata.projectId}/metadata.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
+                self.client.storage.from_("NubrixAI").upload(path = f"{modifiedMetadata.projectId}/metadata.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
             updateProjectModifiedAt(modifiedMetadata.projectId)
             return jsonData
         except Exception as e:
@@ -706,10 +706,10 @@ class ManagementService:
         """
         try:
             _ = self.client.table("Projects").delete().eq("projectId", projectId).execute()
-            allFiles = self.client.storage.from_("AnalyticsHub").list(projectId)
+            allFiles = self.client.storage.from_("NubrixAI").list(projectId)
             fileNames = [os.path.join(projectId, x.get("name")) for x in allFiles]
             if fileNames:
-                _ = self.client.storage.from_("AnalyticsHub").remove(fileNames)
+                _ = self.client.storage.from_("NubrixAI").remove(fileNames)
             return
         except Exception as e:
             exception = CustomException(e)
@@ -796,7 +796,7 @@ class ManagementService:
                 output = orjson.dumps(dct)
                 buffer.write(output)
                 buffer.seek(0)
-                _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{projectId}/generatedReport.json", file = buffer.getvalue(), file_options = {"upsert": "true"})  
+                _ = self.client.storage.from_("NubrixAI").upload(path = f"{projectId}/generatedReport.json", file = buffer.getvalue(), file_options = {"upsert": "true"})  
             updateProjectModifiedAt(projectId)
         except Exception as e:
             exception = CustomException(e)

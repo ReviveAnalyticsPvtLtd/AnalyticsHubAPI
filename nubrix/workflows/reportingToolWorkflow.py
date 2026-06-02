@@ -9,9 +9,9 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["buildReportingWorkflow"]
 
 
-from analyticsHub.components.queryRephraser import QueryRephaser
-from analyticsHub.components.codeGenerator import CodeGenerator
-from analyticsHub.components.codeDebugger import CodeDebugger
+from nubrix.components.queryRephraser import QueryRephaser
+from nubrix.components.codeGenerator import CodeGenerator
+from nubrix.components.codeDebugger import CodeDebugger
 from langgraph.graph import StateGraph, START, END
 from utils.codeExecutor import REPLManager
 from typing_extensions import TypedDict

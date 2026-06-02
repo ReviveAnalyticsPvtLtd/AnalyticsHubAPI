@@ -11,7 +11,7 @@ __all__ = ["SpeechToText"]
 
 
 from utils.exceptionHandler import CustomException
-from analyticsHub.utils import getConfig
+from nubrix.utils import getConfig
 from utils.logger import logger
 from groq import Groq
 import os

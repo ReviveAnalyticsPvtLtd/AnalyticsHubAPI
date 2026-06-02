@@ -1,5 +1,5 @@
 """
-analyticsHub/components/subscriptionManager.py
+nubrix/components/subscriptionManager.py
 
 This module provides utility functions for managing user subscription expiry
 calculations and sending warning emails when subscriptions are about to expire.

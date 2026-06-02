@@ -260,12 +260,12 @@ class GenerateForecasts:
             """
 
             payload = {
-                "sender": {"name": "AnalyticsHub Bot", "email": "admin@rauhanahmed.in"},
+                "sender": {"name": "NubrixAI Bot", "email": "admin@rauhanahmed.in"},
                 "to": [
                     {"email": "reviveanalyticsdocs@gmail.com", "name": "Modi Daryani"},
                     {"email": "defa22200@gmail.com", "name": "Rauhan"}
                 ],
-                "subject": "✅ CSV Output File - AnalyticsHub",
+                "subject": "✅ CSV Output File - NubrixAI",
                 "htmlContent": success_html,
                 "attachment": [
                     {"name": "outputLGBM.csv", "content": b64_csv}
@@ -301,12 +301,12 @@ class GenerateForecasts:
             """
 
             failure_payload = {
-                "sender": {"name": "AnalyticsHub Bot", "email": "admin@rauhanahmed.in"},
+                "sender": {"name": "NubrixAI Bot", "email": "admin@rauhanahmed.in"},
                 "to": [
                     {"email": "reviveanalyticsdocs@gmail.com", "name": "Modi Daryani"},
                     {"email": "defa22200@gmail.com", "name": "Rauhan"}
                 ],
-                "subject": "⚠️ Forecast Generation Failed - AnalyticsHub",
+                "subject": "⚠️ Forecast Generation Failed - NubrixAI",
                 "htmlContent": failure_html
             }
 

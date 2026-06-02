@@ -1,7 +1,7 @@
 """
 UtilityService module provides utility functions such as speech-to-text transcription,
 hybrid image-to-insights generation, insight persistence, sending forecasts,
-and sample data manipulations for AnalyticsHub.
+and sample data manipulations for NubrixAI.
 
 Author: Rauhan Ahmed Siddiqui
 Version: 1.0.0
@@ -12,13 +12,13 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["utilityService"]
 
 
-from analyticsHub.components.insightContextBuilder import InsightContextBuilder
-from analyticsHub.components.imageToInsights import ImageToInsights
-from analyticsHub.components.signalEngine import SignalEngine
-from analyticsHub.components.speechToText import SpeechToText
+from nubrix.components.insightContextBuilder import InsightContextBuilder
+from nubrix.components.imageToInsights import ImageToInsights
+from nubrix.components.signalEngine import SignalEngine
+from nubrix.components.speechToText import SpeechToText
 from api.models import SpeechToTextModel, ImageToInsightsModel
 from utils.exceptionHandler import CustomException
-from analyticsHub.triggers.celery import celeryApp
+from nubrix.triggers.celery import celeryApp
 from urllib.request import urlopen
 from celery.result import AsyncResult
 from utils.logger import logger
@@ -140,7 +140,7 @@ class UtilityService:
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(existing, indent=4).encode("utf-8"))
                 buffer.seek(0)
-                self.client.storage.from_("AnalyticsHub").upload(
+                self.client.storage.from_("NubrixAI").upload(
                     path=f"{projectId}/dashboardInsights.json",
                     file=buffer.getvalue(),
                     file_options={"upsert": "true"},
@@ -157,7 +157,7 @@ class UtilityService:
             list: Existing insight records, or empty list if file does not exist.
         """
         try:
-            files = self.client.storage.from_("AnalyticsHub").list(path=projectId)
+            files = self.client.storage.from_("NubrixAI").list(path=projectId)
             if "dashboardInsights.json" not in [x.get("name") for x in files]:
                 return []
             fileUrl = os.environ["FILE_URL"].format(projectId=projectId, fileName="dashboardInsights.json").replace(".parquet", "") + f"?cb={int(time.time())}"
@@ -219,7 +219,7 @@ class UtilityService:
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(records, indent=4).encode("utf-8"))
                 buffer.seek(0)
-                self.client.storage.from_("AnalyticsHub").upload(
+                self.client.storage.from_("NubrixAI").upload(
                     path=f"{projectId}/dashboardInsights.json",
                     file=buffer.getvalue(),
                     file_options={"upsert": "true"},
@@ -242,7 +242,7 @@ class UtilityService:
             CustomException: If the task submission fails.
         """
         try:
-            return celeryApp.send_task("AnalyticsHub.generateForecasts")
+            return celeryApp.send_task("NubrixAI.generateForecasts")
         except Exception as e:
             exception  = CustomException(e)
             logger.error(exception)
