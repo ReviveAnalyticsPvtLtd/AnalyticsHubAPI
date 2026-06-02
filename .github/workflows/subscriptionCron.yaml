@@ -35,4 +35,4 @@ jobs:
           RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
           GRACE_PERIOD_DAYS: "3"
         run: |
-          python analyticsHub/components/subscriptionManager.py
+          python nubrix/components/subscriptionManager.py
