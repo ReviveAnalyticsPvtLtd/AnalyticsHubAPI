@@ -399,59 +399,76 @@ class ReportingService:
             # Export to dashboard
             pageDict = dashboardConfig.get(pageId)
             
-            # Find the max Y so we don't overlap with existing widgets
-            max_y = max([w.get("layout", {}).get("y", 0) + w.get("layout", {}).get("h", 0) for w in pageDict.get("widgets", [])] + [0])
-            
-            cards, otherWidgets = list(), list()
-            cardsWidth, otherWidgetsWidth = 0, 0
+            existingWidgets = pageDict.get("widgets", [])
+            newWidgets = []
             
             for widget in responses:
-                if widget.get("finalOutput").get("chartType") == "card":
-                    widgetId = str(uuid.uuid4())
-                    data = widget.get("finalOutput").get("data")
-                    if isinstance(data, (int, float)): data = float(f"{data:.2f}")
-                    newWidget = {
+                widgetId = str(uuid.uuid4())
+                chartType = widget.get("finalOutput", {}).get("chartType")
+                data = widget.get("finalOutput", {}).get("data")
+                if chartType == "card":
+                    if isinstance(data, (int, float)):
+                        data = float(f"{data:.2f}")
+                    newWidgets.append({
                         "id": widgetId,
-                        "chartType": widget.get("finalOutput").get("chartType"),
-                        "title": widget.get("finalOutput").get("title"),
-                        "label": widget.get("finalOutput").get("label"),
-                        "xLabels": widget.get("finalOutput").get("xLabels"),
-                        "yLabels": widget.get("finalOutput").get("yLabels"),
+                        "chartType": chartType,
+                        "title": widget.get("finalOutput", {}).get("title"),
+                        "label": widget.get("finalOutput", {}).get("label"),
+                        "xLabels": widget.get("finalOutput", {}).get("xLabels"),
+                        "yLabels": widget.get("finalOutput", {}).get("yLabels"),
                         "data": data,
-                        "layout": {"x": cardsWidth, "y": max_y, "w": 4, "h": 6},
+                        "layout": {"x": 0, "y": 0, "w": 4, "h": 6},
                         "generatedCode": widget.get("generatedCode")
-                    }
-                    cardsWidth += 4
-                    if cardsWidth >= 12:
-                        cardsWidth = 0
-                        max_y += 6
-                    cards.append(newWidget)
-                    
-            if cardsWidth > 0:
-                max_y += 6
-
-            for widget in responses:
-                if widget.get("finalOutput").get("chartType") != "card":
-                    widgetId = str(uuid.uuid4())
-                    newWidget = {
+                    })
+                else:
+                    newWidgets.append({
                         "id": widgetId,
-                        "chartType": widget.get("finalOutput").get("chartType"),
-                        "title": widget.get("finalOutput").get("title"),
-                        "label": widget.get("finalOutput").get("label"),
-                        "xLabels": widget.get("finalOutput").get("xLabels"),
-                        "yLabels": widget.get("finalOutput").get("yLabels"),
-                        "data": widget.get("finalOutput").get("data"),
-                        "layout": {"x": otherWidgetsWidth, "y": max_y, "w": 6, "h": 10},
+                        "chartType": chartType,
+                        "title": widget.get("finalOutput", {}).get("title"),
+                        "label": widget.get("finalOutput", {}).get("label"),
+                        "xLabels": widget.get("finalOutput", {}).get("xLabels"),
+                        "yLabels": widget.get("finalOutput", {}).get("yLabels"),
+                        "data": data,
+                        "layout": {"x": 0, "y": 0, "w": 6, "h": 10},
                         "generatedCode": widget.get("generatedCode")
-                    }
-                    otherWidgetsWidth += 6
-                    if otherWidgetsWidth >= 12:
-                        otherWidgetsWidth = 0
-                        max_y += 10
-                    otherWidgets.append(newWidget)
-
-            pageDict["widgets"].extend(cards)
-            pageDict["widgets"].extend(otherWidgets)
+                    })
+            
+            allWidgets = existingWidgets + newWidgets
+            cards = [w for w in allWidgets if w.get("chartType") == "card"]
+            otherWidgets = [w for w in allWidgets if w.get("chartType") != "card"]
+            
+            current_y = 0
+            current_x = 0
+            
+            for card in cards:
+                card["layout"] = {
+                    "x": current_x,
+                    "y": current_y,
+                    "w": 4,
+                    "h": 6
+                }
+                current_x += 4
+                if current_x >= 12:
+                    current_x = 0
+                    current_y += 6
+            
+            if current_x > 0:
+                current_y += 6
+                current_x = 0
+                
+            for widget in otherWidgets:
+                widget["layout"] = {
+                    "x": current_x,
+                    "y": current_y,
+                    "w": 6,
+                    "h": 10
+                }
+                current_x += 6
+                if current_x >= 12:
+                    current_x = 0
+                    current_y += 10
+                    
+            pageDict["widgets"] = cards + otherWidgets
             dashboardConfig[pageId] = pageDict
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(dashboardConfig, indent=4).encode("utf-8"))

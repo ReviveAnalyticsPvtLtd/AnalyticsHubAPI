@@ -177,7 +177,6 @@ class AuthenticationService:
                 )
             passwordString = signupDetails.password + os.environ["SECRET_KEY"]
             hashedPassword = hashlib.md5(passwordString.encode("utf-8")).hexdigest()
-            workspaceId = str(uuid.uuid4())
             allUsers = []
             page = 1
             while True:
@@ -196,19 +195,6 @@ class AuthenticationService:
             response = self.client.auth.sign_up(
                 {"email": signupDetails.email, "password": hashedPassword}
             )
-            self.client.table("Users").insert({
-                "userId": response.user.id,
-                "email": signupDetails.email,
-                "password": hashedPassword,
-                "currentWorkspaceId": workspaceId
-            }).execute()
-            self.client.table("Workspaces").insert({
-                "id": workspaceId,
-                "ownerId": response.user.id,
-                "ownerEmail": signupDetails.email,
-                "workspaceName": "Default"
-            }).execute()
-            self._ensureSubscriptionSnapshot(response.user.id)
             return response.user.id
         except CustomException:
             raise
@@ -285,24 +271,58 @@ class AuthenticationService:
                     statusCode=401,
                     uiMessage="Email or password is incorrect."
                 )
+            if not user.email_confirmed_at:
+                raise CustomException(
+                    ValueError("Email not confirmed"),
+                    statusCode=401,
+                    uiMessage="Please confirm your email address before logging in."
+                )
             userRows = self.client.table("Users") \
                 .select("userId, email, password, onboarded, currentWorkspaceId") \
                 .eq("email", loginDetails.email) \
                 .limit(1) \
                 .execute().data
             if not userRows:
-                raise CustomException(
-                    ValueError("Invalid credentials"),
-                    statusCode=401,
-                    uiMessage="Email or password is incorrect."
-                )
-            dataSlice = userRows[0]
-            if dataSlice.get("password") != hashedPassword:
-                raise CustomException(
-                    ValueError("Invalid credentials"),
-                    statusCode=401,
-                    uiMessage="Email or password is incorrect."
-                )
+                try:
+                    self.client.auth.sign_in_with_password(
+                        {"email": loginDetails.email, "password": hashedPassword}
+                    )
+                except Exception as auth_error:
+                    logger.warning(f"Failed to authenticate user {loginDetails.email} via Supabase: {auth_error}")
+                    raise CustomException(
+                        ValueError("Invalid credentials"),
+                        statusCode=401,
+                        uiMessage="Email or password is incorrect."
+                    )
+                workspaceId = str(uuid.uuid4())
+                self.client.table("Users").insert({
+                    "userId": user.id,
+                    "email": loginDetails.email,
+                    "password": hashedPassword,
+                    "currentWorkspaceId": workspaceId
+                }).execute()
+                self.client.table("Workspaces").insert({
+                    "id": workspaceId,
+                    "ownerId": user.id,
+                    "ownerEmail": loginDetails.email,
+                    "workspaceName": "Default"
+                }).execute()
+                self._ensureSubscriptionSnapshot(user.id)
+                dataSlice = {
+                    "userId": user.id,
+                    "email": loginDetails.email,
+                    "password": hashedPassword,
+                    "onboarded": False,
+                    "currentWorkspaceId": workspaceId
+                }
+            else:
+                dataSlice = userRows[0]
+                if dataSlice.get("password") != hashedPassword:
+                    raise CustomException(
+                        ValueError("Invalid credentials"),
+                        statusCode=401,
+                        uiMessage="Email or password is incorrect."
+                    )
             sessionStartTime = datetime.datetime.now(datetime.timezone.utc)
             expiresAt = sessionStartTime + datetime.timedelta(hours=24)
             tokenPayload = {
