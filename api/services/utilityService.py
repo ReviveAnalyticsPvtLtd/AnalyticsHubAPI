@@ -140,7 +140,7 @@ class UtilityService:
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(existing, indent=4).encode("utf-8"))
                 buffer.seek(0)
-                self.client.storage.from_("NubrixAI").upload(
+                self.client.storage.from_("AnalyticsHub").upload(
                     path=f"{projectId}/dashboardInsights.json",
                     file=buffer.getvalue(),
                     file_options={"upsert": "true"},
@@ -157,7 +157,7 @@ class UtilityService:
             list: Existing insight records, or empty list if file does not exist.
         """
         try:
-            files = self.client.storage.from_("NubrixAI").list(path=projectId)
+            files = self.client.storage.from_("AnalyticsHub").list(path=projectId)
             if "dashboardInsights.json" not in [x.get("name") for x in files]:
                 return []
             fileUrl = os.environ["FILE_URL"].format(projectId=projectId, fileName="dashboardInsights.json").replace(".parquet", "") + f"?cb={int(time.time())}"
@@ -219,7 +219,7 @@ class UtilityService:
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(records, indent=4).encode("utf-8"))
                 buffer.seek(0)
-                self.client.storage.from_("NubrixAI").upload(
+                self.client.storage.from_("AnalyticsHub").upload(
                     path=f"{projectId}/dashboardInsights.json",
                     file=buffer.getvalue(),
                     file_options={"upsert": "true"},

@@ -121,7 +121,7 @@ class DataLoadService:
                     df = self._readCsvUpload(await file.read())
                     self._sanitizeDfForParquet(df).to_parquet(temp.name, compression="snappy")
                     sanitizedName = self._sanitizeFileName(file.filename)
-                    self.client.storage.from_("NubrixAI").upload(
+                    self.client.storage.from_("AnalyticsHub").upload(
                         file=temp.name,
                         path=f"{projectId}/{sanitizedName}.parquet",
                         file_options={"upsert": "true"}
@@ -169,7 +169,7 @@ class DataLoadService:
                     with tempfile.NamedTemporaryFile(delete=True, suffix=".parquet") as temp:
                         sheetData.to_parquet(temp.name, compression="snappy")
                         fileName = f"{sanitizedBase}_{sanitizedSheet}.parquet"
-                        self.client.storage.from_("NubrixAI").upload(
+                        self.client.storage.from_("AnalyticsHub").upload(
                             file=temp.name,
                             path=f"{projectId}/{fileName}",
                             file_options={"upsert": "true"}
@@ -298,7 +298,7 @@ class DataLoadService:
                             temp.name, compression="snappy"
                         )
                         fileName = f"{baseName}_table{idx}.parquet"
-                        self.client.storage.from_("NubrixAI").upload(
+                        self.client.storage.from_("AnalyticsHub").upload(
                             file=temp.name,
                             path=f"{projectId}/{fileName}",
                             file_options={"upsert": "true"}
@@ -342,7 +342,7 @@ class DataLoadService:
                 pd.read_sql(f"SELECT * FROM {connection.table}", engine).to_parquet(
                     temp.name, compression="snappy"
                 )
-                self.client.storage.from_("NubrixAI").upload(
+                self.client.storage.from_("AnalyticsHub").upload(
                     file=temp.name,
                     path=f"{connection.projectId}/{sanitizedTable}.parquet",
                     file_options={"upsert": "true"}
@@ -387,7 +387,7 @@ class DataLoadService:
                 pd.read_sql(f"SELECT * FROM {connection.table}", engine).to_parquet(
                     temp.name, compression="snappy"
                 )
-                self.client.storage.from_("NubrixAI").upload(
+                self.client.storage.from_("AnalyticsHub").upload(
                     file=temp.name,
                     path=f"{connection.projectId}/{sanitizedTable}.parquet",
                     file_options={"upsert": "true"}
@@ -429,7 +429,7 @@ class DataLoadService:
                     record.pop("_id", None)
                 pd.DataFrame(records).to_parquet(temp.name, compression="snappy")
                 sanitizedCollection = self._sanitizeFileName(connection.collection)
-                self.client.storage.from_("NubrixAI").upload(
+                self.client.storage.from_("AnalyticsHub").upload(
                     file=temp.name,
                     path=f"{connection.projectId}/{sanitizedCollection}.parquet",
                     file_options={"upsert": "true"}
@@ -459,14 +459,14 @@ class DataLoadService:
             CustomException: If deletion or metadata update fails.
         """
         try:
-            _ = self.client.storage.from_("NubrixAI").remove(f"{tableDetails.projectId}/{tableDetails.tableName}" + ".parquet")
+            _ = self.client.storage.from_("AnalyticsHub").remove(f"{tableDetails.projectId}/{tableDetails.tableName}" + ".parquet")
             fileUrl = os.environ["FILE_URL"].format(projectId = tableDetails.projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             jsonData = json.loads(urlopen(fileUrl).read())
             jsonData.pop(tableDetails.tableName)
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(jsonData, indent=4).encode("utf-8"))
                 buffer.seek(0)
-                self.client.storage.from_("NubrixAI").upload(path = f"{tableDetails.projectId}/metadata.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
+                self.client.storage.from_("AnalyticsHub").upload(path = f"{tableDetails.projectId}/metadata.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
             updateProjectModifiedAt(tableDetails.projectId)
             return
         except Exception as e:

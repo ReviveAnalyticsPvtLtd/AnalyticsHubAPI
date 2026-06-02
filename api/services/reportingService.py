@@ -367,7 +367,7 @@ class ReportingService:
                 responses = [f.result() for f in futures]
 
             # Check if there is already an existing dashboard configuration
-            file_exists = "dashboardConfig.json" in [x.get("name") for x in self.client.storage.from_("NubrixAI").list(path = details.projectId)]
+            file_exists = "dashboardConfig.json" in [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = details.projectId)]
             dashboardConfig = {}
             if file_exists:
                 fileUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "dashboardConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
@@ -473,7 +473,7 @@ class ReportingService:
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(dashboardConfig, indent=4).encode("utf-8"))
                 buffer.seek(0)
-                _ = self.client.storage.from_("NubrixAI").upload(path = f"{details.projectId}/dashboardConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"}) 
+                _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/dashboardConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"}) 
             
             # Updating insights.json
             for insight in insights.get("insights"):
@@ -484,7 +484,7 @@ class ReportingService:
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(insights, indent=4).encode("utf-8"))
                 buffer.seek(0)
-                self.client.storage.from_("NubrixAI").upload(path = f"{details.projectId}/insights.json", file = buffer.getvalue(), file_options = {"upsert": "true"})  
+                self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/insights.json", file = buffer.getvalue(), file_options = {"upsert": "true"})  
             updateProjectModifiedAt(details.projectId)
             return dashboardConfig.get(pageId) 
         except Exception as e:
@@ -508,7 +508,7 @@ class ReportingService:
             CustomException: If panel chart generation fails for any reason.
         """
         try:
-            allFiles = [x.get("name") for x in self.client.storage.from_("NubrixAI").list(path = panelChartDetails.projectId)]
+            allFiles = [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = panelChartDetails.projectId)]
             if "".join([panelChartDetails.dataSource, ".parquet"]) in allFiles:
                 response = self._generatePanelChart(
                     projectId=panelChartDetails.projectId,
@@ -617,7 +617,7 @@ class ReportingService:
         """
         try:
             queryId = str(uuid.uuid4())
-            allFiles = [x.get("name") for x in self.client.storage.from_("NubrixAI").list(path = details.projectId)]
+            allFiles = [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = details.projectId)]
             if "queryConfig.json" in allFiles:
                 fileUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "queryConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
                 queryConfig = json.loads(urlopen(fileUrl).read())
@@ -627,7 +627,7 @@ class ReportingService:
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(queryConfig, indent=4).encode("utf-8"))
                 buffer.seek(0)
-                _ = self.client.storage.from_("NubrixAI").upload(path = f"{details.projectId}/queryConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
+                _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/queryConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
             updateProjectModifiedAt(details.projectId)
             return queryId
         except Exception as e:
@@ -649,7 +649,7 @@ class ReportingService:
             CustomException: If retrieval fails for any reason.
         """
         try:
-            if "queryConfig.json" in [x.get("name") for x in self.client.storage.from_("NubrixAI").list(path = projectId)]:
+            if "queryConfig.json" in [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = projectId)]:
                 fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "queryConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
                 queryConfig = json.loads(urlopen(fileUrl).read())
             else:
@@ -677,7 +677,7 @@ class ReportingService:
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(queryConfig, indent=4).encode("utf-8"))
                 buffer.seek(0)
-                _ = self.client.storage.from_("NubrixAI").upload(path = f"{details.projectId}/queryConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
+                _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/queryConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
             updateProjectModifiedAt(details.projectId)
         except Exception as e:
             exception = CustomException(e)
