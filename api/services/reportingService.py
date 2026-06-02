@@ -402,7 +402,7 @@ class ReportingService:
             existingWidgets = pageDict.get("widgets", [])
             newWidgets = []
             
-            for widget in responses:
+            for widget, originalQuery in zip(responses, uniqueQueries):
                 widgetId = str(uuid.uuid4())
                 chartType = widget.get("finalOutput", {}).get("chartType")
                 data = widget.get("finalOutput", {}).get("data")
@@ -417,6 +417,7 @@ class ReportingService:
                         "xLabels": widget.get("finalOutput", {}).get("xLabels"),
                         "yLabels": widget.get("finalOutput", {}).get("yLabels"),
                         "data": data,
+                        "query": originalQuery,
                         "layout": {"x": 0, "y": 0, "w": 4, "h": 6},
                         "generatedCode": widget.get("generatedCode")
                     })
@@ -429,6 +430,7 @@ class ReportingService:
                         "xLabels": widget.get("finalOutput", {}).get("xLabels"),
                         "yLabels": widget.get("finalOutput", {}).get("yLabels"),
                         "data": data,
+                        "query": originalQuery,
                         "layout": {"x": 0, "y": 0, "w": 6, "h": 10},
                         "generatedCode": widget.get("generatedCode")
                     })

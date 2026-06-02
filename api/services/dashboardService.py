@@ -345,9 +345,70 @@ class DashboardService:
             logger.error(exception)
             raise exception
 
+    def _reconcileInsightChartedStatus(self, projectId: str, dashboardConfig: dict) -> None:
+        """
+        Reconcile the isCharted flag in insights.json after a dashboard
+        element has been deleted.
+
+        Collects all 'query' values from remaining widgets across all pages,
+        then sets isCharted=False for any insight whose query is no longer
+        represented on any dashboard page.
+
+        Args:
+            projectId (str): The project identifier.
+            dashboardConfig (dict): The *already-updated* dashboard config
+                                    (after the element has been removed).
+        """
+        try:
+            # Collect all query strings still present on the dashboard
+            remainingQueries = set()
+            for pageId, pageData in dashboardConfig.items():
+                for widget in pageData.get("widgets", []):
+                    query = widget.get("query")
+                    if query:
+                        remainingQueries.add(query)
+
+            # Load insights.json
+            insightsFileNames = [
+                x.get("name")
+                for x in self.client.storage.from_("AnalyticsHub").list(path=projectId)
+            ]
+            if "insights.json" not in insightsFileNames:
+                return
+
+            insightsUrl = os.environ["FILE_URL"].format(
+                projectId=projectId, fileName="insights.json"
+            ).replace(".parquet", "") + f"?cb={int(time.time())}"
+            insights = json.loads(urlopen(insightsUrl).read())
+
+            # Reset isCharted for insights whose query is no longer on the dashboard
+            changed = False
+            for insight in insights.get("insights", []):
+                wasCharted = insight.get("isCharted", False)
+                shouldBeCharted = insight.get("query") in remainingQueries
+                if wasCharted and not shouldBeCharted:
+                    insight["isCharted"] = False
+                    changed = True
+
+            if changed:
+                with io.BytesIO() as buffer:
+                    buffer.write(json.dumps(insights, indent=4).encode("utf-8"))
+                    buffer.seek(0)
+                    self.client.storage.from_("AnalyticsHub").upload(
+                        path=f"{projectId}/insights.json",
+                        file=buffer.getvalue(),
+                        file_options={"upsert": "true"},
+                    )
+                logger.info(f"Reconciled isCharted flags in insights.json for project {projectId}.")
+        except Exception as e:
+            # Non-fatal: log but do not propagate so the delete itself still succeeds
+            logger.warning(f"Failed to reconcile insight charted status for project {projectId}: {e}")
+
     def deleteDashboardElement(self, details: DeleteDashboardElement) -> None:
         """
         Delete a dashboard element (page or widget) from a project.
+        After deletion, reconciles insights.json to reset the isCharted flag
+        for any KPIs whose widgets are no longer on any dashboard page.
 
         Args:
             details (DeleteDashboardElement): Details specifying the element to delete.
@@ -373,6 +434,10 @@ class DashboardService:
                 buffer.write(json.dumps(dashboardConfig, indent=4).encode("utf-8"))
                 buffer.seek(0)
                 _ = self.client.storage.from_("AnalyticsHub").upload(path = f"{details.projectId}/dashboardConfig.json", file = buffer.getvalue(), file_options = {"upsert": "true"}) 
+            
+            # Reconcile insights.json — reset isCharted for removed KPIs
+            self._reconcileInsightChartedStatus(details.projectId, dashboardConfig)
+            
             updateProjectModifiedAt(details.projectId)
             return 
         except Exception as e:
