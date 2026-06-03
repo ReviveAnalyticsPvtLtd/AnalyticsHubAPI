@@ -17,6 +17,7 @@ class LoginWithProvider(BaseModel):
     email: str
     provider: ProviderEnum
     sub: str
+    profileImage: str | None = None
 
 class OnboardingDetails(BaseModel):
     usage: str

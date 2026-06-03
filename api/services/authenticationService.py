@@ -33,6 +33,7 @@ import datetime
 import hashlib
 import uuid
 import os
+from urllib.parse import urlparse
 
 class AuthenticationService:
     """
@@ -93,6 +94,18 @@ class AuthenticationService:
         if billingMode == "annual_prepaid":
             return "annual"
         return "none"
+
+    @staticmethod
+    def _normalizeProviderProfileImage(profileImage: str | None) -> str | None:
+        if not isinstance(profileImage, str):
+            return None
+        normalized = profileImage.strip()
+        if not normalized:
+            return None
+        parsed = urlparse(normalized)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return None
+        return normalized
 
     def _getSubscriptionSnapshot(self, userId: str) -> dict | None:
         response = self.client.table("subscriptions") \
@@ -427,6 +440,9 @@ class AuthenticationService:
                     statusCode=400,
                     uiMessage="Unsupported authentication provider. Please use Google or Azure AD."
                 )
+            profileImage = self._normalizeProviderProfileImage(
+                getattr(loginDetails, "profileImage", None)
+            )
 
             response = self.client.table("Users").select("*").eq("email", loginDetails.email).execute()
             userData = {}
@@ -444,6 +460,12 @@ class AuthenticationService:
                     userData["userId"],
                     subscription,
                 )
+                if profileImage and not userData.get("profileImage"):
+                    self.client.table("Users") \
+                        .update({"profileImage": profileImage}) \
+                        .eq("userId", userData["userId"]) \
+                        .execute()
+                    userData["profileImage"] = profileImage
             else:
                 userId = str(uuid.uuid4())
                 workspaceId = str(uuid.uuid4())
@@ -458,6 +480,8 @@ class AuthenticationService:
                     "onboarded": False,
                     "currentWorkspaceId": workspaceId
                 }
+                if profileImage:
+                    userData["profileImage"] = profileImage
                 self.client.table("Users").insert(userData).execute()
                 self.client.table("Workspaces").insert({
                     "id": workspaceId,
