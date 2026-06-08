@@ -10,7 +10,7 @@ __all__ = ["router"]
 
 
 from utils.exceptionHandler import CustomException, raiseHttpException
-from api.services.authenticationService import authenticationService
+from api.services.authenticationService import authenticationService, DEFAULT_PROFILE_IMAGE
 from fastapi import APIRouter, Depends
 from fastapi.responses import ORJSONResponse
 from api.commons import verifyToken, verifyTokenWithExpiry
@@ -50,7 +50,11 @@ async def signup(signupDetails: SignUp):
     """
     try:
         userId = authenticationService.signup(signupDetails=signupDetails)
-        return ORJSONResponse(status_code=200, content={"status": "SUCCESS", "userId": userId})
+        return ORJSONResponse(status_code=200, content={
+            "status": "SUCCESS", 
+            "userId": userId,
+            "profileImage": DEFAULT_PROFILE_IMAGE
+        })
     except CustomException as e:
         raiseHttpException(e)
     

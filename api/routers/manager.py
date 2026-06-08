@@ -466,7 +466,7 @@ async def editUserProfile(
     company: str | None = Form(default=None),
     position: str | None = Form(default=None),
     bio: str | None = Form(default=None),
-    profileImg: UploadFile | None = File(default=None),
+    profileImage: UploadFile | None = File(default=None),
     token = Depends(verifyToken)
 ):
     """
@@ -484,9 +484,9 @@ async def editUserProfile(
     try:
         imageBytes = None
         imageFilename = None
-        if profileImg:
-            imageBytes = await profileImg.read()
-            imageFilename = profileImg.filename
+        if profileImage:
+            imageBytes = await profileImage.read()
+            imageFilename = profileImage.filename
         updatedProfile = managementService.editUserProfile(
             userName=userName,
             company=company,

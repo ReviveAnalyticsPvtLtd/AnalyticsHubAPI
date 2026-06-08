@@ -35,6 +35,8 @@ import uuid
 import os
 from urllib.parse import urlparse
 
+DEFAULT_PROFILE_IMAGE = "https://www.gravatar.com/avatar/00000000000000000000000000000000?d=mp&f=y"
+
 class AuthenticationService:
     """
     Service class for user authentication and session management.
@@ -311,7 +313,7 @@ class AuthenticationService:
                     uiMessage="Please confirm your email address before logging in."
                 )
             userRows = self.client.table("Users") \
-                .select("userId, email, password, onboarded, currentWorkspaceId") \
+                .select("userId, email, password, onboarded, currentWorkspaceId, profileImage") \
                 .eq("email", loginDetails.email) \
                 .limit(1) \
                 .execute().data
@@ -384,6 +386,7 @@ class AuthenticationService:
                 dataSlice["userId"],
                 subscription,
             )
+            profileImage = dataSlice.get("profileImage") or DEFAULT_PROFILE_IMAGE
             return {
                 "status": "SUCCESS",
                 "userId": dataSlice["userId"],
@@ -396,6 +399,7 @@ class AuthenticationService:
                 "subscriptionExpiry": subscription.get("current_period_end") if subscription else None,
                 "subscriptionDaysLeft": subscriptionDaysLeft,
                 "subscriptionPlan": subscriptionPlan,
+                "profileImage": profileImage,
             }
         except CustomException:
             raise
@@ -515,6 +519,7 @@ class AuthenticationService:
                 "expiresAt": str(expiresAt)
             }).execute()
 
+            profileImage = userData.get("profileImage") or DEFAULT_PROFILE_IMAGE
             return {
                 "status": "SUCCESS",
                 "userId": userData["userId"],
@@ -525,6 +530,7 @@ class AuthenticationService:
                 "subscriptionStatus": subscriptionStatus,
                 "subscriptionPlan": subscriptionPlan,
                 "subscriptionDaysLeft": subscriptionDaysLeft,
+                "profileImage": profileImage,
             }
         except CustomException:
             raise
