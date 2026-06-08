@@ -335,7 +335,8 @@ class AuthenticationService:
                     "userId": user.id,
                     "email": loginDetails.email,
                     "password": hashedPassword,
-                    "currentWorkspaceId": workspaceId
+                    "currentWorkspaceId": workspaceId,
+                    "profileImage": DEFAULT_PROFILE_IMAGE
                 }).execute()
                 self.client.table("Workspaces").insert({
                     "id": workspaceId,
@@ -349,7 +350,8 @@ class AuthenticationService:
                     "email": loginDetails.email,
                     "password": hashedPassword,
                     "onboarded": False,
-                    "currentWorkspaceId": workspaceId
+                    "currentWorkspaceId": workspaceId,
+                    "profileImage": DEFAULT_PROFILE_IMAGE
                 }
             else:
                 dataSlice = userRows[0]
@@ -464,7 +466,7 @@ class AuthenticationService:
                     userData["userId"],
                     subscription,
                 )
-                if profileImage and not userData.get("profileImage"):
+                if profileImage and (not userData.get("profileImage") or userData.get("profileImage") == DEFAULT_PROFILE_IMAGE):
                     self.client.table("Users") \
                         .update({"profileImage": profileImage}) \
                         .eq("userId", userData["userId"]) \
@@ -482,10 +484,9 @@ class AuthenticationService:
                     "password": hashedPassword,
                     "createdAt": str(sessionStartTime),
                     "onboarded": False,
-                    "currentWorkspaceId": workspaceId
+                    "currentWorkspaceId": workspaceId,
+                    "profileImage": profileImage or DEFAULT_PROFILE_IMAGE
                 }
-                if profileImage:
-                    userData["profileImage"] = profileImage
                 self.client.table("Users").insert(userData).execute()
                 self.client.table("Workspaces").insert({
                     "id": workspaceId,

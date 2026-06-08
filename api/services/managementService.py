@@ -15,6 +15,7 @@ from nubrix.components.domainKpiMapper import DomainKpiMapper
 from utils.llmOutputParser import parseModelJsonOutput
 from api.commons import updateProjectModifiedAt
 from utils.exceptionHandler import CustomException
+from api.services.authenticationService import DEFAULT_PROFILE_IMAGE
 from api.services.subscriptions.subscriptionFieldUtils import (
     CANONICAL_SUBSCRIPTION_SELECT,
     subscriptionExperts,
@@ -1016,7 +1017,7 @@ class ManagementService:
                 "userId": record.get("userId"),
                 "userName": record.get("fullName"),
                 "email": record.get("email"),
-                "profileImage": record.get("profileImage"),
+                "profileImage": record.get("profileImage") or DEFAULT_PROFILE_IMAGE,
                 "company": record.get("companyName"),
                 "position": record.get("role"),
                 "bio": record.get("profileBio"),
@@ -1055,7 +1056,8 @@ class ManagementService:
         bio: str | None,
         profileImage: bytes | None,
         profileImageFilename: str | None,
-        token: str
+        token: str,
+        revertToDefault: bool = False
     ) -> dict:
         """
         Update user profile details in the Users table. Optionally upload profile image to Supabase storage.
@@ -1104,7 +1106,9 @@ class ManagementService:
                 updateData["role"] = position
             if bio is not None:
                 updateData["profileBio"] = bio
-            if profileImage and profileImageFilename:
+            if revertToDefault:
+                updateData["profileImage"] = DEFAULT_PROFILE_IMAGE
+            elif profileImage and profileImageFilename:
                 fileExtension = os.path.splitext(profileImageFilename)[-1]
                 storagePath = f"{userId}{fileExtension}"
                 self.client.storage.from_("userProfileImages").upload(
@@ -1141,7 +1145,7 @@ class ManagementService:
                 "userId": record.get("userId"),
                 "userName": record.get("fullName"),
                 "email": record.get("email"),
-                "profileImage": record.get("profileImage"),
+                "profileImage": record.get("profileImage") or DEFAULT_PROFILE_IMAGE,
                 "company": record.get("companyName"),
                 "position": record.get("role"),
                 "bio": record.get("profileBio"),

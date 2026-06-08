@@ -10,7 +10,7 @@ __all__ = ["router"]
 
 
 from utils.exceptionHandler import CustomException, raiseHttpException
-from fastapi import APIRouter, Depends, File, UploadFile, Form
+from fastapi import APIRouter, Depends, File, UploadFile, Form, Request
 from api.services.managementService import managementService
 from fastapi.responses import ORJSONResponse, HTMLResponse
 from api.models import (
@@ -462,6 +462,7 @@ async def getUserProfile(token = Depends(verifyToken)):
 
 @router.put("/editUserProfile")
 async def editUserProfile(
+    request: Request,
     userName: str | None = Form(default=None),
     company: str | None = Form(default=None),
     position: str | None = Form(default=None),
@@ -482,11 +483,20 @@ async def editUserProfile(
         500 - Failed to update user profile. Try again later.
     """
     try:
+        form = await request.form()
+        profileImageForm = form.get("profileImage")
+        revertToDefault = False
         imageBytes = None
         imageFilename = None
-        if profileImage:
-            imageBytes = await profileImage.read()
-            imageFilename = profileImage.filename
+
+        if profileImageForm == "":
+            revertToDefault = True
+        elif isinstance(profileImageForm, UploadFile):
+            imageBytes = await profileImageForm.read()
+            imageFilename = profileImageForm.filename
+            if not imageBytes or not imageFilename:
+                revertToDefault = True
+
         updatedProfile = managementService.editUserProfile(
             userName=userName,
             company=company,
@@ -494,7 +504,8 @@ async def editUserProfile(
             bio=bio,
             profileImage=imageBytes,
             profileImageFilename=imageFilename,
-            token=token
+            token=token,
+            revertToDefault=revertToDefault
         )
         return ORJSONResponse(
             status_code=200,
