@@ -491,9 +491,9 @@ async def editUserProfile(
 
         if profileImageForm == "":
             revertToDefault = True
-        elif isinstance(profileImageForm, UploadFile):
-            imageBytes = await profileImageForm.read()
-            imageFilename = profileImageForm.filename
+        elif profileImage is not None:
+            imageBytes = await profileImage.read()
+            imageFilename = profileImage.filename
             if not imageBytes or not imageFilename:
                 revertToDefault = True
 
