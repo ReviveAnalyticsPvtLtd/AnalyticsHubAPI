@@ -61,7 +61,7 @@ async def getInsightsFromImage(imageToInsights: ImageToInsightsModel, token = De
     """
     try:
         insights = utilityService.getInsightsFromImage(imageToInsights=imageToInsights)
-        return ORJSONResponse(status_code=200, content={"insights": insights})
+        return ORJSONResponse(status_code=200, content=insights)
     except CustomException as e:
         raiseHttpException(e)
 

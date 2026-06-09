@@ -75,8 +75,9 @@ class UtilityService:
         Extracts structured, evidence-backed insights from a base64-encoded dashboard image
         using the hybrid data + statistics + domain + LLM pipeline.
 
-        Orchestrates context building, statistical signal extraction, LLM inference,
-        and persistence of the generated insights.
+        Returns the cached project-level dashboard insight unless refresh is requested
+        or no cached insight exists. Cache misses orchestrate context building,
+        statistical signal extraction, LLM inference, and persistence.
 
         Args:
             imageToInsights (ImageToInsightsModel): Model containing image, project context,
@@ -89,6 +90,17 @@ class UtilityService:
             CustomException: If insight generation fails.
         """
         try:
+            if not imageToInsights.refresh:
+                cachedRecord = self._getLatestDashboardInsightRecord(
+                    self._loadDashboardInsightsFile(imageToInsights.projectId)
+                )
+                if cachedRecord:
+                    return self._formatDashboardInsightResponse(
+                        record=cachedRecord,
+                        source="cache",
+                        cacheHit=True,
+                    )
+
             context = self.insightContextBuilder.buildContext(
                 projectId=imageToInsights.projectId,
                 pageId=imageToInsights.pageId,
@@ -104,41 +116,68 @@ class UtilityService:
                 context=context,
             )
 
-            self._persistDashboardInsight(
+            record = self._persistDashboardInsight(
                 projectId=imageToInsights.projectId,
                 pageId=imageToInsights.pageId,
                 insights=insights,
             )
 
-            return insights
+            return self._formatDashboardInsightResponse(
+                record=record,
+                source="generated",
+                cacheHit=False,
+            )
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
             raise exception
 
-    def _persistDashboardInsight(self, projectId: str, pageId: str | None, insights: dict) -> None:
+    def _getLatestDashboardInsightRecord(self, records: list) -> dict | None:
         """
-        Persists a generated insight record to dashboardInsights.json in project storage.
+        Returns the latest valid insight record from a dashboardInsights.json list.
+        """
+        for record in reversed(records):
+            if isinstance(record, dict) and "insights" in record:
+                return record
+        return None
+
+    def _formatDashboardInsightResponse(self, record: dict, source: str, cacheHit: bool) -> dict:
+        """
+        Formats cached and generated dashboard insight records for the API response.
+        """
+        return {
+            "insights": record.get("insights"),
+            "source": source,
+            "cacheHit": cacheHit,
+            "insightId": record.get("id"),
+            "generatedAt": record.get("generatedAt"),
+        }
+
+    def _persistDashboardInsight(self, projectId: str, pageId: str | None, insights: dict) -> dict:
+        """
+        Persists the latest generated insight record to dashboardInsights.json in project storage.
 
         Args:
             projectId (str): The project identifier.
             pageId (str | None): The dashboard page the insight was generated for.
             insights (dict): The structured insight payload.
+
+        Returns:
+            dict: The persisted latest insight record.
         """
         try:
             record = {
                 "id": str(uuid.uuid4()),
-                "pageId": pageId,
+                "scope": "project",
+                "pageId": None,
                 "generatedAt": datetime.now(timezone.utc).isoformat(),
                 "insights": insights,
                 "status": "new",
+                "cacheVersion": 1,
             }
 
-            existing = self._loadDashboardInsightsFile(projectId)
-            existing.append(record)
-
             with io.BytesIO() as buffer:
-                buffer.write(json.dumps(existing, indent=4).encode("utf-8"))
+                buffer.write(json.dumps([record], indent=4).encode("utf-8"))
                 buffer.seek(0)
                 self.client.storage.from_("AnalyticsHub").upload(
                     path=f"{projectId}/dashboardInsights.json",
@@ -146,8 +185,10 @@ class UtilityService:
                     file_options={"upsert": "true"},
                 )
             logger.info(f"Dashboard insight persisted for project {projectId}.")
+            return record
         except Exception as e:
             logger.warning(f"Failed to persist dashboard insight: {e}")
+            raise
 
     def _loadDashboardInsightsFile(self, projectId: str) -> list:
         """

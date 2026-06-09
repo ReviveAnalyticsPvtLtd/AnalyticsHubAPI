@@ -60,6 +60,7 @@ class ImageToInsightsModel(BaseModel):
     b64String: str
     projectId: str
     pageId: str | None = None
+    refresh: bool = False
 
 class DeleteTable(BaseModel):
     projectId: str
