@@ -10,9 +10,10 @@ __all__ = ["router"]
 
 
 from utils.exceptionHandler import CustomException, raiseHttpException
-from fastapi import APIRouter, Depends, File, UploadFile, Form, Request
+from fastapi import APIRouter, Depends, Form, Request
 from api.services.managementService import managementService
 from fastapi.responses import ORJSONResponse, HTMLResponse
+from starlette.datastructures import UploadFile as StarletteUploadFile
 from api.models import (
     UpdateProjectState,
     CreateProject,
@@ -467,7 +468,6 @@ async def editUserProfile(
     company: str | None = Form(default=None),
     position: str | None = Form(default=None),
     bio: str | None = Form(default=None),
-    profileImage: UploadFile | None = File(default=None),
     token = Depends(verifyToken)
 ):
     """
@@ -491,11 +491,17 @@ async def editUserProfile(
 
         if profileImageForm == "":
             revertToDefault = True
-        elif profileImage is not None:
-            imageBytes = await profileImage.read()
-            imageFilename = profileImage.filename
+        elif isinstance(profileImageForm, StarletteUploadFile):
+            imageBytes = await profileImageForm.read()
+            imageFilename = profileImageForm.filename
             if not imageBytes or not imageFilename:
                 revertToDefault = True
+        elif profileImageForm is not None:
+            raise CustomException(
+                ValueError("Invalid profileImage form value"),
+                statusCode=422,
+                uiMessage="profileImage must be a file upload or an empty string."
+            )
 
         updatedProfile = managementService.editUserProfile(
             userName=userName,
