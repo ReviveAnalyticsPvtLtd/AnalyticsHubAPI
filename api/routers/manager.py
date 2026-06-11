@@ -250,19 +250,21 @@ async def generateMetadata(projectId: str, token = Depends(verifyToken)):
         raiseHttpException(e)
     
 @router.post("/generateKpis/{projectId}")
-async def generateKpis(projectId: str, token = Depends(verifyToken)):
+async def generateKpis(projectId: str, preserveCharted: bool = False, token = Depends(verifyToken)):
     """
     Generate important KPIs for a given project.
 
     Args:
         projectId (str): The ID of the project.
+        preserveCharted (bool): When true, existing charted KPIs are retained
+            and only non-charted KPIs are regenerated. Defaults to false.
         token: Authorization token dependency.
 
     Returns:
         ORJSONResponse: Generated metadata and insights or error message.
     """
     try:
-        jsonData = managementService.generateInsightsForProject(projectId = projectId)
+        jsonData = managementService.generateInsightsForProject(projectId = projectId, preserveCharted = preserveCharted)
         response = {"status": "SUCCESS"}
         response.update(jsonData)
         return ORJSONResponse(status_code = 200, content = response)

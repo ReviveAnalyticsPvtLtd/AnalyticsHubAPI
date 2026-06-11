@@ -496,52 +496,84 @@ class ManagementService:
             logger.error(CustomException(e))
             raise CustomException(e)
         
-    def generateInsightsForProject(self, projectId: str) -> dict:
+    def _generateRawInsights(self, projectId: str) -> list:
+        """
+        Run the LLM insight generation pipeline (domain KPI mapping + general insights)
+        and return a flat list of {"query": str} dicts without id or isCharted fields.
+        """
+        fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+        domainFile = self.client.table("Projects").select("domainExpert").eq("projectId", projectId).execute().data[0].get("domainExpert") + ".json"
+        metadata = json.loads(urlopen(fileUrl).read())
+
+        if domainFile in [x.get("name") for x in self.client.storage.from_("DomainSpecificKpis").list()]:
+            domainFileUrl = os.environ["DOMAIN_FILE_URL"].format(fileName = domainFile) + f"?cb={int(time.time())}"
+            domainData = json.loads(urlopen(domainFileUrl).read())
+            domainKpiMapperChain = self.domainKpiMapper.getDomainKpiMapperChain()
+            domainKpiInsightsRaw = domainKpiMapperChain.invoke(
+                {"domainProfile": domainData, "metadata": metadata}
+            )
+            domainKpiInsights = self._parseModelJsonOutput(
+                rawOutput=domainKpiInsightsRaw,
+                stage="Domain KPI mapping"
+            )
+            overlapKpis = [str(value) for value in domainKpiInsights.values() if value is not None]
+        else:
+            overlapKpis = list()
+
+        insightGeneratorChain = self.insightGenerator.getInsightGeneratorChain()
+        insightsRaw = insightGeneratorChain.invoke({"metadata": metadata})
+        insights = self._parseModelJsonOutput(
+            rawOutput=insightsRaw,
+            stage="Insight generation"
+        )
+
+        raw = []
+        for kpi in overlapKpis:
+            raw.append({"query": kpi})
+        for insightKey in insights.keys():
+            insightText = insights.get(insightKey)
+            if insightText is not None:
+                raw.append({"query": str(insightText)})
+        return raw
+
+    def generateInsightsForProject(self, projectId: str, preserveCharted: bool = False) -> dict:
         """
         Generate insights for the project from its metadata and also determine the most important KPIs that can be derived from it.
 
         Args:
             projectId (str): The project identifier.
+            preserveCharted (bool): When True, existing KPIs marked as charted are
+                retained and only non-charted KPIs are regenerated. Defaults to False.
 
         Returns:
             dict: A dictionary containing generated insights.
         """
         try:
-            fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
-            domainFile = self.client.table("Projects").select("domainExpert").eq("projectId", projectId).execute().data[0].get("domainExpert") + ".json"
-            metadata = json.loads(urlopen(fileUrl).read())
-            if domainFile in [x.get("name") for x in self.client.storage.from_("DomainSpecificKpis").list()]:
-                domainFileUrl = os.environ["DOMAIN_FILE_URL"].format(fileName = domainFile) + f"?cb={int(time.time())}"
-                domainData = json.loads(urlopen(domainFileUrl).read())
-                domainKpiMapperChain = self.domainKpiMapper.getDomainKpiMapperChain()
-                domainKpiInsightsRaw = domainKpiMapperChain.invoke(
-                    {"domainProfile": domainData, "metadata": metadata}
-                )
-                domainKpiInsights = self._parseModelJsonOutput(
-                    rawOutput=domainKpiInsightsRaw,
-                    stage="Domain KPI mapping"
-                )
-                overlapKpis = [str(value) for value in domainKpiInsights.values() if value is not None]
+            rawInsights = self._generateRawInsights(projectId)
+
+            if preserveCharted:
+                try:
+                    existing = self.getInsights(projectId)
+                    chartedItems = [i for i in existing.get("insights", []) if i.get("isCharted")]
+                except Exception:
+                    chartedItems = []
+
+                chartedQueries = {item["query"] for item in chartedItems}
+                freshInsights = [i for i in rawInsights if i["query"] not in chartedQueries]
+
+                allInsights, counterValue = list(), 1
+                for item in chartedItems:
+                    allInsights.append({"id": counterValue, "query": item["query"], "isCharted": True})
+                    counterValue += 1
+                for item in freshInsights:
+                    allInsights.append({"id": counterValue, "query": item["query"], "isCharted": False})
+                    counterValue += 1
             else:
-                overlapKpis = list()
-            insightGeneratorChain = self.insightGenerator.getInsightGeneratorChain()
-            insightsRaw = insightGeneratorChain.invoke({"metadata": metadata})
-            insights = self._parseModelJsonOutput(
-                rawOutput=insightsRaw,
-                stage="Insight generation"
-            )
-            allInsights, counterValue = list(), 1
-            for kpi in overlapKpis:
-                insightDict = {"id": counterValue, "query": kpi, "isCharted": False}
-                allInsights.append(insightDict)
-                counterValue += 1
-            for insightKey in insights.keys():
-                insightText = insights.get(insightKey)
-                if insightText is None:
-                    continue
-                insightDict = {"id": counterValue, "query": str(insightText), "isCharted": False}
-                allInsights.append(insightDict)
-                counterValue += 1
+                allInsights, counterValue = list(), 1
+                for item in rawInsights:
+                    allInsights.append({"id": counterValue, "query": item["query"], "isCharted": False})
+                    counterValue += 1
+
             insights = {"insights": allInsights}
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(insights, indent=4).encode("utf-8"))
