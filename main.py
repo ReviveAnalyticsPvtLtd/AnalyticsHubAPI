@@ -8,7 +8,10 @@ __version__ = "1.0.0"
 __author__ = "Rauhan Ahmed Siddiqui"
 
 
-from api.routers import authentication, manager, dataLoader, reporting, utils, blends, dashboard, subscriptions, webhooks, billingAdmin
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
+
+from api.routers import authentication, manager, dataLoader, reporting, utils, blends, dashboard, subscriptions, webhooks, billingAdmin, transformations
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from utils.logger import logger
@@ -81,3 +84,4 @@ app.include_router(utils.router, prefix = "/utils", tags = ["Utilities"])
 app.include_router(subscriptions.router, prefix = "/subscriptions", tags = ["Subscriptions"])
 app.include_router(webhooks.router, prefix = "/webhooks", tags = ["Webhooks"])
 app.include_router(billingAdmin.router, prefix = "/billing-admin", tags = ["Billing Admin"])
+app.include_router(transformations.router, prefix = "/transformations", tags = ["Transformations"])

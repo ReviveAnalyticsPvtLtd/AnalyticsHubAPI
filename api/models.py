@@ -1,4 +1,6 @@
-from pydantic import BaseModel
+from datetime import datetime
+from typing import Literal
+from pydantic import BaseModel, Field
 from enum import Enum
 
 class SignUp(BaseModel):
@@ -226,3 +228,58 @@ class UpdateDashboardInsightStatus(BaseModel):
     projectId: str
     insightId: str
     status: str
+
+class CreateTransformationRequest(BaseModel):
+    transformation_name: str
+    description: str | None = None
+
+class SendMessageRequest(BaseModel):
+    content: str
+
+class ApproveMessageRequest(BaseModel):
+    newTransformedTableName: str
+
+class ApplyTransformationRequest(BaseModel):
+    newTransformedTableName: str
+
+class TransformationArtifact(BaseModel):
+    type: Literal["mermaid"] = "mermaid"
+    code: str
+    is_approved: bool = False
+
+class TransformationMessage(BaseModel):
+    message_id: str
+    transformation_id: str
+    role: Literal["user", "assistant"]
+    content: str
+    artifact: TransformationArtifact | None = None
+    created_at: datetime
+
+class TransformationSummary(BaseModel):
+    transformation_id: str
+    transformation_name: str
+    description: str | None
+    latest_approved_artifact: dict | None
+    created_at: datetime
+    updated_at: datetime
+
+class TransformationAgentResponse(BaseModel):
+    pythonCode: str = Field(
+        ...,
+        description="Fully executable, self-contained Python pandas code utilizing fetch_data() to create a final_df variable."
+    )
+    mermaidCode: str = Field(
+        ...,
+        description="Horizontal flowchart LR mermaid code with distinguishable node shapes and professional styling."
+    )
+    userFacingResponse: str = Field(
+        ...,
+        description="A concise, non-technical sentence explaining the business impact of the transformation."
+    )
+
+class TablePreviewResponse(BaseModel):
+    data: list[dict]
+
+class ApplyResponse(BaseModel):
+    status: str
+    message: str
