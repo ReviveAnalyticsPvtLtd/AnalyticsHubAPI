@@ -36,7 +36,7 @@ async def createTransformation(
     Create a new transformation workspace for a project.
     """
     try:
-        result = await transformationService.create_transformation(
+        result = await transformationService.createTransformation(
             projectId=projectId,
             name=request.transformation_name,
             description=request.description,
@@ -52,7 +52,7 @@ async def listTransformations(projectId: str, token=Depends(verifyToken)):
     List all transformations for a project.
     """
     try:
-        result = await transformationService.list_transformations(projectId=projectId)
+        result = await transformationService.listTransformations(projectId=projectId)
         return ORJSONResponse(status_code=200, content={"data": result})
     except CustomException as e:
         raiseHttpException(e)
@@ -68,7 +68,7 @@ async def getTransformationMessages(
     Return persisted chat history for a transformation.
     """
     try:
-        result = await transformationService.get_messages(
+        result = await transformationService.getMessages(
             projectId=projectId,
             transformationId=transformation_id,
         )
@@ -88,7 +88,7 @@ async def sendTransformationMessage(
     Send a user message and stream the assistant response over SSE.
     """
     return StreamingResponse(
-        transformationService.send_message_stream(
+        transformationService.sendMessageStream(
             projectId=projectId,
             transformationId=transformation_id,
             content=request.content,
@@ -109,7 +109,7 @@ async def approveTransformationMessage(
     Approve a Mermaid artifact and return a transformed table preview.
     """
     try:
-        result = await transformationService.approve_message(
+        result = await transformationService.approveMessage(
             projectId=projectId,
             transformationId=transformation_id,
             messageId=message_id,
@@ -132,7 +132,7 @@ async def applyTransformationMessage(
     Persist an approved transformation output as a project table.
     """
     try:
-        result = await transformationService.apply_transformation(
+        result = await transformationService.applyTransformation(
             projectId=projectId,
             transformationId=transformation_id,
             messageId=message_id,

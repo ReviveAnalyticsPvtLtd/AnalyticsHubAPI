@@ -65,7 +65,7 @@ class TransformationAgent:
             .replace("{user_request}", userMessage)
         )
 
-    def _get_messages(self, projectId: str, transformationId: str, formattedInput: str) -> list[BaseMessage]:
+    def _getMessages(self, projectId: str, transformationId: str, formattedInput: str) -> list[BaseMessage]:
         """Return the message list for the current request."""
         key = self._thread_key(projectId, transformationId)
         with self._historyLock:
@@ -101,7 +101,7 @@ class TransformationAgent:
         """
         try:
             formattedInput = self._build_input(userMessage=userMessage, metadata=metadata)
-            messages = self._get_messages(
+            messages = self._getMessages(
                 projectId=projectId,
                 transformationId=transformationId,
                 formattedInput=formattedInput,

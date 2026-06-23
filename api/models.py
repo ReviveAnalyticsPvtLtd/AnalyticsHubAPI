@@ -245,23 +245,23 @@ class ApplyTransformationRequest(BaseModel):
 class TransformationArtifact(BaseModel):
     type: Literal["mermaid"] = "mermaid"
     code: str
-    is_approved: bool = False
+    isApproved: bool = False
 
 class TransformationMessage(BaseModel):
-    message_id: str
-    transformation_id: str
+    messageId: str
+    transformationId: str
     role: Literal["user", "assistant"]
     content: str
     artifact: TransformationArtifact | None = None
-    created_at: datetime
+    createdAt: datetime
 
 class TransformationSummary(BaseModel):
-    transformation_id: str
-    transformation_name: str
+    transformationId: str
+    transformationName: str
     description: str | None
-    latest_approved_artifact: dict | None
-    created_at: datetime
-    updated_at: datetime
+    latestApprovedArtifact: dict | None
+    createdAt: datetime
+    updatedAt: datetime
 
 class TransformationAgentResponse(BaseModel):
     pythonCode: str = Field(

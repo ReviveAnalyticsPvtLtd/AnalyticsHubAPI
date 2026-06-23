@@ -114,7 +114,7 @@ class TransformationExecutor:
             raise ValueError("final_df must be a pandas DataFrame.")
         return finalDf
 
-    def execute_and_preview(self, projectId: str, pythonCode: str, tableName: str) -> tuple[list[dict], bytes]:
+    def executeAndPreview(self, projectId: str, pythonCode: str, tableName: str) -> tuple[list[dict], bytes]:
         """
         Execute code and return preview rows plus parquet bytes.
         """

@@ -6,7 +6,7 @@ Service layer for AI-powered data transformations.
 
 __version__ = "1.0.0"
 __author__ = "Platform Engineering"
-__all__ = ["TransformationService", "transformationService", "get_saver"]
+__all__ = ["TransformationService", "transformationService", "getSaver"]
 
 
 from langgraph.checkpoint.memory import InMemorySaver
@@ -31,7 +31,7 @@ _saver_registry: dict[str, InMemorySaver] = {}
 _registry_lock = threading.Lock()
 
 
-def get_saver(projectId: str, transformationId: str) -> InMemorySaver:
+def getSaver(projectId: str, transformationId: str) -> InMemorySaver:
     """
     Return the in-memory saver for a project/transformation pair.
     """
@@ -143,7 +143,45 @@ class TransformationService:
             raise ValueError("Transformation message not found.")
         return response.data[0]
 
-    async def create_transformation(self, projectId: str, name: str, description: str | None) -> dict:
+    def _buildMessagePayload(self, transformationId: str, messageId: str | None) -> dict:
+        """
+        Build the full persisted message payload (matching TransformationMessage)
+        plus python_code, for emission in the SSE 'done' event.
+        """
+        if not messageId:
+            return {
+                "message_id": None,
+                "transformation_id": transformationId,
+                "role": "assistant",
+                "content": None,
+                "artifact": None,
+                "python_code": None,
+                "created_at": None,
+            }
+        try:
+            row = self._get_message(transformationId=transformationId, messageId=messageId)
+        except Exception as e:
+            logger.error(f"Failed to load message {messageId} for SSE payload: {e}")
+            return {
+                "message_id": messageId,
+                "transformation_id": transformationId,
+                "role": "assistant",
+                "content": None,
+                "artifact": None,
+                "python_code": None,
+                "created_at": None,
+            }
+        return {
+            "message_id": row.get("message_id"),
+            "transformation_id": row.get("transformation_id"),
+            "role": row.get("role"),
+            "content": row.get("content"),
+            "artifact": row.get("artifact"),
+            "python_code": row.get("python_code"),
+            "created_at": row.get("created_at"),
+        }
+
+    async def createTransformation(self, projectId: str, name: str, description: str | None) -> dict:
         """Insert into transformations table and return the row."""
         try:
             response = self.supabase.table("transformations").insert({
@@ -158,7 +196,7 @@ class TransformationService:
             logger.error(exception)
             raise exception
 
-    async def list_transformations(self, projectId: str) -> list[dict]:
+    async def listTransformations(self, projectId: str) -> list[dict]:
         """Return all transformations for a project."""
         try:
             response = (
@@ -174,7 +212,7 @@ class TransformationService:
             logger.error(exception)
             raise exception
 
-    async def get_messages(self, projectId: str, transformationId: str) -> list[dict]:
+    async def getMessages(self, projectId: str, transformationId: str) -> list[dict]:
         """Fetch messages ordered by creation time."""
         try:
             self._ensure_transformation(projectId=projectId, transformationId=transformationId)
@@ -191,7 +229,7 @@ class TransformationService:
             logger.error(exception)
             raise exception
 
-    async def send_message_stream(self, projectId: str, transformationId: str, content: str):
+    async def sendMessageStream(self, projectId: str, transformationId: str, content: str):
         """
         Persist a user message, stream the agent response, and persist the assistant artifact.
         """
@@ -206,7 +244,7 @@ class TransformationService:
             userMessageId = userResponse.data[0].get("message_id") if userResponse.data else None
 
             metadata = await self._get_metadata(projectId=projectId)
-            saver = get_saver(projectId=projectId, transformationId=transformationId)
+            saver = getSaver(projectId=projectId, transformationId=transformationId)
             structuredResponse = None
 
             async for event in self.agent.astream(
@@ -231,7 +269,7 @@ class TransformationService:
                     "python_code": None,
                 }).execute()
                 messageId = assistantResponse.data[0].get("message_id") if assistantResponse.data else None
-                yield self._sse("done", {"message_id": messageId, "content": fallback, "artifact": None})
+                yield self._sse("done", self._buildMessagePayload(transformationId, messageId))
                 return
 
             artifact = {
@@ -247,14 +285,7 @@ class TransformationService:
                 "python_code": structuredResponse.pythonCode,
             }).execute()
             messageId = assistantResponse.data[0].get("message_id") if assistantResponse.data else None
-            yield self._sse(
-                "done",
-                {
-                    "message_id": messageId,
-                    "content": structuredResponse.userFacingResponse,
-                    "artifact": {"type": "mermaid", "code": structuredResponse.mermaidCode},
-                },
-            )
+            yield self._sse("done", self._buildMessagePayload(transformationId, messageId))
         except Exception as e:
             logger.error(f"Transformation stream failed after user message {userMessageId}: {e}")
             fallback = "I could not generate a transformation because the request failed. Please try again."
@@ -270,9 +301,9 @@ class TransformationService:
             except Exception:
                 messageId = None
             yield self._sse("token", {"delta": ""})
-            yield self._sse("done", {"message_id": messageId, "content": fallback, "artifact": None})
+            yield self._sse("done", self._buildMessagePayload(transformationId, messageId))
 
-    async def approve_message(
+    async def approveMessage(
         self,
         projectId: str,
         transformationId: str,
@@ -287,7 +318,7 @@ class TransformationService:
             artifact = message.get("artifact")
             if not pythonCode or not artifact:
                 raise ValueError("Only assistant messages with transformation artifacts can be approved.")
-            previewRows, parquetBytes = self.executor.execute_and_preview(
+            previewRows, parquetBytes = self.executor.executeAndPreview(
                 projectId=projectId,
                 pythonCode=pythonCode,
                 tableName=newTransformedTableName,
@@ -310,7 +341,7 @@ class TransformationService:
             logger.error(exception)
             raise exception
 
-    async def apply_transformation(
+    async def applyTransformation(
         self,
         projectId: str,
         transformationId: str,
