@@ -264,17 +264,17 @@ class TransformationSummary(BaseModel):
     updatedAt: datetime
 
 class TransformationAgentResponse(BaseModel):
-    pythonCode: str = Field(
-        ...,
-        description="Fully executable, self-contained Python pandas code utilizing fetch_data() to create a final_df variable."
+    pythonCode: str | None = Field(
+        None,
+        description="Fully executable, self-contained Python pandas code utilizing fetch_data() to create a final_df variable. Use None if the user's message is a greeting, a general question, or does not specify a transformation to implement."
     )
-    mermaidCode: str = Field(
-        ...,
-        description="Horizontal flowchart LR mermaid code with distinguishable node shapes and professional styling."
+    mermaidCode: str | None = Field(
+        None,
+        description="Horizontal flowchart LR mermaid code with distinguishable node shapes and professional styling. Use None if no transformation is implemented."
     )
     userFacingResponse: str = Field(
         ...,
-        description="A concise, non-technical sentence explaining the business impact of the transformation."
+        description="A concise sentence/paragraph explaining the business impact, answering the user's question, or replying to their message."
     )
 
 class TablePreviewResponse(BaseModel):

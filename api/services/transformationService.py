@@ -272,20 +272,34 @@ class TransformationService:
                 yield self._sse("done", self._buildMessagePayload(transformationId, messageId))
                 return
 
-            artifact = {
-                "type": "mermaid",
-                "code": structuredResponse.mermaidCode,
-                "is_approved": False,
-            }
+            # Check if there is a valid transformation to apply (i.e. not chitchat/greeting/gibberish)
+            if not structuredResponse.pythonCode or not structuredResponse.mermaidCode:
+                artifact = None
+                python_code = None
+            else:
+                artifact = {
+                    "type": "mermaid",
+                    "code": structuredResponse.mermaidCode,
+                    "is_approved": False,
+                }
+                python_code = structuredResponse.pythonCode
+
             assistantResponse = self.supabase.table("transformation_messages").insert({
                 "transformation_id": transformationId,
                 "role": "assistant",
                 "content": structuredResponse.userFacingResponse,
                 "artifact": artifact,
-                "python_code": structuredResponse.pythonCode,
+                "python_code": python_code,
             }).execute()
             messageId = assistantResponse.data[0].get("message_id") if assistantResponse.data else None
-            yield self._sse("done", self._buildMessagePayload(transformationId, messageId))
+            yield self._sse(
+                "done",
+                {
+                    "message_id": messageId,
+                    "content": structuredResponse.userFacingResponse,
+                    "artifact": {"type": "mermaid", "code": structuredResponse.mermaidCode} if artifact else None,
+                },
+            )
         except Exception as e:
             logger.error(f"Transformation stream failed after user message {userMessageId}: {e}")
             fallback = "I could not generate a transformation because the request failed. Please try again."

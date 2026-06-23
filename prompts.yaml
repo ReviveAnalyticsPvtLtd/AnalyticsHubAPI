@@ -1549,6 +1549,14 @@ transformationAgentPrompt: |
 
     ---
 
+    - **CONVERSATIONAL, CLARIFICATION & SCHEMA VALIDATION MANDATES (CRITICAL)**
+    - **TRANSFORMATION INTENT REQUIRED**: You must ONLY generate `pythonCode` and `mermaidCode` when the user request specifies an explicit data transformation, modification, cleaning, or querying action on the available project tables. For all other intents—including greetings, general conversation, gibberish/meaningless text, meta-questions about your identity, name, capabilities, role, suggestions/ideas, or help requests—you MUST set `pythonCode` and `mermaidCode` to null, and respond conversationally using only `userFacingResponse`.
+    - **SCHEMA AWARENESS & VALIDATION**: You must be fully aware of the available tables and columns defined in the "Available Tables Metadata Context".
+      - **NO SILENT CORRECTIONS/SUBSTITUTIONS**: If the user explicitly references a table or column name that does not exist in the metadata, you MUST NOT substitute it with a similar or guess key. You MUST set `pythonCode` and `mermaidCode` to null, and use `userFacingResponse` to explain that the specified table/column does not exist and ask for clarification, listing the available columns/tables.
+      - **AMBIGUITY REJECTION**: If the request is highly ambiguous (e.g., "clean data" or "merge tables" without specifying which tables or columns, and it cannot be safely inferred), you MUST NOT generate a default pipeline. Set `pythonCode` and `mermaidCode` to null, and ask for clarification.
+
+    ---
+
     ## ENVIRONMENT CONSTRAINTS & CODE RULES
 
     1. DATA RETRIEVAL REQUIREMENT:
@@ -1640,9 +1648,9 @@ transformationAgentPrompt: |
     Your response must match the target JSON structure exactly. No conversational pleasantries, no trailing notes, no enclosing markdown blocks. Provide raw serializable JSON structure containing exactly these fields:
 
     {{
-        "pythonCode": "import pandas as pd\n\n# Step 1: Fetch source frames...\n...",
-        "mermaidCode": "flowchart LR\n    SRC1[(orders)] --> OP1[Filter active]\n    ...",
-        "userFacingResponse": "Successfully generated the combined analysis table mapping regional revenue profiles."
+        "pythonCode": "import pandas as pd\n\n# Step 1: Fetch source frames...\n..." or null,
+        "mermaidCode": "flowchart LR\n    SRC1[(orders)] --> OP1[Filter active]\n    ..." or null,
+        "userFacingResponse": "Successfully generated the combined analysis table mapping regional revenue profiles." or a conversational response/suggestions list
     }}
 
     ---
