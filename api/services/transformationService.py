@@ -129,21 +129,29 @@ class TransformationService:
             raise ValueError("Transformation not found.")
         return response.data[0]
 
-    def _get_message(self, transformationId: str, messageId: str) -> dict:
-        """Fetch a transformation message."""
-        response = (
-            self.supabase.table("transformation_messages")
-            .select("*")
-            .eq("transformation_id", transformationId)
-            .eq("message_id", messageId)
-            .limit(1)
-            .execute()
-        )
-        if not response.data:
-            raise ValueError("Transformation message not found.")
-        return response.data[0]
+    def _get_messages_from_db(self, projectId: str, transformationId: str) -> list[dict]:
+        """Load messages list directly from transformations table."""
+        row = self._ensure_transformation(projectId=projectId, transformationId=transformationId)
+        messages = row.get("messages")
+        if messages is None:
+            return []
+        return messages
 
-    def _buildMessagePayload(self, transformationId: str, messageId: str | None) -> dict:
+    def _save_messages_to_db(self, projectId: str, transformationId: str, messages: list[dict]) -> None:
+        """Save messages list back to transformations table."""
+        self.supabase.table("transformations").update({
+            "messages": messages
+        }).eq("project_id", projectId).eq("transformation_id", transformationId).execute()
+
+    def _get_message(self, projectId: str, transformationId: str, messageId: str) -> dict:
+        """Fetch a transformation message from the messages array."""
+        messages = self._get_messages_from_db(projectId=projectId, transformationId=transformationId)
+        for msg in messages:
+            if msg.get("message_id") == messageId:
+                return msg
+        raise ValueError("Transformation message not found.")
+
+    def _buildMessagePayload(self, projectId: str, transformationId: str, messageId: str | None) -> dict:
         """
         Build the full persisted message payload (matching TransformationMessage)
         plus python_code, for emission in the SSE 'done' event.
@@ -159,7 +167,7 @@ class TransformationService:
                 "created_at": None,
             }
         try:
-            row = self._get_message(transformationId=transformationId, messageId=messageId)
+            row = self._get_message(projectId=projectId, transformationId=transformationId, messageId=messageId)
         except Exception as e:
             logger.error(f"Failed to load message {messageId} for SSE payload: {e}")
             return {
@@ -188,6 +196,7 @@ class TransformationService:
                 "project_id": projectId,
                 "transformation_name": name,
                 "description": description,
+                "messages": []
             }).execute()
             updateProjectModifiedAt(projectId)
             return response.data[0]
@@ -215,15 +224,18 @@ class TransformationService:
     async def getMessages(self, projectId: str, transformationId: str) -> list[dict]:
         """Fetch messages ordered by creation time."""
         try:
-            self._ensure_transformation(projectId=projectId, transformationId=transformationId)
-            response = (
-                self.supabase.table("transformation_messages")
-                .select("message_id, transformation_id, role, content, artifact, created_at")
-                .eq("transformation_id", transformationId)
-                .order("created_at", desc=False)
-                .execute()
-            )
-            return response.data or []
+            messages = self._get_messages_from_db(projectId=projectId, transformationId=transformationId)
+            result = []
+            for msg in messages:
+                result.append({
+                    "message_id": msg.get("message_id"),
+                    "transformation_id": msg.get("transformation_id"),
+                    "role": msg.get("role"),
+                    "content": msg.get("content"),
+                    "artifact": msg.get("artifact"),
+                    "created_at": msg.get("created_at"),
+                })
+            return result
         except Exception as e:
             exception = CustomException(e, statusCode=400, uiMessage=str(e))
             logger.error(exception)
@@ -233,15 +245,25 @@ class TransformationService:
         """
         Persist a user message, stream the agent response, and persist the assistant artifact.
         """
-        userMessageId = None
+        import uuid
+        from datetime import datetime, timezone
+        userMessageId = str(uuid.uuid4())
         try:
             self._ensure_transformation(projectId=projectId, transformationId=transformationId)
-            userResponse = self.supabase.table("transformation_messages").insert({
+            messages = self._get_messages_from_db(projectId=projectId, transformationId=transformationId)
+            user_msg = {
+                "message_id": userMessageId,
                 "transformation_id": transformationId,
                 "role": "user",
                 "content": content,
-            }).execute()
-            userMessageId = userResponse.data[0].get("message_id") if userResponse.data else None
+                "artifact": None,
+                "python_code": None,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "is_applied": False,
+                "new_transformed_table_name": None
+            }
+            messages.append(user_msg)
+            self._save_messages_to_db(projectId=projectId, transformationId=transformationId, messages=messages)
 
             metadata = await self._get_metadata(projectId=projectId)
             saver = getSaver(projectId=projectId, transformationId=transformationId)
@@ -259,20 +281,25 @@ class TransformationService:
                 elif event.get("type") == "done":
                     structuredResponse = event.get("structured")
 
+            assistantMessageId = str(uuid.uuid4())
             if not isinstance(structuredResponse, TransformationAgentResponse):
                 fallback = "I could not generate a structured transformation. Please refine the request."
-                assistantResponse = self.supabase.table("transformation_messages").insert({
+                assistant_msg = {
+                    "message_id": assistantMessageId,
                     "transformation_id": transformationId,
                     "role": "assistant",
                     "content": fallback,
                     "artifact": None,
                     "python_code": None,
-                }).execute()
-                messageId = assistantResponse.data[0].get("message_id") if assistantResponse.data else None
-                yield self._sse("done", self._buildMessagePayload(transformationId, messageId))
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "is_applied": False,
+                    "new_transformed_table_name": None
+                }
+                messages.append(assistant_msg)
+                self._save_messages_to_db(projectId=projectId, transformationId=transformationId, messages=messages)
+                yield self._sse("done", self._buildMessagePayload(projectId, transformationId, assistantMessageId))
                 return
 
-            # Check if there is a valid transformation to apply (i.e. not chitchat/greeting/gibberish)
             if not structuredResponse.pythonCode or not structuredResponse.mermaidCode:
                 artifact = None
                 python_code = None
@@ -284,31 +311,43 @@ class TransformationService:
                 }
                 python_code = structuredResponse.pythonCode
 
-            assistantResponse = self.supabase.table("transformation_messages").insert({
+            assistant_msg = {
+                "message_id": assistantMessageId,
                 "transformation_id": transformationId,
                 "role": "assistant",
                 "content": structuredResponse.userFacingResponse,
                 "artifact": artifact,
                 "python_code": python_code,
-            }).execute()
-            messageId = assistantResponse.data[0].get("message_id") if assistantResponse.data else None
-            yield self._sse("done", self._buildMessagePayload(transformationId, messageId))
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "is_applied": False,
+                "new_transformed_table_name": None
+            }
+            messages.append(assistant_msg)
+            self._save_messages_to_db(projectId=projectId, transformationId=transformationId, messages=messages)
+            yield self._sse("done", self._buildMessagePayload(projectId, transformationId, assistantMessageId))
         except Exception as e:
             logger.error(f"Transformation stream failed after user message {userMessageId}: {e}")
             fallback = "I could not generate a transformation because the request failed. Please try again."
+            assistantMessageId = str(uuid.uuid4())
             try:
-                assistantResponse = self.supabase.table("transformation_messages").insert({
+                messages = self._get_messages_from_db(projectId=projectId, transformationId=transformationId)
+                assistant_msg = {
+                    "message_id": assistantMessageId,
                     "transformation_id": transformationId,
                     "role": "assistant",
                     "content": fallback,
                     "artifact": None,
                     "python_code": None,
-                }).execute()
-                messageId = assistantResponse.data[0].get("message_id") if assistantResponse.data else None
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "is_applied": False,
+                    "new_transformed_table_name": None
+                }
+                messages.append(assistant_msg)
+                self._save_messages_to_db(projectId=projectId, transformationId=transformationId, messages=messages)
             except Exception:
-                messageId = None
+                assistantMessageId = None
             yield self._sse("token", {"delta": ""})
-            yield self._sse("done", self._buildMessagePayload(transformationId, messageId))
+            yield self._sse("done", self._buildMessagePayload(projectId, transformationId, assistantMessageId))
 
     async def approveMessage(
         self,
@@ -320,11 +359,20 @@ class TransformationService:
         """Execute an assistant message artifact and return a 10-row preview."""
         try:
             self._ensure_transformation(projectId=projectId, transformationId=transformationId)
-            message = self._get_message(transformationId=transformationId, messageId=messageId)
-            pythonCode = message.get("python_code")
-            artifact = message.get("artifact")
+            messages = self._get_messages_from_db(projectId=projectId, transformationId=transformationId)
+            target_msg = None
+            for msg in messages:
+                if msg.get("message_id") == messageId:
+                    target_msg = msg
+                    break
+            if not target_msg:
+                raise ValueError("Transformation message not found.")
+
+            pythonCode = target_msg.get("python_code")
+            artifact = target_msg.get("artifact")
             if not pythonCode or not artifact:
                 raise ValueError("Only assistant messages with transformation artifacts can be approved.")
+
             previewRows, parquetBytes = self.executor.executeAndPreview(
                 projectId=projectId,
                 pythonCode=pythonCode,
@@ -336,10 +384,9 @@ class TransformationService:
                 ex=900,
             )
             artifact["is_approved"] = True
-            self.supabase.table("transformation_messages").update({
-                "artifact": artifact,
-                "new_transformed_table_name": newTransformedTableName,
-            }).eq("message_id", messageId).execute()
+            target_msg["artifact"] = artifact
+            target_msg["new_transformed_table_name"] = newTransformedTableName
+            self._save_messages_to_db(projectId=projectId, transformationId=transformationId, messages=messages)
             return {"data": previewRows}
         except CustomException:
             raise
@@ -358,8 +405,16 @@ class TransformationService:
         """Persist an approved transformation output and update metadata."""
         try:
             self._ensure_transformation(projectId=projectId, transformationId=transformationId)
-            message = self._get_message(transformationId=transformationId, messageId=messageId)
-            artifact = message.get("artifact")
+            messages = self._get_messages_from_db(projectId=projectId, transformationId=transformationId)
+            target_msg = None
+            for msg in messages:
+                if msg.get("message_id") == messageId:
+                    target_msg = msg
+                    break
+            if not target_msg:
+                raise ValueError("Transformation message not found.")
+
+            artifact = target_msg.get("artifact")
             if not artifact:
                 raise ValueError("Only messages with transformation artifacts can be applied.")
 
@@ -382,12 +437,12 @@ class TransformationService:
             self.supabase.table("transformations").update({
                 "latest_approved_artifact": latestArtifact,
             }).eq("transformation_id", transformationId).execute()
+
             artifact["is_approved"] = True
-            self.supabase.table("transformation_messages").update({
-                "artifact": artifact,
-                "is_applied": True,
-                "new_transformed_table_name": newTransformedTableName,
-            }).eq("message_id", messageId).execute()
+            target_msg["artifact"] = artifact
+            target_msg["is_applied"] = True
+            target_msg["new_transformed_table_name"] = newTransformedTableName
+            self._save_messages_to_db(projectId=projectId, transformationId=transformationId, messages=messages)
             redisClient.delete(cacheKey)
             updateProjectModifiedAt(projectId)
             return {
@@ -400,6 +455,7 @@ class TransformationService:
             exception = CustomException(e, statusCode=400, uiMessage=str(e))
             logger.error(exception)
             raise exception
+
 
 
 transformationService = TransformationService()

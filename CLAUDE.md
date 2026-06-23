@@ -61,10 +61,10 @@ Single FastAPI app. Mounts routers under prefixes: `/auth`, `/projects`, `/loade
 
 ### Transformations feature (newest, see `e599429` and earlier)
 Conversational data transformation with SSE streaming:
-1. `POST /transformations` (no body) → creates a `transformations` row.
-2. `POST /transformations/{tid}/messages` streams agent output as SSE (`event: token`, `event: done`). Persistence: user + assistant rows in `transformation_messages`; assistant row carries `artifact` (Mermaid) and `python_code`.
-3. `POST /transformations/{tid}/messages/{mid}` → approve. Runs `transformationExecutor.executeAndPreview`, returns 10-row preview, and caches the parquet in Redis for 900s under key `{projectId}::transformation_preview::{transformationId}::{messageId}::{tableName}`.
-4. `POST /transformations/{tid}/messages/{mid}/apply` → persist as a project table. Uploads to `AnalyticsHub` storage at `{projectId}/{tableName}.parquet`, refreshes Redis cache, updates `latest_approved_artifact` (DB column), calls `updateProjectModifiedAt`.
+1. `POST /transformations` (no body) → creates a `transformations` row with an empty JSONB list of `messages`.
+2. `POST /transformations/{tid}/messages` streams agent output as SSE (`event: token`, `event: done`). Persistence: appends user + assistant message dicts (carrying `artifact` and `python_code`) to the `messages` array in the `transformations` row.
+3. `POST /transformations/{tid}/messages/{mid}` → approve. Runs `transformationExecutor.executeAndPreview`, returns 10-row preview, caches the parquet in Redis for 900s, and updates `artifact.is_approved` in the inline `messages` array.
+4. `POST /transformations/{tid}/messages/{mid}/apply` → persist as a project table. Uploads to `AnalyticsHub` storage, refreshes Redis cache, updates `latest_approved_artifact` in the transformation row, sets `is_applied = true` in the message dict in the inline `messages` array, and calls `updateProjectModifiedAt`.
 
 `transformationAgent` maintains per-thread chat history in-memory (lost on restart) keyed by `projectId::transformationId`. Uses Gemini with `with_structured_output(TransformationAgentResponse, method="json_mode")` (the installed LangChain lacks `langchain.agents.create_agent`).
 
