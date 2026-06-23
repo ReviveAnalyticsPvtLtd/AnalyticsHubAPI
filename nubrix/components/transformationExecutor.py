@@ -6,7 +6,7 @@ transformed tables.
 """
 
 __version__ = "1.0.0"
-__author__ = "Platform Engineering"
+__author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["TransformationExecutor"]
 
 

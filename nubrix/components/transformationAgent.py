@@ -6,7 +6,7 @@ transformation code, Mermaid flowcharts, and user-facing summaries.
 """
 
 __version__ = "1.0.0"
-__author__ = "Platform Engineering"
+__author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["TransformationAgent"]
 
 

@@ -292,14 +292,7 @@ class TransformationService:
                 "python_code": python_code,
             }).execute()
             messageId = assistantResponse.data[0].get("message_id") if assistantResponse.data else None
-            yield self._sse(
-                "done",
-                {
-                    "message_id": messageId,
-                    "content": structuredResponse.userFacingResponse,
-                    "artifact": {"type": "mermaid", "code": structuredResponse.mermaidCode} if artifact else None,
-                },
-            )
+            yield self._sse("done", self._buildMessagePayload(transformationId, messageId))
         except Exception as e:
             logger.error(f"Transformation stream failed after user message {userMessageId}: {e}")
             fallback = "I could not generate a transformation because the request failed. Please try again."
