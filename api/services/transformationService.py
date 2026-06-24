@@ -571,16 +571,20 @@ class TransformationService:
             elif not newTransformedTableName[0].isalpha():
                 newTransformedTableName = "table_" + newTransformedTableName
             
-            # Check if target message has a transformation artifact
-            hasArtifact = (targetMsg.get("role") == "assistant" and targetMsg.get("artifact") is not None)
+            # Find the most recent assistant message with a transformation artifact in the remaining history
+            activeCodeMsg = None
+            for m in reversed(truncatedMessages):
+                if m.get("role") == "assistant" and m.get("artifact") and m.get("python_code"):
+                    activeCodeMsg = m
+                    break
             
-            if hasArtifact:
+            if activeCodeMsg:
                 # Re-execute Python code and update the parquet file
-                pythonCode = targetMsg.get("python_code")
+                pythonCode = activeCodeMsg.get("python_code")
                 if not pythonCode:
                     raise ValueError("No python code found in message to rollback to.")
                     
-                logger.info(f"Rolling back: executing code for message {messageId}")
+                logger.info(f"Rolling back: executing code for active transformation message {activeCodeMsg.get('message_id')}")
                 _, parquetBytes = self.executor.executeAndPreview(
                     projectId=projectId,
                     pythonCode=pythonCode,
@@ -595,8 +599,8 @@ class TransformationService:
                 
                 # Update latest approved artifact
                 latestArtifact = {
-                    "mermaid_code": targetMsg.get("artifact", {}).get("code"),
-                    "message_id": messageId,
+                    "mermaid_code": activeCodeMsg.get("artifact", {}).get("code"),
+                    "message_id": activeCodeMsg.get("message_id"),
                     "table_name": newTransformedTableName,
                 }
                 self.supabase.table("transformations").update({
@@ -604,14 +608,14 @@ class TransformationService:
                 }).eq("transformation_id", transformationId).execute()
                 
                 # Set applied/approved status for target message and clear other ones
-                artifact = targetMsg.get("artifact") or {}
+                artifact = activeCodeMsg.get("artifact") or {}
                 artifact["is_approved"] = True
-                targetMsg["artifact"] = artifact
-                targetMsg["is_applied"] = True
-                targetMsg["new_transformed_table_name"] = newTransformedTableName
+                activeCodeMsg["artifact"] = artifact
+                activeCodeMsg["is_applied"] = True
+                activeCodeMsg["new_transformed_table_name"] = newTransformedTableName
             else:
                 # Rollback to a non-code message (like "hi"): remove the table from storage
-                logger.info(f"Rolling back to non-code message {messageId}. Deleting table '{newTransformedTableName}' if exists.")
+                logger.info(f"Rolling back to non-code state before any transformations. Deleting table '{newTransformedTableName}' if exists.")
                 try:
                     storagePath = f"{projectId}/{newTransformedTableName}.parquet"
                     self.supabase.storage.from_("AnalyticsHub").remove(storagePath)
@@ -625,20 +629,27 @@ class TransformationService:
             
             # Clear applied flags appropriately
             for msg in truncatedMessages:
-                if msg.get("message_id") != messageId and msg.get("role") == "assistant":
-                    msg["is_applied"] = False
-                elif msg.get("message_id") == messageId and not hasArtifact:
-                    msg["is_applied"] = False
+                if not activeCodeMsg or msg.get("message_id") != activeCodeMsg.get("message_id"):
+                    if msg.get("role") == "assistant":
+                        msg["is_applied"] = False
                     
             # Save truncated list to DB
             self._save_messages_to_db(projectId=projectId, transformationId=transformationId, messages=truncatedMessages)
             
-            # Clear Redis preview cache
+            # Clear Redis preview caches for the target message and all discarded messages
             try:
+                redisClient = self._redis_client()
                 cacheKey = self._preview_cache_key(projectId, transformationId, messageId, newTransformedTableName)
-                self._redis_client().delete(cacheKey)
-            except Exception:
-                pass
+                redisClient.delete(cacheKey)
+                
+                discardedMessages = messages[targetIdx + 1:]
+                for dmsg in discardedMessages:
+                    dmsgId = dmsg.get("message_id")
+                    if dmsgId:
+                        dcacheKey = self._preview_cache_key(projectId, transformationId, dmsgId, newTransformedTableName)
+                        redisClient.delete(dcacheKey)
+            except Exception as e:
+                logger.warning(f"Could not clear preview caches during rollback: {e}")
                 
             # Regenerate metadata.json
             try:
