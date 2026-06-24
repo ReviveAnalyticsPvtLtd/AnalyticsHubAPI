@@ -151,43 +151,58 @@ class TransformationService:
                 return msg
         raise ValueError("Transformation message not found.")
 
-    def _buildMessagePayload(self, projectId: str, transformationId: str, messageId: str | None) -> dict:
+    def _buildMessagePayload(
+        self,
+        projectId: str,
+        transformationId: str,
+        messageId: str | None,
+        userMessageId: str | None = None,
+    ) -> dict:
         """
         Build the full persisted message payload (matching TransformationMessage)
         plus python_code, for emission in the SSE 'done' event.
         """
-        if not messageId:
-            return {
-                "message_id": None,
-                "transformation_id": transformationId,
-                "role": "assistant",
-                "content": None,
-                "artifact": None,
-                "python_code": None,
-                "created_at": None,
-            }
-        try:
-            row = self._get_message(projectId=projectId, transformationId=transformationId, messageId=messageId)
-        except Exception as e:
-            logger.error(f"Failed to load message {messageId} for SSE payload: {e}")
-            return {
-                "message_id": messageId,
-                "transformation_id": transformationId,
-                "role": "assistant",
-                "content": None,
-                "artifact": None,
-                "python_code": None,
-                "created_at": None,
-            }
-        return {
-            "message_id": row.get("message_id"),
-            "transformation_id": row.get("transformation_id"),
-            "role": row.get("role"),
-            "content": row.get("content"),
-            "artifact": row.get("artifact"),
-            "python_code": row.get("python_code"),
-            "created_at": row.get("created_at"),
+        payload = {
+            "message_id": None,
+            "transformation_id": transformationId,
+            "role": "assistant",
+            "content": None,
+            "artifact": None,
+            "python_code": None,
+            "created_at": None,
+            "user_message": None,
         }
+        if messageId:
+            try:
+                row = self._get_message(projectId=projectId, transformationId=transformationId, messageId=messageId)
+                payload.update({
+                    "message_id": row.get("message_id"),
+                    "role": row.get("role"),
+                    "content": row.get("content"),
+                    "artifact": row.get("artifact"),
+                    "python_code": row.get("python_code"),
+                    "created_at": row.get("created_at"),
+                })
+            except Exception as e:
+                logger.error(f"Failed to load message {messageId} for SSE payload: {e}")
+                payload["message_id"] = messageId
+
+        if userMessageId:
+            try:
+                userRow = self._get_message(projectId=projectId, transformationId=transformationId, messageId=userMessageId)
+                payload["user_message"] = {
+                    "message_id": userRow.get("message_id"),
+                    "transformation_id": userRow.get("transformation_id"),
+                    "role": userRow.get("role"),
+                    "content": userRow.get("content"),
+                    "created_at": userRow.get("created_at"),
+                    "is_applied": userRow.get("is_applied", False),
+                    "new_transformed_table_name": userRow.get("new_transformed_table_name"),
+                }
+            except Exception as e:
+                logger.error(f"Failed to load user message {userMessageId} for SSE payload: {e}")
+
+        return payload
 
     async def createTransformation(self, projectId: str, name: str, description: str | None) -> dict:
         """Insert into transformations table and return the row."""
@@ -313,7 +328,7 @@ class TransformationService:
                 }
                 messages.append(assistant_msg)
                 self._save_messages_to_db(projectId=projectId, transformationId=transformationId, messages=messages)
-                yield self._sse("done", self._buildMessagePayload(projectId, transformationId, assistantMessageId))
+                yield self._sse("done", self._buildMessagePayload(projectId, transformationId, assistantMessageId, userMessageId))
                 return
 
             if not structuredResponse.pythonCode or not structuredResponse.mermaidCode:
@@ -340,7 +355,7 @@ class TransformationService:
             }
             messages.append(assistant_msg)
             self._save_messages_to_db(projectId=projectId, transformationId=transformationId, messages=messages)
-            yield self._sse("done", self._buildMessagePayload(projectId, transformationId, assistantMessageId))
+            yield self._sse("done", self._buildMessagePayload(projectId, transformationId, assistantMessageId, userMessageId))
         except Exception as e:
             logger.error(f"Transformation stream failed after user message {userMessageId}: {e}")
             fallback = "I could not generate a transformation because the request failed. Please try again."
@@ -363,7 +378,7 @@ class TransformationService:
             except Exception:
                 assistantMessageId = None
             yield self._sse("token", {"delta": ""})
-            yield self._sse("done", self._buildMessagePayload(projectId, transformationId, assistantMessageId))
+            yield self._sse("done", self._buildMessagePayload(projectId, transformationId, assistantMessageId, userMessageId))
 
     async def approveMessage(
         self,
