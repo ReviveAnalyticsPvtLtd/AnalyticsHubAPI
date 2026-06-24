@@ -540,7 +540,7 @@ class TransformationService:
             self._ensure_transformation(projectId=projectId, transformationId=transformationId)
             messages = self._get_messages_from_db(projectId=projectId, transformationId=transformationId)
             
-            # Find the assistant message in history
+            # Find the message in history
             targetIdx = -1
             for idx, msg in enumerate(messages):
                 if msg.get("message_id") == messageId:
@@ -550,8 +550,6 @@ class TransformationService:
                 raise ValueError("Transformation message not found.")
             
             targetMsg = messages[targetIdx]
-            if targetMsg.get("role") != "assistant" or not targetMsg.get("artifact"):
-                raise ValueError("Can only rollback to assistant messages with transformation artifacts.")
             
             # Truncate messages list up to (and including) this target message
             truncatedMessages = messages[:targetIdx + 1]
@@ -573,43 +571,63 @@ class TransformationService:
             elif not newTransformedTableName[0].isalpha():
                 newTransformedTableName = "table_" + newTransformedTableName
             
-            # Re-execute Python code and update the parquet file
-            pythonCode = targetMsg.get("python_code")
-            if not pythonCode:
-                raise ValueError("No python code found in message to rollback to.")
+            # Check if target message has a transformation artifact
+            hasArtifact = (targetMsg.get("role") == "assistant" and targetMsg.get("artifact") is not None)
+            
+            if hasArtifact:
+                # Re-execute Python code and update the parquet file
+                pythonCode = targetMsg.get("python_code")
+                if not pythonCode:
+                    raise ValueError("No python code found in message to rollback to.")
+                    
+                logger.info(f"Rolling back: executing code for message {messageId}")
+                _, parquetBytes = self.executor.executeAndPreview(
+                    projectId=projectId,
+                    pythonCode=pythonCode,
+                    tableName=newTransformedTableName,
+                )
                 
-            logger.info(f"Rolling back: executing code for message {messageId}")
-            _, parquetBytes = self.executor.executeAndPreview(
-                projectId=projectId,
-                pythonCode=pythonCode,
-                tableName=newTransformedTableName,
-            )
+                self.executor.apply(
+                    projectId=projectId,
+                    parquetBytes=parquetBytes,
+                    tableName=newTransformedTableName,
+                )
+                
+                # Update latest approved artifact
+                latestArtifact = {
+                    "mermaid_code": targetMsg.get("artifact", {}).get("code"),
+                    "message_id": messageId,
+                    "table_name": newTransformedTableName,
+                }
+                self.supabase.table("transformations").update({
+                    "latest_approved_artifact": latestArtifact,
+                }).eq("transformation_id", transformationId).execute()
+                
+                # Set applied/approved status for target message and clear other ones
+                artifact = targetMsg.get("artifact") or {}
+                artifact["is_approved"] = True
+                targetMsg["artifact"] = artifact
+                targetMsg["is_applied"] = True
+                targetMsg["new_transformed_table_name"] = newTransformedTableName
+            else:
+                # Rollback to a non-code message (like "hi"): remove the table from storage
+                logger.info(f"Rolling back to non-code message {messageId}. Deleting table '{newTransformedTableName}' if exists.")
+                try:
+                    storagePath = f"{projectId}/{newTransformedTableName}.parquet"
+                    self.supabase.storage.from_("AnalyticsHub").remove(storagePath)
+                except Exception as e:
+                    logger.warning(f"Could not remove rolled-back table file: {e}")
+                
+                # Clear latest approved artifact
+                self.supabase.table("transformations").update({
+                    "latest_approved_artifact": None,
+                }).eq("transformation_id", transformationId).execute()
             
-            self.executor.apply(
-                projectId=projectId,
-                parquetBytes=parquetBytes,
-                tableName=newTransformedTableName,
-            )
-            
-            # Update latest approved artifact
-            latestArtifact = {
-                "mermaid_code": targetMsg.get("artifact", {}).get("code"),
-                "message_id": messageId,
-                "table_name": newTransformedTableName,
-            }
-            self.supabase.table("transformations").update({
-                "latest_approved_artifact": latestArtifact,
-            }).eq("transformation_id", transformationId).execute()
-            
-            # Set applied/approved status for target message and clear other ones
-            artifact = targetMsg.get("artifact") or {}
-            artifact["is_approved"] = True
-            targetMsg["artifact"] = artifact
-            targetMsg["is_applied"] = True
-            targetMsg["new_transformed_table_name"] = newTransformedTableName
-            
+            # Clear applied flags appropriately
             for msg in truncatedMessages:
                 if msg.get("message_id") != messageId and msg.get("role") == "assistant":
+                    msg["is_applied"] = False
+                elif msg.get("message_id") == messageId and not hasArtifact:
                     msg["is_applied"] = False
                     
             # Save truncated list to DB
