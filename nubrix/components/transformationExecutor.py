@@ -102,12 +102,9 @@ class TransformationExecutor:
             "projectId": projectId,
             "serializer": serializer,
         }
-        executionLocals = {}
         with redirect_stdout(stdoutBuffer), redirect_stderr(stderrBuffer):
-            exec(pythonCode, executionGlobals, executionLocals)
-        finalDf = executionLocals.get("final_df")
-        if finalDf is None:
-            finalDf = executionGlobals.get("final_df")
+            exec(pythonCode, executionGlobals)
+        finalDf = executionGlobals.get("final_df")
         if finalDf is None:
             raise ValueError("Transformation code must create a final_df variable.")
         if not isinstance(finalDf, pd.DataFrame):
