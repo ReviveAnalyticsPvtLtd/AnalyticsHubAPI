@@ -422,7 +422,15 @@ class TransformationService:
             cacheKey = self._preview_cache_key(projectId, transformationId, messageId, newTransformedTableName)
             parquetBytes = redisClient.get(cacheKey)
             if parquetBytes is None:
-                raise ValueError("Preview cache expired. Approve the transformation again before applying.")
+                pythonCode = target_msg.get("python_code")
+                if not pythonCode:
+                    raise ValueError("No python code found in message to execute.")
+                logger.info(f"Preview cache expired for message {messageId}. Re-executing code on the fly.")
+                _, parquetBytes = self.executor.executeAndPreview(
+                    projectId=projectId,
+                    pythonCode=pythonCode,
+                    tableName=newTransformedTableName,
+                )
 
             self.executor.apply(
                 projectId=projectId,
@@ -443,7 +451,20 @@ class TransformationService:
             target_msg["is_applied"] = True
             target_msg["new_transformed_table_name"] = newTransformedTableName
             self._save_messages_to_db(projectId=projectId, transformationId=transformationId, messages=messages)
-            redisClient.delete(cacheKey)
+            
+            try:
+                redisClient.delete(cacheKey)
+            except Exception:
+                pass
+
+            # Regenerate project metadata so the new table is registered in metadata.json
+            try:
+                from api.services.managementService import managementService
+                logger.info(f"Regenerating metadata for project {projectId} after applying transformation...")
+                managementService.generateMetadata(projectId=projectId)
+            except Exception as e:
+                logger.warning(f"Failed to generate metadata for project {projectId} after apply: {e}")
+
             updateProjectModifiedAt(projectId)
             return {
                 "status": "200",
