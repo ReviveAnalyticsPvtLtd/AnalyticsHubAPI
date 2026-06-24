@@ -278,8 +278,8 @@ class TransformationService:
             messages.append(user_msg)
             self._save_messages_to_db(projectId=projectId, transformationId=transformationId, messages=messages)
 
-            # Synchronize SQL-backed chat history checkpointer prior to prompt generation
-            self.agent.syncHistoryFromDb(projectId=projectId, transformationId=transformationId, dbMessages=messages)
+            # Synchronize SQL-backed chat history checkpointer prior to prompt generation (excluding current unsaved turn)
+            self.agent.syncHistoryFromDb(projectId=projectId, transformationId=transformationId, dbMessages=messages[:-1])
 
             metadata = await self._get_metadata(projectId=projectId)
             saver = getSaver(projectId=projectId, transformationId=transformationId)
