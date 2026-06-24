@@ -33,8 +33,7 @@ class TransformationAgent:
     Agent wrapper for transformation generation.
 
     Maintains per-transformation chat context persisted in PostgreSQL/Supabase
-    via SQLChatMessageHistory and summarizes history older than 7 messages to
-    optimize context window usage.
+    and summarizes history older than 7 messages to optimize context window usage.
     """
     def __init__(self):
         """Initialize model configuration."""
@@ -49,10 +48,6 @@ class TransformationAgent:
         )
         self.structuredLlm = self.llm.with_structured_output(TransformationAgentResponse, method="json_mode")
 
-    def _threadKey(self, projectId: str, transformationId: str) -> str:
-        """Return the stable chat thread key."""
-        return f"{projectId}::{transformationId}"
-
     def _buildInput(self, userMessage: str, metadata: dict) -> str:
         """Build the prompt input from metadata and user request."""
         metadataJson = json.dumps(metadata, ensure_ascii=False, default=str)
@@ -62,41 +57,6 @@ class TransformationAgent:
             .replace("{user_request}", userMessage)
         )
 
-    def _getHistory(self, projectId: str, transformationId: str):
-        """Return the SQLChatMessageHistory instance for the chat thread."""
-        from langchain_community.chat_message_histories import SQLChatMessageHistory
-        key = self._threadKey(projectId, transformationId)
-        return SQLChatMessageHistory(
-            session_id=key,
-            connection=os.environ.get("DATABASE_URL")
-        )
-
-    def syncHistoryFromDb(self, projectId: str, transformationId: str, dbMessages: list[dict]) -> None:
-        """Synchronize SQL-backed chat history messages with the database messages list."""
-        try:
-            historyConn = self._getHistory(projectId, transformationId)
-            historyConn.clear()
-
-            langchainMessages = []
-            for msg in dbMessages:
-                role = msg.get("role")
-                if role == "user":
-                    langchainMessages.append(HumanMessage(content=msg.get("content") or ""))
-                elif role == "assistant":
-                    # Reconstruct assistant model output representation for chat context continuity
-                    assistantContent = json.dumps({
-                        "userFacingResponse": msg.get("content") or "",
-                        "pythonCode": msg.get("python_code"),
-                        "mermaidCode": msg.get("artifact", {}).get("code") if msg.get("artifact") else None
-                    }, ensure_ascii=False)
-                    langchainMessages.append(AIMessage(content=assistantContent))
-
-            if langchainMessages:
-                historyConn.add_messages(langchainMessages)
-            logger.info(f"Synchronized SQL checkpointer for transformation {transformationId} with {len(langchainMessages)} messages.")
-        except Exception as e:
-            logger.error(f"Failed to synchronize SQL checkpointer for transformation {transformationId}: {e}")
-
     async def _summarizeHistory(self, oldMessages: list[BaseMessage]) -> str:
         """Summarize old chat history messages using the LLM."""
         if not oldMessages:
@@ -104,7 +64,6 @@ class TransformationAgent:
         formatted = []
         for msg in oldMessages:
             role = "User" if isinstance(msg, HumanMessage) else "Assistant"
-            # Extract content cleanly in case it is structured JSON
             content = msg.content
             try:
                 parsed = json.loads(content)
@@ -128,10 +87,21 @@ class TransformationAgent:
             logger.warning(f"Failed to summarize history: {e}")
             return "Earlier conversation history summary could not be generated."
 
-    async def _getMessages(self, projectId: str, transformationId: str, formattedInput: str) -> list[BaseMessage]:
-        """Return the message list for the current request, summarizing if history is too long."""
-        historyConn = self._getHistory(projectId, transformationId)
-        history = historyConn.messages
+    async def _getMessages(self, chatHistory: list[dict], formattedInput: str) -> list[BaseMessage]:
+        """Convert database chat history to LangChain messages, summarizing if history is too long."""
+        history = []
+        for msg in chatHistory:
+            role = msg.get("role")
+            if role == "user":
+                history.append(HumanMessage(content=msg.get("content") or ""))
+            elif role == "assistant":
+                # Reconstruct assistant model output representation for chat context continuity
+                assistantContent = json.dumps({
+                    "userFacingResponse": msg.get("content") or "",
+                    "pythonCode": msg.get("python_code"),
+                    "mermaidCode": msg.get("artifact", {}).get("code") if msg.get("artifact") else None
+                }, ensure_ascii=False)
+                history.append(AIMessage(content=assistantContent))
 
         # Summarize older history if message count exceeds 7
         if len(history) > 7:
@@ -145,27 +115,13 @@ class TransformationAgent:
 
         return [*history, HumanMessage(content=formattedInput)]
 
-    def _appendHistory(
-        self,
-        projectId: str,
-        transformationId: str,
-        userMessage: str,
-        response: TransformationAgentResponse,
-    ) -> None:
-        """Append a completed exchange to the SQL chat history."""
-        historyConn = self._getHistory(projectId, transformationId)
-        assistantContent = json.dumps(response.model_dump(), ensure_ascii=False)
-        historyConn.add_messages([
-            HumanMessage(content=userMessage),
-            AIMessage(content=assistantContent),
-        ])
-
     async def invoke(
         self,
         projectId: str,
         transformationId: str,
         userMessage: str,
         metadata: dict,
+        chatHistory: list[dict],
         saver=None,
     ) -> TransformationAgentResponse:
         """
@@ -174,17 +130,10 @@ class TransformationAgent:
         try:
             formattedInput = self._buildInput(userMessage=userMessage, metadata=metadata)
             messages = await self._getMessages(
-                projectId=projectId,
-                transformationId=transformationId,
+                chatHistory=chatHistory,
                 formattedInput=formattedInput,
             )
             response = await self.structuredLlm.ainvoke(messages)
-            self._appendHistory(
-                projectId=projectId,
-                transformationId=transformationId,
-                userMessage=userMessage,
-                response=response,
-            )
             return response
         except Exception as e:
             exception = CustomException(e)
@@ -197,6 +146,7 @@ class TransformationAgent:
         transformationId: str,
         userMessage: str,
         metadata: dict,
+        chatHistory: list[dict],
         saver=None,
     ):
         """
@@ -209,6 +159,7 @@ class TransformationAgent:
             transformationId=transformationId,
             userMessage=userMessage,
             metadata=metadata,
+            chatHistory=chatHistory,
             saver=saver,
         )
         summaryTokens = response.userFacingResponse.split(" ")

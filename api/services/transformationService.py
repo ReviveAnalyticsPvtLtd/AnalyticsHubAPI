@@ -278,9 +278,6 @@ class TransformationService:
             messages.append(user_msg)
             self._save_messages_to_db(projectId=projectId, transformationId=transformationId, messages=messages)
 
-            # Synchronize SQL-backed chat history checkpointer prior to prompt generation (excluding current unsaved turn)
-            self.agent.syncHistoryFromDb(projectId=projectId, transformationId=transformationId, dbMessages=messages[:-1])
-
             metadata = await self._get_metadata(projectId=projectId)
             saver = getSaver(projectId=projectId, transformationId=transformationId)
             structuredResponse = None
@@ -290,6 +287,7 @@ class TransformationService:
                 transformationId=transformationId,
                 userMessage=content,
                 metadata=metadata,
+                chatHistory=messages[:-1],
                 saver=saver,
             ):
                 if event.get("type") == "status":
@@ -657,12 +655,6 @@ class TransformationService:
                 managementService.generateMetadata(projectId=projectId)
             except Exception as e:
                 logger.warning(f"Failed to generate metadata after rollback: {e}")
-                
-            # Synchronize SQL checkpointer history with the new truncated messages state
-            try:
-                self.agent.syncHistoryFromDb(projectId, transformationId, truncatedMessages)
-            except Exception as e:
-                logger.warning(f"Failed to sync SQL checkpointer history: {e}")
                 
             updateProjectModifiedAt(projectId)
             
