@@ -77,6 +77,19 @@ class TransformationService:
         """Return the Redis preview cache key."""
         return f"{projectId}::transformation_preview::{transformationId}::{messageId}::{tableName}"
 
+    def _sanitizeTableName(self, name: str) -> str:
+        """Sanitize a string into a valid table name."""
+        import re
+        name = re.sub(r"[^\w-]", "_", name)
+        name = re.sub(r"_+", "_", name)
+        name = re.sub(r"-+", "-", name)
+        name = name.strip("_-")
+        if not name:
+            return "table"
+        if not name[0].isalpha():
+            return "table_" + name
+        return name
+
     async def _get_metadata(self, projectId: str) -> dict:
         """Fetch project metadata with a short Redis cache."""
         cacheKey = f"{projectId}::metadata.json"
@@ -372,21 +385,12 @@ class TransformationService:
         newTransformedTableName: str,
     ) -> dict:
         """Execute an assistant message artifact and return a 10-row preview."""
-        import re
         try:
             row = self._ensure_transformation(projectId=projectId, transformationId=transformationId)
             transformationName = row.get("transformation_name")
             if transformationName:
                 newTransformedTableName = transformationName
-
-            newTransformedTableName = re.sub(r"[^\w-]", "_", newTransformedTableName)
-            newTransformedTableName = re.sub(r"_+", "_", newTransformedTableName)
-            newTransformedTableName = re.sub(r"-+", "-", newTransformedTableName)
-            newTransformedTableName = newTransformedTableName.strip("_-")
-            if not newTransformedTableName:
-                newTransformedTableName = "table"
-            elif not newTransformedTableName[0].isalpha():
-                newTransformedTableName = "table_" + newTransformedTableName
+            newTransformedTableName = self._sanitizeTableName(newTransformedTableName)
 
             messages = row.get("messages") or []
             target_msg = None
@@ -432,21 +436,12 @@ class TransformationService:
         newTransformedTableName: str,
     ) -> dict:
         """Persist an approved transformation output and update metadata."""
-        import re
         try:
             row = self._ensure_transformation(projectId=projectId, transformationId=transformationId)
             transformationName = row.get("transformation_name")
             if transformationName:
                 newTransformedTableName = transformationName
-
-            newTransformedTableName = re.sub(r"[^\w-]", "_", newTransformedTableName)
-            newTransformedTableName = re.sub(r"_+", "_", newTransformedTableName)
-            newTransformedTableName = re.sub(r"-+", "-", newTransformedTableName)
-            newTransformedTableName = newTransformedTableName.strip("_-")
-            if not newTransformedTableName:
-                newTransformedTableName = "table"
-            elif not newTransformedTableName[0].isalpha():
-                newTransformedTableName = "table_" + newTransformedTableName
+            newTransformedTableName = self._sanitizeTableName(newTransformedTableName)
 
             messages = row.get("messages") or []
             target_msg = None
@@ -554,17 +549,8 @@ class TransformationService:
             truncatedMessages = messages[:targetIdx]
             
             # Determine table name from transformation workspace name
-            import re
             transformationName = row.get("transformation_name")
-            newTransformedTableName = transformationName if transformationName else "table"
-            newTransformedTableName = re.sub(r"[^\w-]", "_", newTransformedTableName)
-            newTransformedTableName = re.sub(r"_+", "_", newTransformedTableName)
-            newTransformedTableName = re.sub(r"-+", "-", newTransformedTableName)
-            newTransformedTableName = newTransformedTableName.strip("_-")
-            if not newTransformedTableName:
-                newTransformedTableName = "table"
-            elif not newTransformedTableName[0].isalpha():
-                newTransformedTableName = "table_" + newTransformedTableName
+            newTransformedTableName = self._sanitizeTableName(transformationName if transformationName else "table")
             
             # Time-travel: find the last approved checkpoint in truncated history
             # Use artifact.is_approved (persists across applies) instead of is_applied (gets cleared)

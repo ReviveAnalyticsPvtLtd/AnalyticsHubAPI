@@ -47,6 +47,7 @@ class TransformationAgent:
             max_tokens=self.config.getint("TRANSFORMATIONAGENT", "maxTokens", fallback=8192),
         )
         self.structuredLlm = self.llm.with_structured_output(TransformationAgentResponse, method="json_mode")
+        self._summaryCache: dict[str, str] = {}
 
     def _buildInput(self, userMessage: str, metadata: dict) -> str:
         """Build the prompt input from metadata and user request."""
@@ -57,10 +58,13 @@ class TransformationAgent:
             .replace("{user_request}", userMessage)
         )
 
-    async def _summarizeHistory(self, oldMessages: list[BaseMessage]) -> str:
-        """Summarize old chat history messages using the LLM."""
+    async def _summarizeHistory(self, oldMessages: list[BaseMessage], cacheKey: str) -> str:
+        """Summarize old chat history messages using the LLM, with in-memory caching."""
         if not oldMessages:
             return ""
+        if cacheKey in self._summaryCache:
+            logger.info("Using cached history summary.")
+            return self._summaryCache[cacheKey]
         formatted = []
         for msg in oldMessages:
             role = "User" if isinstance(msg, HumanMessage) else "Assistant"
@@ -82,7 +86,9 @@ class TransformationAgent:
         )
         try:
             summaryResponse = await self.llm.ainvoke(prompt)
-            return summaryResponse.content
+            summary = summaryResponse.content
+            self._summaryCache[cacheKey] = summary
+            return summary
         except Exception as e:
             logger.warning(f"Failed to summarize history: {e}")
             return "Earlier conversation history summary could not be generated."
@@ -107,7 +113,9 @@ class TransformationAgent:
         if len(history) > 7:
             oldHistory = history[:-7]
             recentHistory = history[-7:]
-            summaryText = await self._summarizeHistory(oldHistory)
+            oldChatHistory = chatHistory[:-7]
+            cacheKey = ":".join(m.get("message_id", "") for m in oldChatHistory)
+            summaryText = await self._summarizeHistory(oldHistory, cacheKey)
             summaryMessage = SystemMessage(
                 content=f"Summary of earlier conversation history:\n{summaryText}"
             )
