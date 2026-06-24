@@ -13,7 +13,7 @@ from nubrix.components.queryRephraser import QueryRephaser
 from nubrix.components.codeGenerator import CodeGenerator
 from nubrix.components.codeDebugger import CodeDebugger
 from langgraph.graph import StateGraph, START, END
-from utils.codeExecutor import REPLManager
+from utils.sandboxClient import sandbox_client
 from typing_extensions import TypedDict
 from utils.logger import logger
 import json
@@ -36,14 +36,14 @@ class ReportingToolWorkflow:
     """
     def __init__(self):
         """
-        Initializes the ReportingToolWorkflow with its own chain instances and replManager
-        to ensure thread-safe parallel execution without shared state.
+        Initializes the ReportingToolWorkflow with its own chain instances.
+        Code execution is routed through sandbox_client which handles
+        sandbox vs local routing and circuit breaker fallback.
         """
         logger.info("Initializing multi-agentic reporting workflow.")
         self.queryRephraseChain = QueryRephaser().getQueryRephraserChain()
         self.codeGeneratorChain = CodeGenerator().getCodeGeneratorChain()
         self.codeDebuggerChain = CodeDebugger().getCodeDebuggerChain()
-        self.replManager = REPLManager(timeoutSeconds=7)
 
     def _rephraseQuery(self, state: State):
         """
@@ -84,6 +84,7 @@ class ReportingToolWorkflow:
     def _runInPythonSandbox(self, state: State):
         """
         Executes the generated code in a Python sandbox environment and captures the output.
+        Routes to the sandbox service when CODE_EXECUTION_BACKEND=sandbox, otherwise local.
 
         Args:
             state (State): The current workflow state.
@@ -95,7 +96,7 @@ class ReportingToolWorkflow:
             code = "\n".join(state["generatedCode"].split("```")[-2].split("\n")[1:])
         else:
             code = state["generatedCode"].split("</think>")[-1]
-        response = self.replManager.run(code)
+        response = sandbox_client.run(code, project_id=state["projectId"], mode="reporting_chart")
         return {
             "codeOutput": response
         }

@@ -9,10 +9,10 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["dashboardService"] 
 
 
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
+from utils.sandboxClient import sandbox_client
 from api.commons import updateProjectModifiedAt
 from utils.exceptionHandler import CustomException
-from utils.codeExecutor import replManager
 from sqlalchemy import create_engine
 from urllib.request import urlopen
 from utils.logger import logger
@@ -73,34 +73,31 @@ class DashboardService:
         return "```python\n" + code.strip() + "\n```"
 
     @staticmethod
-    def _applyFilterToAWidget(widget: dict, filters: list, codeExecutor: callable) -> dict:
+    def _prepareWidgetCode(widget: dict, filters: list) -> tuple[dict, str]:
         """
-        Apply filters to a widget's generated code and update its data accordingly.
-
-        Args:
-            widget (dict): The widget dictionary containing generated code and metadata.
-            filters (list): List of filters to apply.
-            codeExecutor (callable): Function to execute the code and retrieve results.
-
-        Returns:
-            dict: The updated widget dictionary with filtered data.
+        Apply AST filter transformation to a widget's code without executing it.
+        Returns the widget copy and the transformed code string.
         """
         widget = widget.copy()
         code = widget.get("generatedCode")
-        if "```" in code: code = DashboardService._removeCodeFences(code)
-        else: pass
+        if "```" in code:
+            code = DashboardService._removeCodeFences(code)
         tree = ast.parse(code)
         transformer = _FetchDataFilterTransformer(filters)
         tree = transformer.visit(tree)
         ast.fix_missing_locations(tree)
         code = ast.unparse(tree)
         code = DashboardService._addCodeFences(code)
-        result = codeExecutor.run(code)
         widget["generatedCode"] = code
+        return widget, code
+
+    @staticmethod
+    def _applyResultToWidget(widget: dict, result: str) -> dict:
+        """Apply execution result to a widget, handling parse failures gracefully."""
         try:
             resultDict = json.loads(result)
             widget.update(resultDict)
-        except:
+        except Exception:
             widgetChartType = widget.get("chartType")
             if widgetChartType == "card":
                 widget["data"] = None
@@ -110,6 +107,43 @@ class DashboardService:
                 for dataset in datasets:
                     dataset["data"] = list()
         return widget
+
+    @staticmethod
+    def _applyFilterToAWidget(widget: dict, filters: list, codeExecutor: callable) -> dict:
+        """
+        Apply filters to a widget's generated code and update its data accordingly.
+        Used as fallback for local ProcessPoolExecutor path.
+
+        Args:
+            widget (dict): The widget dictionary containing generated code and metadata.
+            filters (list): List of filters to apply.
+            codeExecutor (callable): Function to execute the code and retrieve results.
+
+        Returns:
+            dict: The updated widget dictionary with filtered data.
+        """
+        widget, code = DashboardService._prepareWidgetCode(widget, filters)
+        result = codeExecutor.run(code)
+        return DashboardService._applyResultToWidget(widget, result)
+
+    @staticmethod
+    def _applyFiltersToWidgetsBatch(widgets: list, filters: list, projectId: str) -> list:
+        """
+        Apply filters to multiple widgets using the sandbox batch execution endpoint.
+        Falls back to local ProcessPoolExecutor if sandbox is unavailable.
+        """
+        prepared = []
+        for widget in widgets:
+            w, code = DashboardService._prepareWidgetCode(widget, filters)
+            prepared.append((w, code))
+
+        executions = [{"code": code, "timeout_seconds": 7} for _, code in prepared]
+        results = sandbox_client.run_batch(executions, project_id=projectId, mode="dashboard_filter")
+
+        return [
+            DashboardService._applyResultToWidget(w, result)
+            for (w, _), result in zip(prepared, results)
+        ]
     
     @staticmethod
     def _getDataTypes(projectId: str, tableName: str) -> list[dict]:   
@@ -276,16 +310,10 @@ class DashboardService:
                 pass
             elif (details.filters) and (not details.refresh):
                 widgets = pageInfo.get("widgets")
-                numWidgets = len(widgets)
-                with ProcessPoolExecutor(max_workers = 4) as executor:
-                    results = executor.map(self._applyFilterToAWidget, widgets, [details.filters] * numWidgets, [replManager] * numWidgets)
-                pageInfo["widgets"] = [x for x in results]
+                pageInfo["widgets"] = self._applyFiltersToWidgetsBatch(widgets, details.filters, details.projectId)
             elif (not details.filters) and (details.refresh):
                 widgets = pageInfo.get("widgets")
-                numWidgets = len(widgets)
-                with ProcessPoolExecutor(max_workers = 4) as executor:
-                    results = executor.map(self._applyFilterToAWidget, widgets, [details.filters] * numWidgets, [replManager] * numWidgets)
-                pageInfo["widgets"] = [x for x in results] 
+                pageInfo["widgets"] = self._applyFiltersToWidgetsBatch(widgets, details.filters, details.projectId)
                 prevPageInfo = dashboardConfig.get(details.page)
                 for prevWidget in prevPageInfo.get("widgets"):
                     for newWidget in pageInfo.get("widgets"):

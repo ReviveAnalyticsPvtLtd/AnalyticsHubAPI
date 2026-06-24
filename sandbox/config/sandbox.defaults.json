@@ -1,0 +1,13 @@
+{
+  "maxConcurrentExecutions": 8,
+  "maxQueueDepth": 20,
+  "defaultTimeoutSeconds": 7,
+  "maxTimeoutSeconds": 30,
+  "maxCodeBytes": 51200,
+  "maxOutputBytes": 262144,
+  "maxBatchSize": 12,
+  "syncWaitTimeoutBufferSeconds": 5,
+  "memoryLimitMB": 512,
+  "cpuLimitBufferSeconds": 2,
+  "replayWindowSeconds": 60
+}
