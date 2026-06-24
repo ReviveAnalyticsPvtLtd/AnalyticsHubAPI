@@ -123,16 +123,26 @@ class AuthenticationService:
             return 0
         expiryStr = subscription.get("current_period_end")
         daysLeft = calculateSubscriptionDaysLeft(expiryStr)
+        currentStatus = (subscription.get("status") or "").lower()
+
+        effectiveStatus = currentStatus
+        if daysLeft <= 0 and currentStatus in ("trial", "active", "none"):
+            effectiveStatus = "expired"
+
         billingState = mergeSubscriptionLifecycleSnapshot(
             subscription.get("billing_state"),
             currentPeriodEnd=expiryStr,
-            status=subscription.get("status"),
+            status=effectiveStatus,
         )
+        updatePayload = {"billing_state": billingState}
+        if effectiveStatus != currentStatus:
+            updatePayload["status"] = effectiveStatus
+
         try:
-            self.client.table("subscriptions").update({
-                "billing_state": billingState
-            }).eq("user_id", userId).execute()
+            self.client.table("subscriptions").update(updatePayload).eq("user_id", userId).execute()
             subscription["billing_state"] = billingState
+            if effectiveStatus != currentStatus:
+                subscription["status"] = effectiveStatus
         except Exception as e:
             logger.warning(f"Failed to update lifecycle snapshot for user {userId}: {e}")
         return daysLeft
@@ -379,14 +389,14 @@ class AuthenticationService:
                 "expiresAt": str(expiresAt)
             }).execute()
             subscription = self._ensureSubscriptionSnapshot(dataSlice["userId"])
+            subscriptionDaysLeft = self._refreshLifecycleSnapshot(
+                dataSlice["userId"],
+                subscription,
+            )
             subscriptionStatus = self._mapSubscriptionStatus(subscription.get("status") if subscription else None)
             subscriptionPlan = self._mapBillingModeToPlan(
                 subscription.get("billing_mode") if subscription else None,
                 subscription.get("status") if subscription else None,
-            )
-            subscriptionDaysLeft = self._refreshLifecycleSnapshot(
-                dataSlice["userId"],
-                subscription,
             )
             profileImage = dataSlice.get("profileImage") or DEFAULT_PROFILE_IMAGE
             return {
@@ -457,14 +467,14 @@ class AuthenticationService:
             if response.data:
                 userData = response.data[0]
                 subscription = self._ensureSubscriptionSnapshot(userData["userId"])
+                subscriptionDaysLeft = self._refreshLifecycleSnapshot(
+                    userData["userId"],
+                    subscription,
+                )
                 subscriptionStatus = self._mapSubscriptionStatus(subscription.get("status") if subscription else None)
                 subscriptionPlan = self._mapBillingModeToPlan(
                     subscription.get("billing_mode") if subscription else None,
                     subscription.get("status") if subscription else None,
-                )
-                subscriptionDaysLeft = self._refreshLifecycleSnapshot(
-                    userData["userId"],
-                    subscription,
                 )
                 if profileImage and (not userData.get("profileImage") or userData.get("profileImage") == DEFAULT_PROFILE_IMAGE):
                     self.client.table("Users") \
@@ -495,12 +505,12 @@ class AuthenticationService:
                     "workspaceName": "Default"
                 }).execute()
                 subscription = self._ensureSubscriptionSnapshot(userId)
+                subscriptionDaysLeft = self._refreshLifecycleSnapshot(userId, subscription)
                 subscriptionStatus = self._mapSubscriptionStatus(subscription.get("status"))
                 subscriptionPlan = self._mapBillingModeToPlan(
                     subscription.get("billing_mode"),
                     subscription.get("status"),
                 )
-                subscriptionDaysLeft = self._refreshLifecycleSnapshot(userId, subscription)
 
             sessionStartTime = datetime.datetime.now(datetime.timezone.utc)
             expiresAt = sessionStartTime + datetime.timedelta(hours=24)

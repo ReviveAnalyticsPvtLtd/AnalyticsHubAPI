@@ -17,6 +17,7 @@ from nubrix.triggers.tasks.annualRenewalTask import AnnualRenewalTask
 from nubrix.triggers.tasks.reconciliationTask import ReconciliationTask
 from nubrix.triggers.tasks.billingMetricsTask import BillingMetricsTask
 from nubrix.triggers.tasks.entitlementBoundaryTask import EntitlementBoundaryTask
+from nubrix.triggers.tasks.subscriptionExpiryTask import SubscriptionExpiryTask
 from nubrix.triggers.tasks.billingTask import DailyBillingTask
 from celery.schedules import crontab
 from celery import Celery
@@ -82,6 +83,7 @@ class CeleryWrapper:
             - Every 30 min: Pending entitlement removals at period boundary.
             - Every 15 min: Reconciliation sweep.
             - Every 30 min: Billing metrics and alert evaluation.
+            - 01:00 UTC daily: Subscription expiry sweep (trial/cancelled).
         """
         @self._app.task(name=f"{self.name}.generateForecasts")
         def sendForecasts():
@@ -115,6 +117,10 @@ class CeleryWrapper:
         def runBillingMetrics():
             return BillingMetricsTask().execute()
 
+        @self._app.task(name=f"{self.name}.subscriptionExpiry")
+        def runSubscriptionExpiry():
+            return SubscriptionExpiryTask().execute()
+
         self._app.conf.beat_schedule = {
             "daily-billing-midnight": {
                 "task": f"{self.name}.dailyBilling",
@@ -143,6 +149,10 @@ class CeleryWrapper:
             "billing-metrics-every-30min": {
                 "task": f"{self.name}.billingMetrics",
                 "schedule": crontab(minute="*/30"),
+            },
+            "subscription-expiry-daily": {
+                "task": f"{self.name}.subscriptionExpiry",
+                "schedule": crontab(minute=0, hour=1),
             },
         }
         self._app.conf.timezone = "UTC"

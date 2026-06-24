@@ -29,9 +29,10 @@ os.makedirs("logs", exist_ok=True)
 
 logger.remove()
 
+_logtail_host = os.environ.get("LOGTAIL_HOST")
 logtailHandler = LogtailHandler(
     source_token = os.environ.get("LOGTAIL_TOKEN"),
-    host = os.environ.get("LOGTAIL_HOST")
+    **( {"host": _logtail_host} if _logtail_host else {} )
 )
 logger.add(
     logtailHandler,

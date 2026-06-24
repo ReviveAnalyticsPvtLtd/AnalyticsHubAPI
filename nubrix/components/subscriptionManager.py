@@ -74,7 +74,7 @@ def recalculateSubscriptionDays() -> None:
     Raises:
         Exception: For any errors during the recalculation process.
     """
-    edgeFunctionUrl = os.environ["FREE_TRIAL_EXPIRY_WARNING_EMAIL_URL"]
+    edgeFunctionUrl = os.environ.get("FREE_TRIAL_EXPIRY_WARNING_EMAIL_URL", "")
     client = _getSupabaseClient()
     now = datetime.now(timezone.utc)
     subscriptions = client.table("subscriptions") \
@@ -103,51 +103,56 @@ def recalculateSubscriptionDays() -> None:
         logger.error(f"Failed subscription integrity precheck in recalculateSubscriptionDays: {e}")
 
     for subscription in subscriptions:
-        billingMode = subscription.get("billing_mode", "monthly_recurring")
-        currentStatus = (subscription.get("status") or "").lower()
+        try:
+            billingMode = subscription.get("billing_mode", "monthly_recurring")
+            currentStatus = (subscription.get("status") or "").lower()
 
-        expiryRaw = subscription["current_period_end"]
-        expiry = parseUtc(expiryRaw)
-        if not expiry:
-            continue
-
-        deltaDays = (expiry.date() - now.date()).days
-        snapshotStatus = "expired" if deltaDays < 0 else currentStatus
-        billingState = mergeSubscriptionLifecycleSnapshot(
-            subscription.get("billing_state"),
-            currentPeriodEnd=expiryRaw,
-            status=snapshotStatus,
-            now=now,
-        )
-        updatePayload = {"billing_state": billingState}
-
-        if deltaDays < 0:
-            if currentStatus not in ("expired", "suspended"):
-                updatePayload["status"] = "expired"
-
-        client.table("subscriptions").update(updatePayload).eq("id", subscription["id"]).execute()
-
-        if billingMode == "annual_prepaid" and currentStatus != "cancelled":
-            continue
-
-        if deltaDays == 2:
-            userData = client.table("Users") \
-                .select("email, fullName") \
-                .eq("userId", subscription["user_id"]) \
-                .limit(1) \
-                .execute().data
-            if not userData:
-                logger.warning(
-                    f"Skipping warning email: user not found for subscription "
-                    f"{subscription['id']}"
-                )
+            expiryRaw = subscription["current_period_end"]
+            expiry = parseUtc(expiryRaw)
+            if not expiry:
                 continue
-            user = userData[0]
-            _sendSubscriptionWarningMail(
-                edgeFunctionUrl = edgeFunctionUrl,
-                email = user["email"],
-                fullName = user["fullName"],
-                subscriptionStart = subscription.get("current_period_start")
+
+            deltaDays = (expiry.date() - now.date()).days
+            snapshotStatus = "expired" if deltaDays < 0 else currentStatus
+            billingState = mergeSubscriptionLifecycleSnapshot(
+                subscription.get("billing_state"),
+                currentPeriodEnd=expiryRaw,
+                status=snapshotStatus,
+                now=now,
+            )
+            updatePayload = {"billing_state": billingState}
+
+            if deltaDays < 0:
+                if currentStatus not in ("expired", "suspended"):
+                    updatePayload["status"] = "expired"
+
+            client.table("subscriptions").update(updatePayload).eq("id", subscription["id"]).execute()
+
+            if billingMode == "annual_prepaid" and currentStatus != "cancelled":
+                continue
+
+            if deltaDays == 2 and edgeFunctionUrl:
+                userData = client.table("Users") \
+                    .select("email, fullName") \
+                    .eq("userId", subscription["user_id"]) \
+                    .limit(1) \
+                    .execute().data
+                if not userData:
+                    logger.warning(
+                        f"Skipping warning email: user not found for subscription "
+                        f"{subscription['id']}"
+                    )
+                    continue
+                user = userData[0]
+                _sendSubscriptionWarningMail(
+                    edgeFunctionUrl = edgeFunctionUrl,
+                    email = user["email"],
+                    fullName = user["fullName"],
+                    subscriptionStart = subscription.get("current_period_start")
+                )
+        except Exception as e:
+            logger.error(
+                f"Failed to process subscription {subscription.get('id', '?')}: {e}"
             )
 
     logger.info("Subscription days recalculation completed (UTC)")

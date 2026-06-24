@@ -979,16 +979,26 @@ class ManagementService:
     def _refreshLifecycleSnapshot(self, userId: str, subscription: dict) -> int:
         expiryStr = subscription.get("current_period_end")
         daysLeft = calculateSubscriptionDaysLeft(expiryStr)
+        currentStatus = (subscription.get("status") or "").lower()
+
+        effectiveStatus = currentStatus
+        if daysLeft <= 0 and currentStatus in ("trial", "active", "none"):
+            effectiveStatus = "expired"
+
         billingState = mergeSubscriptionLifecycleSnapshot(
             subscription.get("billing_state"),
             currentPeriodEnd=expiryStr,
-            status=subscription.get("status"),
+            status=effectiveStatus,
         )
+        updatePayload = {"billing_state": billingState}
+        if effectiveStatus != currentStatus:
+            updatePayload["status"] = effectiveStatus
+
         try:
-            self.client.table("subscriptions").update({
-                "billing_state": billingState
-            }).eq("user_id", userId).execute()
+            self.client.table("subscriptions").update(updatePayload).eq("user_id", userId).execute()
             subscription["billing_state"] = billingState
+            if effectiveStatus != currentStatus:
+                subscription["status"] = effectiveStatus
         except Exception as e:
             logger.warning(f"Failed to update lifecycle snapshot for user {userId}: {e}")
         return daysLeft
