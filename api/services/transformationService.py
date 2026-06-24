@@ -562,10 +562,11 @@ class TransformationService:
             elif not newTransformedTableName[0].isalpha():
                 newTransformedTableName = "table_" + newTransformedTableName
             
-            # Time-travel: find the last APPROVED (is_applied=True) checkpoint in truncated history
+            # Time-travel: find the last approved checkpoint in truncated history
+            # Use artifact.is_approved (persists across applies) instead of is_applied (gets cleared)
             lastApprovedMsg = None
             for m in reversed(truncatedMessages):
-                if m.get("role") == "assistant" and m.get("is_applied") and m.get("python_code"):
+                if m.get("role") == "assistant" and m.get("artifact", {}).get("is_approved") and m.get("python_code"):
                     lastApprovedMsg = m
                     break
             
