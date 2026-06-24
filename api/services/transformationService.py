@@ -532,12 +532,12 @@ class TransformationService:
         transformationId: str,
         messageId: str,
     ) -> list[dict]:
-        """Rollback workspace state and message history to a specific message ID."""
+        """Rollback workspace state and message history to a specific message ID (time-travel)."""
         try:
-            self._ensure_transformation(projectId=projectId, transformationId=transformationId)
+            row = self._ensure_transformation(projectId=projectId, transformationId=transformationId)
             messages = self._get_messages_from_db(projectId=projectId, transformationId=transformationId)
             
-            # Find the message in history
+            # Find the target message in history
             targetIdx = -1
             for idx, msg in enumerate(messages):
                 if msg.get("message_id") == messageId:
@@ -546,19 +546,13 @@ class TransformationService:
             if targetIdx == -1:
                 raise ValueError("Transformation message not found.")
             
-            targetMsg = messages[targetIdx]
-            
-            # Truncate messages list up to (and including) this target message
+            # Truncate messages list up to (and including) the target message
             truncatedMessages = messages[:targetIdx + 1]
             
-            # Determine table name based on transformation workspace name
-            row = self._ensure_transformation(projectId=projectId, transformationId=transformationId)
-            transformationName = row.get("transformation_name")
-            newTransformedTableName = "table"
-            if transformationName:
-                newTransformedTableName = transformationName
-            
+            # Determine table name from transformation workspace name
             import re
+            transformationName = row.get("transformation_name")
+            newTransformedTableName = transformationName if transformationName else "table"
             newTransformedTableName = re.sub(r"[^\w-]", "_", newTransformedTableName)
             newTransformedTableName = re.sub(r"_+", "_", newTransformedTableName)
             newTransformedTableName = re.sub(r"-+", "-", newTransformedTableName)
@@ -568,67 +562,64 @@ class TransformationService:
             elif not newTransformedTableName[0].isalpha():
                 newTransformedTableName = "table_" + newTransformedTableName
             
-            # Find the most recent assistant message with a transformation artifact in the remaining history
-            activeCodeMsg = None
+            # Time-travel: find the last APPROVED (is_applied=True) checkpoint in truncated history
+            lastApprovedMsg = None
             for m in reversed(truncatedMessages):
-                if m.get("role") == "assistant" and m.get("artifact") and m.get("python_code"):
-                    activeCodeMsg = m
+                if m.get("role") == "assistant" and m.get("is_applied") and m.get("python_code"):
+                    lastApprovedMsg = m
                     break
             
-            if activeCodeMsg:
-                # Re-execute Python code and update the parquet file
-                pythonCode = activeCodeMsg.get("python_code")
-                if not pythonCode:
-                    raise ValueError("No python code found in message to rollback to.")
-                    
-                logger.info(f"Rolling back: executing code for active transformation message {activeCodeMsg.get('message_id')}")
+            if lastApprovedMsg:
+                # Re-execute the last approved transformation to restore storage state
+                pythonCode = lastApprovedMsg.get("python_code")
+                logger.info(f"Rolling back storage to last approved checkpoint: message {lastApprovedMsg.get('message_id')}")
                 _, parquetBytes = self.executor.executeAndPreview(
                     projectId=projectId,
                     pythonCode=pythonCode,
                     tableName=newTransformedTableName,
                 )
-                
                 self.executor.apply(
                     projectId=projectId,
                     parquetBytes=parquetBytes,
                     tableName=newTransformedTableName,
                 )
                 
-                # Update latest approved artifact
+                # Update latest approved artifact to point to this checkpoint
                 latestArtifact = {
-                    "mermaid_code": activeCodeMsg.get("artifact", {}).get("code"),
-                    "message_id": activeCodeMsg.get("message_id"),
+                    "mermaid_code": lastApprovedMsg.get("artifact", {}).get("code"),
+                    "message_id": lastApprovedMsg.get("message_id"),
                     "table_name": newTransformedTableName,
                 }
                 self.supabase.table("transformations").update({
                     "latest_approved_artifact": latestArtifact,
                 }).eq("transformation_id", transformationId).execute()
                 
-                # Set applied/approved status for target message and clear other ones
-                artifact = activeCodeMsg.get("artifact") or {}
-                artifact["is_approved"] = True
-                activeCodeMsg["artifact"] = artifact
-                activeCodeMsg["is_applied"] = True
-                activeCodeMsg["new_transformed_table_name"] = newTransformedTableName
+                # Keep the approved checkpoint's status intact
+                lastApprovedMsg["is_applied"] = True
+                lastApprovedMsg["new_transformed_table_name"] = newTransformedTableName
+                approvedArtifact = lastApprovedMsg.get("artifact") or {}
+                approvedArtifact["is_approved"] = True
+                lastApprovedMsg["artifact"] = approvedArtifact
             else:
-                # Rollback to a non-code message (like "hi"): remove the table from storage
-                logger.info(f"Rolling back to non-code state before any transformations. Deleting table '{newTransformedTableName}' if exists.")
+                # No approved transformation exists in truncated history — clean slate
+                logger.info(f"Rolling back to pre-transformation state. Deleting table '{newTransformedTableName}' if exists.")
                 try:
                     storagePath = f"{projectId}/{newTransformedTableName}.parquet"
                     self.supabase.storage.from_("AnalyticsHub").remove(storagePath)
                 except Exception as e:
                     logger.warning(f"Could not remove rolled-back table file: {e}")
                 
-                # Clear latest approved artifact
                 self.supabase.table("transformations").update({
                     "latest_approved_artifact": None,
                 }).eq("transformation_id", transformationId).execute()
             
-            # Clear applied flags appropriately
+            # Clear is_applied on all messages EXCEPT the approved checkpoint
+            # Leave unapproved artifacts intact so the user can re-approve them
             for msg in truncatedMessages:
-                if not activeCodeMsg or msg.get("message_id") != activeCodeMsg.get("message_id"):
-                    if msg.get("role") == "assistant":
-                        msg["is_applied"] = False
+                if msg.get("role") == "assistant":
+                    if lastApprovedMsg and msg.get("message_id") == lastApprovedMsg.get("message_id"):
+                        continue
+                    msg["is_applied"] = False
                     
             # Save truncated list to DB
             self._save_messages_to_db(projectId=projectId, transformationId=transformationId, messages=truncatedMessages)
