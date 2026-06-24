@@ -122,7 +122,6 @@ class TransformationAgent:
         userMessage: str,
         metadata: dict,
         chatHistory: list[dict],
-        saver=None,
     ) -> TransformationAgentResponse:
         """
         Generate a structured transformation response.
@@ -147,7 +146,6 @@ class TransformationAgent:
         userMessage: str,
         metadata: dict,
         chatHistory: list[dict],
-        saver=None,
     ):
         """
         Stream transformation output events, yielding progress status updates.
@@ -160,7 +158,6 @@ class TransformationAgent:
             userMessage=userMessage,
             metadata=metadata,
             chatHistory=chatHistory,
-            saver=saver,
         )
         summaryTokens = response.userFacingResponse.split(" ")
         for token in summaryTokens:

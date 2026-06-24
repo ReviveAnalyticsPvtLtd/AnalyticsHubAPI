@@ -6,16 +6,14 @@ Service layer for AI-powered data transformations.
 
 __version__ = "1.0.0"
 __author__ = "Platform Engineering"
-__all__ = ["TransformationService", "transformationService", "getSaver"]
+__all__ = ["TransformationService", "transformationService"]
 
 
-from langgraph.checkpoint.memory import InMemorySaver
 from utils.exceptionHandler import CustomException
 from api.models import TransformationAgentResponse
 from api.commons import client, updateProjectModifiedAt
 from utils.logger import logger
 from typing import TYPE_CHECKING
-import threading
 import redis
 import httpx
 import orjson
@@ -27,19 +25,7 @@ if TYPE_CHECKING:
     from nubrix.components.transformationExecutor import TransformationExecutor
 
 
-_saver_registry: dict[str, InMemorySaver] = {}
-_registry_lock = threading.Lock()
 
-
-def getSaver(projectId: str, transformationId: str) -> InMemorySaver:
-    """
-    Return the in-memory saver for a project/transformation pair.
-    """
-    key = f"{projectId}::{transformationId}"
-    with _registry_lock:
-        if key not in _saver_registry:
-            _saver_registry[key] = InMemorySaver()
-        return _saver_registry[key]
 
 
 class TransformationService:
@@ -294,7 +280,6 @@ class TransformationService:
             self._save_messages_to_db(projectId=projectId, transformationId=transformationId, messages=messages)
 
             metadata = await self._get_metadata(projectId=projectId)
-            saver = getSaver(projectId=projectId, transformationId=transformationId)
             structuredResponse = None
 
             async for event in self.agent.astream(
@@ -303,7 +288,6 @@ class TransformationService:
                 userMessage=content,
                 metadata=metadata,
                 chatHistory=messages[:-1],
-                saver=saver,
             ):
                 if event.get("type") == "status":
                     yield self._sse("status", {"message": event.get("message", "")})
