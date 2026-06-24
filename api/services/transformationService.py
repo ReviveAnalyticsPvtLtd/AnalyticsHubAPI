@@ -531,7 +531,7 @@ class TransformationService:
         projectId: str,
         transformationId: str,
         messageId: str,
-    ) -> list[dict]:
+    ) -> dict:
         """Rollback workspace state and message history to a specific message ID (time-travel)."""
         try:
             row = self._ensure_transformation(projectId=projectId, transformationId=transformationId)
@@ -546,8 +546,12 @@ class TransformationService:
             if targetIdx == -1:
                 raise ValueError("Transformation message not found.")
             
-            # Truncate messages list up to (and including) the target message
-            truncatedMessages = messages[:targetIdx + 1]
+            # Save the target user message content for the text field
+            targetMsg = messages[targetIdx]
+            restoredInput = targetMsg.get("content") or ""
+            
+            # Truncate messages BEFORE the target (exclusive — target goes to the text field)
+            truncatedMessages = messages[:targetIdx]
             
             # Determine table name from transformation workspace name
             import re
@@ -631,7 +635,7 @@ class TransformationService:
                 cacheKey = self._preview_cache_key(projectId, transformationId, messageId, newTransformedTableName)
                 redisClient.delete(cacheKey)
                 
-                discardedMessages = messages[targetIdx + 1:]
+                discardedMessages = messages[targetIdx:]
                 for dmsg in discardedMessages:
                     dmsgId = dmsg.get("message_id")
                     if dmsgId:
@@ -649,8 +653,12 @@ class TransformationService:
                 
             updateProjectModifiedAt(projectId)
             
-            # Return updated list in the getMessages format
-            return await self.getMessages(projectId=projectId, transformationId=transformationId)
+            # Return updated messages + the restored input for the text field
+            updatedMessages = await self.getMessages(projectId=projectId, transformationId=transformationId)
+            return {
+                "messages": updatedMessages,
+                "restoredInput": restoredInput,
+            }
         except CustomException:
             raise
         except Exception as e:
