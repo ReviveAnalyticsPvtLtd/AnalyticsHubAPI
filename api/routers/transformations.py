@@ -12,6 +12,7 @@ from api.models import (
     ApproveMessageRequest,
     CreateTransformationRequest,
     SendMessageRequest,
+    RollbackRequest,
 )
 from api.services.transformationService import transformationService
 from utils.exceptionHandler import CustomException, raiseHttpException
@@ -137,6 +138,27 @@ async def applyTransformationMessage(
             transformationId=transformation_id,
             messageId=message_id,
             newTransformedTableName=request.newTransformedTableName,
+        )
+        return ORJSONResponse(status_code=200, content=result)
+    except CustomException as e:
+        raiseHttpException(e)
+
+
+@router.post("/{transformation_id}/rollback")
+async def rollbackTransformation(
+    transformation_id: str,
+    projectId: str,
+    request: RollbackRequest,
+    token=Depends(verifyToken),
+):
+    """
+    Rollback workspace state and messages to a specific message ID.
+    """
+    try:
+        result = await transformationService.rollbackTransformation(
+            projectId=projectId,
+            transformationId=transformation_id,
+            messageId=request.messageId,
         )
         return ORJSONResponse(status_code=200, content=result)
     except CustomException as e:

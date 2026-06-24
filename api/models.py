@@ -242,6 +242,9 @@ class ApproveMessageRequest(BaseModel):
 class ApplyTransformationRequest(BaseModel):
     newTransformedTableName: str
 
+class RollbackRequest(BaseModel):
+    messageId: str
+
 class TransformationArtifact(BaseModel):
     type: Literal["mermaid"] = "mermaid"
     code: str

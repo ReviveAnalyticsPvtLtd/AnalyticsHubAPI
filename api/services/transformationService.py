@@ -243,6 +243,9 @@ class TransformationService:
                     "role": msg.get("role"),
                     "content": msg.get("content"),
                     "artifact": msg.get("artifact"),
+                    "python_code": msg.get("python_code"),
+                    "is_applied": msg.get("is_applied", False),
+                    "new_transformed_table_name": msg.get("new_transformed_table_name"),
                     "created_at": msg.get("created_at"),
                 })
             return result
@@ -275,6 +278,9 @@ class TransformationService:
             messages.append(user_msg)
             self._save_messages_to_db(projectId=projectId, transformationId=transformationId, messages=messages)
 
+            # Synchronize SQL-backed chat history checkpointer prior to prompt generation
+            self.agent.syncHistoryFromDb(projectId=projectId, transformationId=transformationId, dbMessages=messages)
+
             metadata = await self._get_metadata(projectId=projectId)
             saver = getSaver(projectId=projectId, transformationId=transformationId)
             structuredResponse = None
@@ -286,7 +292,9 @@ class TransformationService:
                 metadata=metadata,
                 saver=saver,
             ):
-                if event.get("type") == "token":
+                if event.get("type") == "status":
+                    yield self._sse("status", {"message": event.get("message", "")})
+                elif event.get("type") == "token":
                     yield self._sse("token", {"delta": event.get("delta", "")})
                 elif event.get("type") == "done":
                     structuredResponse = event.get("structured")
@@ -407,7 +415,7 @@ class TransformationService:
                 value=parquetBytes,
                 ex=900,
             )
-            artifact["is_approved"] = True
+            artifact["is_approved"] = False
             target_msg["artifact"] = artifact
             target_msg["new_transformed_table_name"] = newTransformedTableName
             self._save_messages_to_db(projectId=projectId, transformationId=transformationId, messages=messages)
@@ -488,6 +496,12 @@ class TransformationService:
             target_msg["artifact"] = artifact
             target_msg["is_applied"] = True
             target_msg["new_transformed_table_name"] = newTransformedTableName
+            
+            # Reset is_applied on all other assistant messages in this transformation workspace
+            for msg in messages:
+                if msg.get("message_id") != messageId and msg.get("role") == "assistant":
+                    msg["is_applied"] = False
+            
             self._save_messages_to_db(projectId=projectId, transformationId=transformationId, messages=messages)
             
             try:
@@ -508,6 +522,123 @@ class TransformationService:
                 "status": "200",
                 "message": f"Transformation applied successfully. Table '{newTransformedTableName}' is now available.",
             }
+        except CustomException:
+            raise
+        except Exception as e:
+            exception = CustomException(e, statusCode=400, uiMessage=str(e))
+            logger.error(exception)
+            raise exception
+
+    async def rollbackTransformation(
+        self,
+        projectId: str,
+        transformationId: str,
+        messageId: str,
+    ) -> list[dict]:
+        """Rollback workspace state and message history to a specific message ID."""
+        try:
+            self._ensure_transformation(projectId=projectId, transformationId=transformationId)
+            messages = self._get_messages_from_db(projectId=projectId, transformationId=transformationId)
+            
+            # Find the assistant message in history
+            targetIdx = -1
+            for idx, msg in enumerate(messages):
+                if msg.get("message_id") == messageId:
+                    targetIdx = idx
+                    break
+            if targetIdx == -1:
+                raise ValueError("Transformation message not found.")
+            
+            targetMsg = messages[targetIdx]
+            if targetMsg.get("role") != "assistant" or not targetMsg.get("artifact"):
+                raise ValueError("Can only rollback to assistant messages with transformation artifacts.")
+            
+            # Truncate messages list up to (and including) this target message
+            truncatedMessages = messages[:targetIdx + 1]
+            
+            # Determine table name based on transformation workspace name
+            row = self._ensure_transformation(projectId=projectId, transformationId=transformationId)
+            transformationName = row.get("transformation_name")
+            newTransformedTableName = "table"
+            if transformationName:
+                newTransformedTableName = transformationName
+            
+            import re
+            newTransformedTableName = re.sub(r"[^\w-]", "_", newTransformedTableName)
+            newTransformedTableName = re.sub(r"_+", "_", newTransformedTableName)
+            newTransformedTableName = re.sub(r"-+", "-", newTransformedTableName)
+            newTransformedTableName = newTransformedTableName.strip("_-")
+            if not newTransformedTableName:
+                newTransformedTableName = "table"
+            elif not newTransformedTableName[0].isalpha():
+                newTransformedTableName = "table_" + newTransformedTableName
+            
+            # Re-execute Python code and update the parquet file
+            pythonCode = targetMsg.get("python_code")
+            if not pythonCode:
+                raise ValueError("No python code found in message to rollback to.")
+                
+            logger.info(f"Rolling back: executing code for message {messageId}")
+            _, parquetBytes = self.executor.executeAndPreview(
+                projectId=projectId,
+                pythonCode=pythonCode,
+                tableName=newTransformedTableName,
+            )
+            
+            self.executor.apply(
+                projectId=projectId,
+                parquetBytes=parquetBytes,
+                tableName=newTransformedTableName,
+            )
+            
+            # Update latest approved artifact
+            latestArtifact = {
+                "mermaid_code": targetMsg.get("artifact", {}).get("code"),
+                "message_id": messageId,
+                "table_name": newTransformedTableName,
+            }
+            self.supabase.table("transformations").update({
+                "latest_approved_artifact": latestArtifact,
+            }).eq("transformation_id", transformationId).execute()
+            
+            # Set applied/approved status for target message and clear other ones
+            artifact = targetMsg.get("artifact") or {}
+            artifact["is_approved"] = True
+            targetMsg["artifact"] = artifact
+            targetMsg["is_applied"] = True
+            targetMsg["new_transformed_table_name"] = newTransformedTableName
+            
+            for msg in truncatedMessages:
+                if msg.get("message_id") != messageId and msg.get("role") == "assistant":
+                    msg["is_applied"] = False
+                    
+            # Save truncated list to DB
+            self._save_messages_to_db(projectId=projectId, transformationId=transformationId, messages=truncatedMessages)
+            
+            # Clear Redis preview cache
+            try:
+                cacheKey = self._preview_cache_key(projectId, transformationId, messageId, newTransformedTableName)
+                self._redis_client().delete(cacheKey)
+            except Exception:
+                pass
+                
+            # Regenerate metadata.json
+            try:
+                from api.services.managementService import managementService
+                managementService.generateMetadata(projectId=projectId)
+            except Exception as e:
+                logger.warning(f"Failed to generate metadata after rollback: {e}")
+                
+            # Synchronize SQL checkpointer history with the new truncated messages state
+            try:
+                self.agent.syncHistoryFromDb(projectId, transformationId, truncatedMessages)
+            except Exception as e:
+                logger.warning(f"Failed to sync SQL checkpointer history: {e}")
+                
+            updateProjectModifiedAt(projectId)
+            
+            # Return updated list in the getMessages format
+            return await self.getMessages(projectId=projectId, transformationId=transformationId)
         except CustomException:
             raise
         except Exception as e:
