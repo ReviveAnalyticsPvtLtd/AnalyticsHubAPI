@@ -191,7 +191,17 @@ class TransformationService:
 
     async def createTransformation(self, projectId: str, name: str, description: str | None) -> dict:
         """Insert into transformations table and return the row."""
+        import re
         try:
+            if not name or not name.strip():
+                raise ValueError("Transformation name cannot be empty.")
+            if len(name) > 63:
+                raise ValueError("Transformation name cannot exceed 63 characters.")
+            if not any(c.isalpha() for c in name):
+                raise ValueError("Transformation name must contain at least one letter.")
+            if not re.match(r"^[A-Za-z0-9\s._-]+$", name):
+                raise ValueError("Transformation name can only contain letters, numbers, spaces, periods, hyphens, and underscores.")
+
             response = self.supabase.table("transformations").insert({
                 "project_id": projectId,
                 "transformation_name": name,
@@ -201,7 +211,7 @@ class TransformationService:
             updateProjectModifiedAt(projectId)
             return response.data[0]
         except Exception as e:
-            exception = CustomException(e, statusCode=400, uiMessage="Failed to create transformation.")
+            exception = CustomException(e, statusCode=400, uiMessage=str(e))
             logger.error(exception)
             raise exception
 
