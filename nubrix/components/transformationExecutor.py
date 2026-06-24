@@ -46,8 +46,8 @@ class TransformationExecutor:
 
     def _validate_table_name(self, tableName: str) -> str:
         """Validate the output table name."""
-        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", tableName):
-            raise ValueError("Table name must start with a letter and contain only letters, numbers, and underscores.")
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", tableName):
+            raise ValueError("Table name must start with a letter and contain only letters, numbers, hyphens, and underscores.")
         return tableName
 
     def _restricted_import(self, name, globals=None, locals=None, fromlist=(), level=0):

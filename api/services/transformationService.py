@@ -357,6 +357,16 @@ class TransformationService:
         newTransformedTableName: str,
     ) -> dict:
         """Execute an assistant message artifact and return a 10-row preview."""
+        import re
+        newTransformedTableName = re.sub(r"[^\w-]", "_", newTransformedTableName)
+        newTransformedTableName = re.sub(r"_+", "_", newTransformedTableName)
+        newTransformedTableName = re.sub(r"-+", "-", newTransformedTableName)
+        newTransformedTableName = newTransformedTableName.strip("_-")
+        if not newTransformedTableName:
+            newTransformedTableName = "table"
+        elif not newTransformedTableName[0].isalpha():
+            newTransformedTableName = "table_" + newTransformedTableName
+
         try:
             self._ensure_transformation(projectId=projectId, transformationId=transformationId)
             messages = self._get_messages_from_db(projectId=projectId, transformationId=transformationId)
@@ -403,6 +413,16 @@ class TransformationService:
         newTransformedTableName: str,
     ) -> dict:
         """Persist an approved transformation output and update metadata."""
+        import re
+        newTransformedTableName = re.sub(r"[^\w-]", "_", newTransformedTableName)
+        newTransformedTableName = re.sub(r"_+", "_", newTransformedTableName)
+        newTransformedTableName = re.sub(r"-+", "-", newTransformedTableName)
+        newTransformedTableName = newTransformedTableName.strip("_-")
+        if not newTransformedTableName:
+            newTransformedTableName = "table"
+        elif not newTransformedTableName[0].isalpha():
+            newTransformedTableName = "table_" + newTransformedTableName
+
         try:
             self._ensure_transformation(projectId=projectId, transformationId=transformationId)
             messages = self._get_messages_from_db(projectId=projectId, transformationId=transformationId)
