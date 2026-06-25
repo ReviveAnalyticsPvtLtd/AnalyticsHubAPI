@@ -6,7 +6,7 @@ This module contains the QueryRephaser agent for rephrasing user queries.
 
 __version__ = "1.0.0"
 __author__ = "Rauhan Ahmed Siddiqui"
-__all__ = ["QueryRephaser"]        
+__all__ = ["QueryRephaser", "ParallelQueryRephaser"]        
 
 
 from langchain_core.output_parsers import JsonOutputParser
@@ -45,16 +45,35 @@ class QueryRephaser:
 
     def _removeThinkTokens(self, inputStr: AIMessage) -> AIMessage:
         """
-        Removes '<think>' and '</think>' tokens from the AIMessage content.
+        Removes '<think>' and '</think>' tokens (and the text inside them) from the AIMessage content,
+        and extracts the raw JSON string.
         
         Args:
             inputStr (AIMessage): The input AIMessage from the language model.
             
         Returns:
-            AIMessage: A new AIMessage with the think tokens removed.
+            AIMessage: A new AIMessage containing only the clean JSON string.
         """
-        inputStr = inputStr.content.replace("<think>", "").replace("</think>", "")
-        return AIMessage(inputStr)
+        import re
+        content = inputStr.content
+        # Remove <think>...</think> completely (non-greedy)
+        content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
+        
+        # Extract JSON block
+        json_match = re.search(r'```json\s*(.*?)\s*```', content, re.DOTALL)
+        if json_match:
+            content = json_match.group(1).strip()
+        else:
+            json_match_any = re.search(r'```\s*(.*?)\s*```', content, re.DOTALL)
+            if json_match_any:
+                content = json_match_any.group(1).strip()
+            else:
+                start = content.find('{')
+                end = content.rfind('}')
+                if start != -1 and end != -1 and end > start:
+                    content = content[start:end+1].strip()
+        
+        return AIMessage(content.strip())
 
     def getQueryRephraserChain(self):
         """
@@ -85,6 +104,38 @@ class QueryRephaser:
             )
             queryRephraseChain = queryRephrasePrompt | llm | RunnableLambda(self._removeThinkTokens) | queryRephraseParser
             logger.info("Query rephraser chain constructed successfully.")
+            return queryRephraseChain
+        except Exception as e:
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception
+
+
+class ParallelQueryRephraseOutput(BaseModel):
+    """Pydantic model for the structured output of the parallel query rephraser agent. No doubt field."""
+    rephrasedOutput: str = Field(
+        description="A clear and concise rephrased version of the user's query with step-by-step transformation instructions. This must ALWAYS be provided."
+    )
+
+class ParallelQueryRephaser(QueryRephaser):
+    """An agent that rephrases queries for parallel generation without issuing doubts."""
+    def getQueryRephraserChain(self):
+        try:
+            logger.info("Constructing parallel query rephraser chain.")
+            self.config = getConfig(self.queryRephraserConfig.configPath)
+            queryRephraseParser = JsonOutputParser(pydantic_object = ParallelQueryRephraseOutput)
+            queryRephrasePrompt = PromptTemplate(
+                template = readYaml(self.queryRephraserConfig.yamlPath).get("parallelQueryRephraserAgentPrompt"),
+                input_variables = ["metadata", "query"],
+                partial_variables = {"format_instructions": queryRephraseParser.get_format_instructions()}
+            )
+            llm = ChatGoogleGenerativeAI(
+                model=self.config.get("QUERYREPHRASER", "model"),
+                temperature=self.config.getfloat("QUERYREPHRASER", "temperature"),
+                max_tokens=self.config.getint("QUERYREPHRASER", "maxTokens", fallback=8192)
+            )
+            queryRephraseChain = queryRephrasePrompt | llm | RunnableLambda(self._removeThinkTokens) | queryRephraseParser
+            logger.info("Parallel query rephraser chain constructed successfully.")
             return queryRephraseChain
         except Exception as e:
             exception = CustomException(e)
