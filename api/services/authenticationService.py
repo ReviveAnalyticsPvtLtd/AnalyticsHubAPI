@@ -529,8 +529,10 @@ class AuthenticationService:
                 "onboarded": 1 if userData.get("onboarded") else 0,
                 "currentWorkspaceId": userData["currentWorkspaceId"],
                 "subscriptionStatus": subscriptionStatus,
-                "subscriptionPlan": subscriptionPlan,
+                "subscriptionStart": subscription.get("current_period_start") if subscription else None,
+                "subscriptionExpiry": subscription.get("current_period_end") if subscription else None,
                 "subscriptionDaysLeft": subscriptionDaysLeft,
+                "subscriptionPlan": subscriptionPlan,
                 "profileImage": profileImage,
             }
         except CustomException:
