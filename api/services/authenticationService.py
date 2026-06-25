@@ -85,15 +85,18 @@ class AuthenticationService:
     @staticmethod
     def _mapBillingModeToPlan(billingMode: str | None, status: str | None = None) -> str:
         normalizedStatus = (status or "").strip().lower()
+        normalizedBillingMode = (billingMode or "").strip().lower()
         if normalizedStatus == "trial":
+            return "free"
+        if normalizedStatus == "expired" and normalizedBillingMode == "none":
             return "free"
         if normalizedStatus == "none":
             return "none"
-        if billingMode == "none":
+        if normalizedBillingMode == "none":
             return "none"
-        if billingMode == "monthly_recurring":
+        if normalizedBillingMode == "monthly_recurring":
             return "pro"
-        if billingMode == "annual_prepaid":
+        if normalizedBillingMode == "annual_prepaid":
             return "annual"
         return "none"
 

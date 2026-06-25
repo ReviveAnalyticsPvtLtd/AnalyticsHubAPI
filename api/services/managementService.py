@@ -949,11 +949,14 @@ class ManagementService:
     @staticmethod
     def _mapBillingModeToPlanType(billingMode: str | None, status: str | None = None) -> str:
         normalizedStatus = (status or "").strip().lower()
+        normalizedBillingMode = (billingMode or "").strip().lower()
         if normalizedStatus == "trial":
+            return "free"
+        if normalizedStatus == "expired" and normalizedBillingMode == "none":
             return "free"
         if normalizedStatus == "none":
             return "none"
-        if billingMode == "none":
+        if normalizedBillingMode == "none":
             return "none"
         if billingMode == "monthly_recurring":
             return "pro"
