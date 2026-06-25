@@ -27,6 +27,7 @@ __all__ = [
     "subscriptionRecurringFailures",
     "toSubscriptionBillingPayload",
     "toApiPlanFields",
+    "mapBillingModeToPlanType",
 ]
 
 
@@ -188,3 +189,25 @@ def toApiPlanFields(subscription: dict | None) -> dict:
         "domainCount": subscriptionDomainCount(subscription),
         "pendingRemovals": subscriptionPendingRemovals(subscription),
     }
+
+
+def mapBillingModeToPlanType(billingMode: str | None, status: str | None = None) -> str:
+    """
+    Derive API plan tier labels from canonical subscription billing_mode and status.
+
+    Paid tiers are resolved from billing_mode first so lifecycle status alone cannot
+    collapse a paid row to ``none``. No-plan rows use status to distinguish trial,
+    expired trial, and brand-new users.
+    """
+    normalizedStatus = (status or "").strip().lower()
+    normalizedBillingMode = (billingMode or "").strip().lower()
+
+    if normalizedBillingMode == "monthly_recurring":
+        return "pro"
+    if normalizedBillingMode == "annual_prepaid":
+        return "annual"
+    if normalizedStatus == "trial":
+        return "free"
+    if normalizedStatus == "expired":
+        return "free"
+    return "none"

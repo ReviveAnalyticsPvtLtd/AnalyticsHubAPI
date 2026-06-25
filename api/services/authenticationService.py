@@ -17,6 +17,7 @@ __all__ = ["authenticationService"]
 from utils.exceptionHandler import CustomException
 from utils.logger import logger
 from api.commons import client
+from api.services.subscriptions.subscriptionFieldUtils import mapBillingModeToPlanType
 from api.services.subscriptions.paymentValidationService import (
     calculateSubscriptionDaysLeft,
     mergeSubscriptionLifecycleSnapshot,
@@ -84,18 +85,7 @@ class AuthenticationService:
 
     @staticmethod
     def _mapBillingModeToPlan(billingMode: str | None, status: str | None = None) -> str:
-        normalizedStatus = (status or "").strip().lower()
-        if normalizedStatus == "trial":
-            return "free"
-        if normalizedStatus == "none":
-            return "none"
-        if billingMode == "none":
-            return "none"
-        if billingMode == "monthly_recurring":
-            return "pro"
-        if billingMode == "annual_prepaid":
-            return "annual"
-        return "none"
+        return mapBillingModeToPlanType(billingMode, status)
 
     @staticmethod
     def _normalizeProviderProfileImage(profileImage: str | None) -> str | None:
@@ -539,8 +529,10 @@ class AuthenticationService:
                 "onboarded": 1 if userData.get("onboarded") else 0,
                 "currentWorkspaceId": userData["currentWorkspaceId"],
                 "subscriptionStatus": subscriptionStatus,
-                "subscriptionPlan": subscriptionPlan,
+                "subscriptionStart": subscription.get("current_period_start") if subscription else None,
+                "subscriptionExpiry": subscription.get("current_period_end") if subscription else None,
                 "subscriptionDaysLeft": subscriptionDaysLeft,
+                "subscriptionPlan": subscriptionPlan,
                 "profileImage": profileImage,
             }
         except CustomException:

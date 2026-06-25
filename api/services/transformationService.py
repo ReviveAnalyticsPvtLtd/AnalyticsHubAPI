@@ -195,8 +195,6 @@ class TransformationService:
                     "role": userRow.get("role"),
                     "content": userRow.get("content"),
                     "created_at": userRow.get("created_at"),
-                    "is_applied": userRow.get("is_applied", False),
-                    "new_transformed_table_name": userRow.get("new_transformed_table_name"),
                 }
             except Exception as e:
                 logger.error(f"Failed to load user message {userMessageId} for SSE payload: {e}")
@@ -258,8 +256,6 @@ class TransformationService:
                     "content": msg.get("content"),
                     "artifact": msg.get("artifact"),
                     "python_code": msg.get("python_code"),
-                    "is_applied": msg.get("is_applied", False),
-                    "new_transformed_table_name": msg.get("new_transformed_table_name"),
                     "created_at": msg.get("created_at"),
                 })
             return result
@@ -286,8 +282,6 @@ class TransformationService:
                 "artifact": None,
                 "python_code": None,
                 "created_at": datetime.now(timezone.utc).isoformat(),
-                "is_applied": False,
-                "new_transformed_table_name": None
             }
             messages.append(user_msg)
             self._save_messages_to_db(projectId=projectId, transformationId=transformationId, messages=messages)
@@ -320,8 +314,6 @@ class TransformationService:
                     "artifact": None,
                     "python_code": None,
                     "created_at": datetime.now(timezone.utc).isoformat(),
-                    "is_applied": False,
-                    "new_transformed_table_name": None
                 }
                 messages.append(assistant_msg)
                 self._save_messages_to_db(projectId=projectId, transformationId=transformationId, messages=messages)
@@ -347,8 +339,6 @@ class TransformationService:
                 "artifact": artifact,
                 "python_code": python_code,
                 "created_at": datetime.now(timezone.utc).isoformat(),
-                "is_applied": False,
-                "new_transformed_table_name": None
             }
             messages.append(assistant_msg)
             self._save_messages_to_db(projectId=projectId, transformationId=transformationId, messages=messages)
@@ -367,8 +357,6 @@ class TransformationService:
                     "artifact": None,
                     "python_code": None,
                     "created_at": datetime.now(timezone.utc).isoformat(),
-                    "is_applied": False,
-                    "new_transformed_table_name": None
                 }
                 messages.append(assistant_msg)
                 self._save_messages_to_db(projectId=projectId, transformationId=transformationId, messages=messages)
@@ -418,7 +406,6 @@ class TransformationService:
             )
             artifact["is_approved"] = False
             target_msg["artifact"] = artifact
-            target_msg["new_transformed_table_name"] = newTransformedTableName
             self._save_messages_to_db(projectId=projectId, transformationId=transformationId, messages=messages)
             return {"data": previewRows}
         except CustomException:
@@ -486,13 +473,6 @@ class TransformationService:
 
             artifact["is_approved"] = True
             target_msg["artifact"] = artifact
-            target_msg["is_applied"] = True
-            target_msg["new_transformed_table_name"] = newTransformedTableName
-            
-            # Reset is_applied on all other assistant messages in this transformation workspace
-            for msg in messages:
-                if msg.get("message_id") != messageId and msg.get("role") == "assistant":
-                    msg["is_applied"] = False
             
             self._save_messages_to_db(projectId=projectId, transformationId=transformationId, messages=messages)
             
@@ -586,8 +566,6 @@ class TransformationService:
                 }).eq("transformation_id", transformationId).execute()
                 
                 # Keep the approved checkpoint's status intact
-                lastApprovedMsg["is_applied"] = True
-                lastApprovedMsg["new_transformed_table_name"] = newTransformedTableName
                 approvedArtifact = lastApprovedMsg.get("artifact") or {}
                 approvedArtifact["is_approved"] = True
                 lastApprovedMsg["artifact"] = approvedArtifact
@@ -604,14 +582,6 @@ class TransformationService:
                     "latest_approved_artifact": None,
                 }).eq("transformation_id", transformationId).execute()
             
-            # Clear is_applied on all messages EXCEPT the approved checkpoint
-            # Leave unapproved artifacts intact so the user can re-approve them
-            for msg in truncatedMessages:
-                if msg.get("role") == "assistant":
-                    if lastApprovedMsg and msg.get("message_id") == lastApprovedMsg.get("message_id"):
-                        continue
-                    msg["is_applied"] = False
-                    
             # Save truncated list to DB
             self._save_messages_to_db(projectId=projectId, transformationId=transformationId, messages=truncatedMessages)
             

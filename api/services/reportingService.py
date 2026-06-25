@@ -12,6 +12,7 @@ __all__ = ["reportingService"]
 from api.models import GenerateChartInput, PanelChartDetails, GenerateChartsInParallel, SaveQuery, DeleteQuery
 from nubrix.components.dashboardNameGenerator import DashboardNameGenerator
 from nubrix.workflows.reportingToolWorkflow import buildReportingWorkflow
+from nubrix.workflows.parallelReportingToolWorkflow import buildParallelReportingWorkflow
 from api.commons import updateProjectModifiedAt
 from utils.exceptionHandler import CustomException
 from concurrent.futures import ThreadPoolExecutor
@@ -37,6 +38,13 @@ def initWorkflow():
     logger.disable("") 
     try:
         threadLocal.workflow = buildReportingWorkflow()
+    finally:
+        logger.enable("") 
+
+def initParallelWorkflow():
+    logger.disable("") 
+    try:
+        threadLocal.parallelWorkflow = buildParallelReportingWorkflow()
     finally:
         logger.enable("") 
 
@@ -309,19 +317,15 @@ class ReportingService:
         Helper function to generate a single chart in parallel.
 
         Args:
-            workflow: The reporting tool workflow instance.
             metadata: The metadata for the project.
             projectId: The project ID.
             query: The input query for the chart.
 
         Returns:
             dict: The generated chart data.
-
-        Raises:
-            CustomException: If chart generation fails for any reason.
         """
         try:
-            workflow = threadLocal.workflow
+            workflow = threadLocal.parallelWorkflow
             response = workflow.invoke({
                 "metadata": metadata,
                 "inputQuery": query,
@@ -332,9 +336,18 @@ class ReportingService:
             _ = response.pop("codeOutput", None)
             return response
         except Exception as e:
-            exception = CustomException(e)
-            logger.error(exception)
-            raise exception
+            logger.error(f"Failed to generate parallel chart for query '{query}': {e}")
+            return {
+                "finalOutput": {
+                    "chartType": "card",
+                    "title": f"Chart: {query}",
+                    "label": "Status",
+                    "xLabels": "Status",
+                    "yLabels": "Value",
+                    "data": "Error/No data"
+                },
+                "generatedCode": f"# Failed to generate code for: {query}\n# Error: {e}"
+            }
 
     def generateChartsInParallel(self, details: GenerateChartsInParallel) -> dict:
         """
@@ -359,7 +372,7 @@ class ReportingService:
             # Remove any potential duplicate queries while preserving order
             uniqueQueries = list(dict.fromkeys(details.inputQueries))
 
-            with ThreadPoolExecutor(max_workers=6, initializer=initWorkflow) as executor:
+            with ThreadPoolExecutor(max_workers=6, initializer=initParallelWorkflow) as executor:
                 futures = [
                     executor.submit(self._generateSingleChartForParallel, metadata, details.projectId, query)
                     for query in uniqueQueries

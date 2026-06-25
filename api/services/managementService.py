@@ -18,6 +18,7 @@ from utils.exceptionHandler import CustomException
 from api.services.authenticationService import DEFAULT_PROFILE_IMAGE
 from api.services.subscriptions.subscriptionFieldUtils import (
     CANONICAL_SUBSCRIPTION_SELECT,
+    mapBillingModeToPlanType,
     subscriptionExperts,
     toApiPlanFields,
 )
@@ -948,18 +949,7 @@ class ManagementService:
 
     @staticmethod
     def _mapBillingModeToPlanType(billingMode: str | None, status: str | None = None) -> str:
-        normalizedStatus = (status or "").strip().lower()
-        if normalizedStatus == "trial":
-            return "free"
-        if normalizedStatus == "none":
-            return "none"
-        if billingMode == "none":
-            return "none"
-        if billingMode == "monthly_recurring":
-            return "pro"
-        if billingMode == "annual_prepaid":
-            return "annual"
-        return "none"
+        return mapBillingModeToPlanType(billingMode, status)
 
     def _getCanonicalSubscription(self, userId: str) -> dict:
         subscription = self.client.table("subscriptions") \
