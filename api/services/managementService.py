@@ -940,8 +940,9 @@ class ManagementService:
             "active": "ACTIVE",
             "renewal_upcoming": "ACTIVE",
             "payment_pending": "ACTIVE",
-            "past_due": "PAUSED",
-            "suspended": "PAUSED",
+            "past_due": "EXPIRED",
+            "suspended": "EXPIRED",
+            "paused": "PAUSED",
             "cancelled": "CANCELLED",
             "expired": "EXPIRED",
         }
