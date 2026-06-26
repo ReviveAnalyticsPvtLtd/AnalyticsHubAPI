@@ -117,7 +117,7 @@ class AuthenticationService:
         currentStatus = (subscription.get("status") or "").lower()
 
         effectiveStatus = currentStatus
-        if daysLeft <= 0 and currentStatus in ("trial", "active", "none"):
+        if daysLeft <= 0 and expiryStr is not None and currentStatus in ("trial", "active"):
             effectiveStatus = "expired"
 
         billingState = mergeSubscriptionLifecycleSnapshot(
