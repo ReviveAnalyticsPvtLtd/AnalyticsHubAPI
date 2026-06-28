@@ -536,7 +536,7 @@ class TransformationService:
             # Use artifact.is_approved (persists across applies) instead of is_applied (gets cleared)
             lastApprovedMsg = None
             for m in reversed(truncatedMessages):
-                if m.get("role") == "assistant" and m.get("artifact", {}).get("is_approved") and m.get("python_code"):
+                if m.get("role") == "assistant" and (m.get("artifact") or {}).get("is_approved") and m.get("python_code"):
                     lastApprovedMsg = m
                     break
             
@@ -557,7 +557,7 @@ class TransformationService:
                 
                 # Update latest approved artifact to point to this checkpoint
                 latestArtifact = {
-                    "mermaid_code": lastApprovedMsg.get("artifact", {}).get("code"),
+                    "mermaid_code": (lastApprovedMsg.get("artifact") or {}).get("code"),
                     "message_id": lastApprovedMsg.get("message_id"),
                     "table_name": newTransformedTableName,
                 }
