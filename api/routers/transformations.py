@@ -8,8 +8,6 @@ __all__ = ["router"]
 
 
 from api.models import (
-    ApplyTransformationRequest,
-    ApproveMessageRequest,
     CreateTransformationRequest,
     SendMessageRequest,
     RollbackRequest,
@@ -103,7 +101,6 @@ async def approveTransformationMessage(
     transformation_id: str,
     message_id: str,
     projectId: str,
-    request: ApproveMessageRequest,
     token=Depends(verifyToken),
 ):
     """
@@ -114,7 +111,6 @@ async def approveTransformationMessage(
             projectId=projectId,
             transformationId=transformation_id,
             messageId=message_id,
-            newTransformedTableName=request.newTransformedTableName,
         )
         return ORJSONResponse(status_code=200, content=result)
     except CustomException as e:
@@ -126,7 +122,6 @@ async def applyTransformationMessage(
     transformation_id: str,
     message_id: str,
     projectId: str,
-    request: ApplyTransformationRequest,
     token=Depends(verifyToken),
 ):
     """
@@ -137,7 +132,6 @@ async def applyTransformationMessage(
             projectId=projectId,
             transformationId=transformation_id,
             messageId=message_id,
-            newTransformedTableName=request.newTransformedTableName,
         )
         return ORJSONResponse(status_code=200, content=result)
     except CustomException as e:

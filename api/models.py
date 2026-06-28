@@ -236,12 +236,6 @@ class CreateTransformationRequest(BaseModel):
 class SendMessageRequest(BaseModel):
     content: str
 
-class ApproveMessageRequest(BaseModel):
-    newTransformedTableName: str
-
-class ApplyTransformationRequest(BaseModel):
-    newTransformedTableName: str
-
 class RollbackRequest(BaseModel):
     messageId: str
 

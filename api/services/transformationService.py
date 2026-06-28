@@ -370,15 +370,12 @@ class TransformationService:
         projectId: str,
         transformationId: str,
         messageId: str,
-        newTransformedTableName: str,
     ) -> dict:
         """Execute an assistant message artifact and return a 10-row preview."""
         try:
             row = self._ensure_transformation(projectId=projectId, transformationId=transformationId)
             transformationName = row.get("transformation_name")
-            if transformationName:
-                newTransformedTableName = transformationName
-            newTransformedTableName = self._sanitizeTableName(newTransformedTableName)
+            newTransformedTableName = self._sanitizeTableName(transformationName if transformationName else "table")
 
             messages = row.get("messages") or []
             target_msg = None
@@ -420,15 +417,12 @@ class TransformationService:
         projectId: str,
         transformationId: str,
         messageId: str,
-        newTransformedTableName: str,
     ) -> dict:
         """Persist an approved transformation output and update metadata."""
         try:
             row = self._ensure_transformation(projectId=projectId, transformationId=transformationId)
             transformationName = row.get("transformation_name")
-            if transformationName:
-                newTransformedTableName = transformationName
-            newTransformedTableName = self._sanitizeTableName(newTransformedTableName)
+            newTransformedTableName = self._sanitizeTableName(transformationName if transformationName else "table")
 
             messages = row.get("messages") or []
             target_msg = None
