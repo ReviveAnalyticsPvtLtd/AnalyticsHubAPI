@@ -135,6 +135,7 @@ class AuthenticationService:
             subscription["billing_state"] = billingState
             if effectiveStatus != currentStatus:
                 subscription["status"] = effectiveStatus
+            if effectiveStatus == "expired":
                 normalizeChurnedSubscription(
                     self.client, subscription, "period_ended",
                 )
