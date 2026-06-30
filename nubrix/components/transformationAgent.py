@@ -109,7 +109,20 @@ class TransformationAgent:
                 }, ensure_ascii=False)
                 history.append(AIMessage(content=assistantContent))
 
+        # Find the last active python and mermaid code in the entire history to preserve active code state
+        last_python_code = None
+        last_mermaid_code = None
+        for msg in reversed(chatHistory):
+            if msg.get("role") == "assistant" and msg.get("python_code"):
+                last_python_code = msg.get("python_code")
+                last_mermaid_code = msg.get("artifact", {}).get("code") if msg.get("artifact") else None
+                break
+
         # Keep past 10 messages in full
+        summaryMessage = None
+        unsummarized_msgs = []
+        recentHistory = history
+
         if len(history) > 10:
             oldHistory = history[:-10]
             recentHistory = history[-10:]
@@ -137,9 +150,27 @@ class TransformationAgent:
             summaryMessage = SystemMessage(
                 content=f"Summary of earlier conversation history:\n{cached_summary}"
             )
-            return [summaryMessage, *unsummarized_msgs, *recentHistory, HumanMessage(content=formattedInput)]
 
-        return [*history, HumanMessage(content=formattedInput)]
+        messages_to_send = []
+        if summaryMessage:
+            messages_to_send.append(summaryMessage)
+
+        # Inject the active code state if it exists, so the model always knows the current active code
+        if last_python_code:
+            activeCodeMessage = SystemMessage(
+                content=(
+                    "Current Active Code State:\n"
+                    f"### Python Code:\n```python\n{last_python_code}\n```\n\n"
+                    f"### Mermaid Flowchart:\n```mermaid\n{last_mermaid_code or ''}\n```\n"
+                    "You must build upon, modify, or refer to this active code state if the user's new request is a follow-up or modification."
+                )
+            )
+            messages_to_send.append(activeCodeMessage)
+
+        messages_to_send.extend(unsummarized_msgs)
+        messages_to_send.extend(recentHistory)
+        messages_to_send.append(HumanMessage(content=formattedInput))
+        return messages_to_send
 
     async def invoke(
         self,
