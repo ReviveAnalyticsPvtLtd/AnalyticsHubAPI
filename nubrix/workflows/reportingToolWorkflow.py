@@ -155,11 +155,8 @@ class ReportingToolWorkflow:
                 "finalOutput": response
             }
         else:
-            # Interrupt path: the rephraser issued a doubt. Use .get() because
-            # the LLM may emit {"rephrasedOutput": "..."} without a "doubt" key.
-            doubt = state["rephrasedQuery"].get("doubt") or "Unable to generate a chart for this query."
             return {
-                "finalOutput": {"response": doubt}
+                "finalOutput": {"response": state["rephrasedQuery"]["doubt"]}
             }
 
     def _router(self, state: State):
@@ -172,9 +169,7 @@ class ReportingToolWorkflow:
         Returns:
             str: "continue" if no doubt, otherwise "interrupt".
         """
-        # Use .get() so a missing "doubt" key (LLM omits the field) is treated
-        # as no-doubt rather than raising KeyError and 500-ing the request.
-        if state["rephrasedQuery"].get("doubt") is None:
+        if state["rephrasedQuery"]["doubt"] is None:
             return "continue"
         else:
             return "interrupt"
