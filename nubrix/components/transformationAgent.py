@@ -46,7 +46,7 @@ class TransformationAgent:
             temperature=self.config.getfloat("TRANSFORMATIONAGENT", "temperature"),
             max_tokens=self.config.getint("TRANSFORMATIONAGENT", "maxTokens", fallback=8192),
         )
-        self.structuredLlm = self.llm.with_structured_output(TransformationAgentResponse, method="json_mode")
+        self.structuredLlm = self.llm.with_structured_output(TransformationAgentResponse)
         self._summaryCache: dict[str, str] = {}
 
     def _buildInput(self, userMessage: str, metadata: dict) -> str:
@@ -102,11 +102,18 @@ class TransformationAgent:
                 history.append(HumanMessage(content=msg.get("content") or ""))
             elif role == "assistant":
                 # Reconstruct assistant model output representation for chat context continuity
-                assistantContent = json.dumps({
+                payload = {
                     "userFacingResponse": msg.get("content") or "",
-                    "pythonCode": msg.get("python_code"),
-                    "mermaidCode": msg.get("artifact", {}).get("code") if msg.get("artifact") else None
-                }, ensure_ascii=False)
+                }
+                python_code = msg.get("python_code")
+                mermaid_code = msg.get("artifact", {}).get("code") if msg.get("artifact") else None
+                
+                if python_code is not None:
+                    payload["pythonCode"] = python_code
+                if mermaid_code is not None:
+                    payload["mermaidCode"] = mermaid_code
+
+                assistantContent = json.dumps(payload, ensure_ascii=False)
                 history.append(AIMessage(content=assistantContent))
 
         # Summarize older history if message count exceeds 7
