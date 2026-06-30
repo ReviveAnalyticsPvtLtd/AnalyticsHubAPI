@@ -24,7 +24,11 @@ from api.services.subscriptions.subscriptionFieldUtils import (
     subscriptionRecurringFailures,
     subscriptionTokenId,
 )
-from api.services.subscriptions.paymentValidationService import utcFromTimestamp, utcNow
+from api.services.subscriptions.paymentValidationService import (
+    normalizeChurnedSubscription,
+    utcFromTimestamp,
+    utcNow,
+)
 import datetime
 from dateutil import parser
 import hashlib
@@ -657,6 +661,12 @@ class WebhookService:
             if failures >= 3:
                 updateData["status"] = "suspended"
             self.client.table("subscriptions").update(updateData).eq("id", subscription["id"]).execute()
+            if failures >= 3:
+                subscription["status"] = "suspended"
+                normalizeChurnedSubscription(
+                    self.client, subscription, "payment_suspended",
+                    override_status="expired",
+                )
             self._auditLog(
                 userId, "billing.renewal_failed",
                 paymentId=paymentId,

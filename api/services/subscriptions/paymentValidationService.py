@@ -21,6 +21,7 @@ __all__ = [
     "loadPayableInvoice",
     "assertInvoiceBelongsToSubscription",
     "validateOrderPaymentAgainstInvoice",
+    "normalizeChurnedSubscription",
 ]
 
 
@@ -260,3 +261,53 @@ def validateOrderPaymentAgainstInvoice(
             f"Payment/invoice mismatch: payment.invoiceId={paymentNotes.get('invoiceId')}, "
             f"invoice.id={invoice.get('id')}"
         )
+
+
+def normalizeChurnedSubscription(
+    client,
+    subscription: dict,
+    churn_reason: str,
+    now: datetime.datetime | None = None,
+    override_status: str | None = None,
+) -> bool:
+    """
+    Apply a partial churn reset to a terminal subscription row.
+
+    Clears period dates, entitlements, pending changes, and stale payment
+    tokens while preserving ``billing_mode`` and ``razorpay_customer_id``.
+    Archives previous values in ``billing_state.churn_snapshot``.
+
+    Returns ``True`` if the DB was updated, ``False`` if already reset (no-op).
+    """
+    from api.services.subscriptions.subscriptionFieldUtils import buildChurnResetPayload
+    from api.services.billing.billingEventService import BillingEventService
+
+    payload = buildChurnResetPayload(
+        subscription,
+        churn_reason,
+        now=now,
+        override_status=override_status,
+    )
+    if payload is None:
+        return False
+
+    subscriptionId = subscription.get("id")
+    client.table("subscriptions").update(payload).eq("id", subscriptionId).execute()
+
+    try:
+        BillingEventService(client).log_event(
+            user_id=subscription.get("user_id"),
+            subscription_id=subscriptionId,
+            event_type="subscription.churn_normalized",
+            event_status="NORMALIZED",
+            category="lifecycle",
+            metadata={
+                "churn_reason": churn_reason,
+                "override_status": override_status,
+                "billing_mode": subscription.get("billing_mode"),
+            },
+        )
+    except Exception:
+        pass
+
+    return True

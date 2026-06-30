@@ -20,6 +20,7 @@ from utils.logger import logger
 from api.services.billing.billingEventService import BillingEventService
 from api.services.subscriptions.paymentValidationService import (
     mergeSubscriptionLifecycleSnapshot,
+    normalizeChurnedSubscription,
     parseUtc,
 )
 import requests
@@ -127,6 +128,17 @@ def recalculateSubscriptionDays() -> None:
                     updatePayload["status"] = "expired"
 
             client.table("subscriptions").update(updatePayload).eq("id", subscription["id"]).execute()
+
+            if deltaDays < 0 and currentStatus not in ("expired", "suspended"):
+                churnReason = (
+                    "cancelled_period_ended"
+                    if currentStatus == "cancelled"
+                    else "period_ended"
+                )
+                subscription["status"] = "expired"
+                normalizeChurnedSubscription(
+                    client, subscription, churnReason, now=now
+                )
 
             if billingMode == "annual_prepaid" and currentStatus != "cancelled":
                 continue
