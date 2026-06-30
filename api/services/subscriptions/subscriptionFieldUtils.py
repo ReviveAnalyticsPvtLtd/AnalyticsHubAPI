@@ -7,6 +7,10 @@ plan lifecycle, entitlement, pending changes, and Razorpay provider state to
 services, webhooks, and schedulers.
 """
 
+from __future__ import annotations
+
+import datetime
+
 __version__ = "1.0.0"
 __author__ = "Rohit Mishra"
 __all__ = [
@@ -28,6 +32,7 @@ __all__ = [
     "toSubscriptionBillingPayload",
     "toApiPlanFields",
     "mapBillingModeToPlanType",
+    "buildChurnResetPayload",
 ]
 
 
@@ -211,3 +216,75 @@ def mapBillingModeToPlanType(billingMode: str | None, status: str | None = None)
     if normalizedStatus == "expired":
         return "free"
     return "none"
+
+
+def buildChurnResetPayload(
+    subscription: dict,
+    churn_reason: str,
+    now: datetime.datetime | None = None,
+    override_status: str | None = None,
+) -> dict | None:
+    """
+    Build a partial-reset payload for a churned subscription.
+
+    Preserves ``billing_mode``, ``razorpay_customer_id``, and identity fields
+    while clearing period dates, entitlements, pending changes, and stale
+    payment tokens.  Archives previous values in ``billing_state.churn_snapshot``
+    so support can see what was active before churn.
+
+    Returns ``None`` when the row is already in a reset state (idempotent guard).
+    """
+    current = now or datetime.datetime.now(datetime.timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=datetime.timezone.utc)
+
+    current_status = (subscription.get("status") or "").lower()
+    experts = subscriptionExperts(subscription)
+    period_end = subscription.get("current_period_end")
+
+    already_reset = (
+        not experts
+        and period_end is None
+        and current_status == "expired"
+        and override_status in (None, "expired")
+    )
+    if already_reset:
+        return None
+
+    existing_billing_state = dict(subscription.get("billing_state") or {})
+    existing_billing_state["churn_snapshot"] = {
+        "churned_at": current.isoformat(),
+        "churn_reason": churn_reason,
+        "previous_period_start": subscription.get("current_period_start"),
+        "previous_period_end": period_end,
+        "previous_subscribed_experts": experts,
+        "previous_renewal_due_at": subscription.get("renewal_due_at"),
+    }
+    existing_billing_state["lifecycle_snapshot"] = {
+        "subscription_days_left": 0,
+        "calculated_at": current.isoformat(),
+        "current_period_end": None,
+        "status": "expired",
+    }
+
+    payload: dict = {
+        "current_period_start": None,
+        "current_period_end": None,
+        "renewal_due_at": None,
+        "subscribed_experts": [],
+        "domain_count": 0,
+        "pending_removals": [],
+        "pending_additions": [],
+        "razorpay_token_id": None,
+        "subscription_anchor_day": None,
+        "recurring_failures": 0,
+        "auto_renew_enabled": False,
+        "payment_collection_mode": "authenticated_checkout",
+        "cancellation_reason": None,
+        "billing_state": existing_billing_state,
+    }
+
+    if override_status:
+        payload["status"] = override_status
+
+    return payload

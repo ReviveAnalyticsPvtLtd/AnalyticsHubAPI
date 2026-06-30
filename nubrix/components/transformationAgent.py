@@ -15,6 +15,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from utils.exceptionHandler import CustomException
 from api.models import TransformationAgentResponse
 from nubrix.utils import getConfig, readYaml
+from collections import OrderedDict
 from utils.logger import logger
 from dataclasses import dataclass
 import json
@@ -33,8 +34,11 @@ class TransformationAgent:
     Agent wrapper for transformation generation.
 
     Maintains per-transformation chat context persisted in PostgreSQL/Supabase
-    and summarizes history older than 7 messages to optimize context window usage.
+    and summarizes history older than 10 messages to optimize context window usage.
     """
+
+    _MAX_SUMMARY_CACHE_SIZE = 256
+
     def __init__(self):
         """Initialize model configuration."""
         logger.info("Initializing TransformationAgent.")
@@ -46,8 +50,11 @@ class TransformationAgent:
             temperature=self.config.getfloat("TRANSFORMATIONAGENT", "temperature"),
             max_tokens=self.config.getint("TRANSFORMATIONAGENT", "maxTokens", fallback=8192),
         )
-        self.structuredLlm = self.llm.with_structured_output(TransformationAgentResponse, method="json_mode")
-        self._summaryCache: dict[str, str] = {}
+        self.structuredLlm = self.llm.with_structured_output(TransformationAgentResponse)
+        # LRU cache for raw LLM summaries (keyed by message-id chain)
+        self._historySummaryCache: OrderedDict[str, str] = OrderedDict()
+        # Per-thread summary state (keyed by transformationId)
+        self._threadSummaryCache: dict[str, tuple[str, int]] = {}
 
     def _buildInput(self, userMessage: str, metadata: dict) -> str:
         """Build the prompt input from metadata and user request."""
@@ -59,12 +66,13 @@ class TransformationAgent:
         )
 
     async def _summarizeHistory(self, oldMessages: list[BaseMessage], cacheKey: str) -> str:
-        """Summarize old chat history messages using the LLM, with in-memory caching."""
+        """Summarize old chat history messages using the LLM, with LRU-bounded caching."""
         if not oldMessages:
             return ""
-        if cacheKey in self._summaryCache:
+        if cacheKey in self._historySummaryCache:
             logger.info("Using cached history summary.")
-            return self._summaryCache[cacheKey]
+            self._historySummaryCache.move_to_end(cacheKey)
+            return self._historySummaryCache[cacheKey]
         formatted = []
         for msg in oldMessages:
             role = "User" if isinstance(msg, HumanMessage) else "Assistant"
@@ -73,6 +81,9 @@ class TransformationAgent:
                 parsed = json.loads(content)
                 if isinstance(parsed, dict) and "userFacingResponse" in parsed:
                     content = parsed["userFacingResponse"]
+                    # Include code context note in summary input so summaries retain transformation awareness
+                    if parsed.get("pythonCode"):
+                        content += " (Transformation code was generated)"
             except Exception:
                 pass
             formatted.append(f"{role}: {content}")
@@ -87,21 +98,28 @@ class TransformationAgent:
         try:
             summaryResponse = await self.llm.ainvoke(prompt)
             summary = summaryResponse.content
-            self._summaryCache[cacheKey] = summary
+            # LRU eviction: remove oldest entry if cache exceeds max size
+            self._historySummaryCache[cacheKey] = summary
+            if len(self._historySummaryCache) > self._MAX_SUMMARY_CACHE_SIZE:
+                self._historySummaryCache.popitem(last=False)
             return summary
         except Exception as e:
             logger.warning(f"Failed to summarize history: {e}")
             return "Earlier conversation history summary could not be generated."
 
-    async def _getMessages(self, chatHistory: list[dict], formattedInput: str) -> list[BaseMessage]:
-        """Convert database chat history to LangChain messages, summarizing if history is too long."""
+    def invalidateThreadCache(self, transformationId: str) -> None:
+        """Invalidate the cached summary for a transformation thread (e.g. after rollback)."""
+        self._threadSummaryCache.pop(transformationId, None)
+
+    async def _getMessages(self, chatHistory: list[dict], formattedInput: str, transformationId: str) -> list[BaseMessage]:
+        """Convert database chat history to LangChain messages, summarizing older history efficiently."""
         history = []
         for msg in chatHistory:
             role = msg.get("role")
             if role == "user":
                 history.append(HumanMessage(content=msg.get("content") or ""))
             elif role == "assistant":
-                # Reconstruct assistant model output representation for chat context continuity
+                # Reconstruct full assistant model output representation as JSON (including nulls)
                 assistantContent = json.dumps({
                     "userFacingResponse": msg.get("content") or "",
                     "pythonCode": msg.get("python_code"),
@@ -109,19 +127,78 @@ class TransformationAgent:
                 }, ensure_ascii=False)
                 history.append(AIMessage(content=assistantContent))
 
-        # Summarize older history if message count exceeds 7
-        if len(history) > 7:
-            oldHistory = history[:-7]
-            recentHistory = history[-7:]
-            oldChatHistory = chatHistory[:-7]
-            cacheKey = ":".join(m.get("message_id", "") for m in oldChatHistory)
-            summaryText = await self._summarizeHistory(oldHistory, cacheKey)
-            summaryMessage = SystemMessage(
-                content=f"Summary of earlier conversation history:\n{summaryText}"
-            )
-            return [summaryMessage, *recentHistory, HumanMessage(content=formattedInput)]
+        # Find the last active python and mermaid code in the entire history to preserve active code state
+        last_python_code = None
+        last_mermaid_code = None
+        last_code_msg_index = -1
+        for i in range(len(chatHistory) - 1, -1, -1):
+            msg = chatHistory[i]
+            if msg.get("role") == "assistant" and msg.get("python_code"):
+                last_python_code = msg.get("python_code")
+                last_mermaid_code = msg.get("artifact", {}).get("code") if msg.get("artifact") else None
+                last_code_msg_index = i
+                break
 
-        return [*history, HumanMessage(content=formattedInput)]
+        # Keep past 10 messages in full
+        summaryMessage = None
+        unsummarized_msgs = []
+        recentHistory = history
+        recentWindowStart = 0  # index in chatHistory where the recent 10-message window begins
+
+        if len(history) > 10:
+            oldHistory = history[:-10]
+            recentHistory = history[-10:]
+            oldChatHistory = chatHistory[:-10]
+            recentWindowStart = len(chatHistory) - 10
+
+            # Get cached summary for this transformation thread
+            cached_summary, cached_count = self._threadSummaryCache.get(transformationId, ("", 0))
+
+            # Detect stale cache (e.g. after rollback truncated messages)
+            if cached_count > len(oldHistory):
+                cached_summary = ""
+                cached_count = 0
+
+            # Check how many new messages need to be summarized since the last summary
+            new_unsummarized_count = len(oldHistory) - cached_count
+
+            if new_unsummarized_count >= 4 or not cached_summary:
+                # Regenerate summary and cache it
+                logger.info(f"Regenerating conversation history summary for thread {transformationId}.")
+                cacheKey = ":".join(m.get("message_id", "") for m in oldChatHistory)
+                summaryText = await self._summarizeHistory(oldHistory, cacheKey)
+                self._threadSummaryCache[transformationId] = (summaryText, len(oldHistory))
+                cached_summary = summaryText
+                unsummarized_msgs = []
+            else:
+                # Use cached summary and pass the unsummarized old messages in full
+                unsummarized_msgs = oldHistory[cached_count:]
+
+            summaryMessage = SystemMessage(
+                content=f"Summary of earlier conversation history:\n{cached_summary}"
+            )
+
+        messages_to_send = []
+        if summaryMessage:
+            messages_to_send.append(summaryMessage)
+
+        # Only inject active code state when the last code message is outside the recent 10-message window
+        last_code_in_recent = last_code_msg_index >= recentWindowStart
+        if last_python_code and not last_code_in_recent:
+            activeCodeMessage = SystemMessage(
+                content=(
+                    "Current Active Code State:\n"
+                    f"### Python Code:\n```python\n{last_python_code}\n```\n\n"
+                    f"### Mermaid Flowchart:\n```mermaid\n{last_mermaid_code or ''}\n```\n"
+                    "You must build upon, modify, or refer to this active code state if the user's new request is a follow-up or modification."
+                )
+            )
+            messages_to_send.append(activeCodeMessage)
+
+        messages_to_send.extend(unsummarized_msgs)
+        messages_to_send.extend(recentHistory)
+        messages_to_send.append(HumanMessage(content=formattedInput))
+        return messages_to_send
 
     async def invoke(
         self,
@@ -139,6 +216,7 @@ class TransformationAgent:
             messages = await self._getMessages(
                 chatHistory=chatHistory,
                 formattedInput=formattedInput,
+                transformationId=transformationId,
             )
             response = await self.structuredLlm.ainvoke(messages)
             return response

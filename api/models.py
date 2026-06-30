@@ -236,14 +236,11 @@ class CreateTransformationRequest(BaseModel):
 class SendMessageRequest(BaseModel):
     content: str
 
-class ApproveMessageRequest(BaseModel):
-    newTransformedTableName: str
-
-class ApplyTransformationRequest(BaseModel):
-    newTransformedTableName: str
-
 class RollbackRequest(BaseModel):
     messageId: str
+
+class RenameTransformationRequest(BaseModel):
+    newTransformationName: str
 
 class TransformationArtifact(BaseModel):
     type: Literal["mermaid"] = "mermaid"

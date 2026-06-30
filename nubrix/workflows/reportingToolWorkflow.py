@@ -159,7 +159,7 @@ class ReportingToolWorkflow:
             return {
                 "finalOutput": {"response": state["rephrasedQuery"]["doubt"]}
             }
-        
+
     def _router(self, state: State):
         """
         Determines workflow routing based on the presence of a 'doubt' in the rephrased query.
@@ -170,7 +170,7 @@ class ReportingToolWorkflow:
         Returns:
             str: "continue" if no doubt, otherwise "interrupt".
         """
-        if state["rephrasedQuery"]["doubt"] == None:
+        if state["rephrasedQuery"]["doubt"] is None:
             return "continue"
         else:
             return "interrupt"

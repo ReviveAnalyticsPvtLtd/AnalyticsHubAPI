@@ -21,6 +21,7 @@ from api.services.subscriptions.subscriptionFieldUtils import mapBillingModeToPl
 from api.services.subscriptions.paymentValidationService import (
     calculateSubscriptionDaysLeft,
     mergeSubscriptionLifecycleSnapshot,
+    normalizeChurnedSubscription,
 )
 from api.models import (
     OnboardingDetails,
@@ -102,7 +103,7 @@ class AuthenticationService:
 
     def _getSubscriptionSnapshot(self, userId: str) -> dict | None:
         response = self.client.table("subscriptions") \
-            .select("billing_mode, status, current_period_start, current_period_end, billing_state") \
+            .select("id, user_id, billing_mode, status, current_period_start, current_period_end, billing_state, subscribed_experts, renewal_due_at") \
             .eq("user_id", userId) \
             .order("updated_at", desc=True) \
             .limit(1) \
@@ -117,7 +118,7 @@ class AuthenticationService:
         currentStatus = (subscription.get("status") or "").lower()
 
         effectiveStatus = currentStatus
-        if daysLeft <= 0 and currentStatus in ("trial", "active", "none"):
+        if daysLeft <= 0 and expiryStr is not None and currentStatus in ("trial", "active"):
             effectiveStatus = "expired"
 
         billingState = mergeSubscriptionLifecycleSnapshot(
@@ -134,6 +135,10 @@ class AuthenticationService:
             subscription["billing_state"] = billingState
             if effectiveStatus != currentStatus:
                 subscription["status"] = effectiveStatus
+            if effectiveStatus == "expired":
+                normalizeChurnedSubscription(
+                    self.client, subscription, "period_ended",
+                )
         except Exception as e:
             logger.warning(f"Failed to update lifecycle snapshot for user {userId}: {e}")
         return daysLeft

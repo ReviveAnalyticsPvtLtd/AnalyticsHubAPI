@@ -61,6 +61,7 @@ metadataGeneratorPrompt: |
     ```
     
 queryRephraserAgentPrompt: |
+    /no_think
     You are a **Query Rewriter AI Agent**. Your **ONLY PURPOSE** is to ensure user queries are **clear, valid, and executable** based on the given dataset metadata.
 
     ---
@@ -497,10 +498,13 @@ queryRephraserAgentPrompt: |
 
     ---
 
+    {format_instructions}
+
+    ---
+
     **INPUT FORMAT:**
     - **Metadata:** {metadata}
     - **Query:** {query}
-
 
 parallelQueryRephraserAgentPrompt: |
     You are a **Parallel Query Rewriter AI Agent**. Your **ONLY PURPOSE** is to ensure user queries are **clear, valid, and executable** based on the given dataset metadata. You are used in a batch/parallel chart generation pipeline where every query MUST produce a valid chart — no exceptions.

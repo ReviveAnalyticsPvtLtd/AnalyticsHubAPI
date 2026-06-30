@@ -25,6 +25,7 @@ from api.services.subscriptions.subscriptionFieldUtils import (
 from api.services.subscriptions.paymentValidationService import (
     calculateSubscriptionDaysLeft,
     mergeSubscriptionLifecycleSnapshot,
+    normalizeChurnedSubscription,
 )
 from concurrent.futures import ProcessPoolExecutor
 from utils.logger import logger
@@ -973,7 +974,7 @@ class ManagementService:
         currentStatus = (subscription.get("status") or "").lower()
 
         effectiveStatus = currentStatus
-        if daysLeft <= 0 and currentStatus in ("trial", "active", "none"):
+        if daysLeft <= 0 and expiryStr is not None and currentStatus in ("trial", "active"):
             effectiveStatus = "expired"
 
         billingState = mergeSubscriptionLifecycleSnapshot(
@@ -990,6 +991,10 @@ class ManagementService:
             subscription["billing_state"] = billingState
             if effectiveStatus != currentStatus:
                 subscription["status"] = effectiveStatus
+            if effectiveStatus == "expired":
+                normalizeChurnedSubscription(
+                    self.client, subscription, "period_ended",
+                )
         except Exception as e:
             logger.warning(f"Failed to update lifecycle snapshot for user {userId}: {e}")
         return daysLeft

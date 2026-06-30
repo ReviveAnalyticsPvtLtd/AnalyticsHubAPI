@@ -370,15 +370,12 @@ class TransformationService:
         projectId: str,
         transformationId: str,
         messageId: str,
-        newTransformedTableName: str,
     ) -> dict:
         """Execute an assistant message artifact and return a 10-row preview."""
         try:
             row = self._ensure_transformation(projectId=projectId, transformationId=transformationId)
             transformationName = row.get("transformation_name")
-            if transformationName:
-                newTransformedTableName = transformationName
-            newTransformedTableName = self._sanitizeTableName(newTransformedTableName)
+            newTransformedTableName = self._sanitizeTableName(transformationName if transformationName else "table")
 
             messages = row.get("messages") or []
             target_msg = None
@@ -420,15 +417,12 @@ class TransformationService:
         projectId: str,
         transformationId: str,
         messageId: str,
-        newTransformedTableName: str,
     ) -> dict:
         """Persist an approved transformation output and update metadata."""
         try:
             row = self._ensure_transformation(projectId=projectId, transformationId=transformationId)
             transformationName = row.get("transformation_name")
-            if transformationName:
-                newTransformedTableName = transformationName
-            newTransformedTableName = self._sanitizeTableName(newTransformedTableName)
+            newTransformedTableName = self._sanitizeTableName(transformationName if transformationName else "table")
 
             messages = row.get("messages") or []
             target_msg = None
@@ -536,7 +530,7 @@ class TransformationService:
             # Use artifact.is_approved (persists across applies) instead of is_applied (gets cleared)
             lastApprovedMsg = None
             for m in reversed(truncatedMessages):
-                if m.get("role") == "assistant" and m.get("artifact", {}).get("is_approved") and m.get("python_code"):
+                if m.get("role") == "assistant" and (m.get("artifact") or {}).get("is_approved") and m.get("python_code"):
                     lastApprovedMsg = m
                     break
             
@@ -557,7 +551,7 @@ class TransformationService:
                 
                 # Update latest approved artifact to point to this checkpoint
                 latestArtifact = {
-                    "mermaid_code": lastApprovedMsg.get("artifact", {}).get("code"),
+                    "mermaid_code": (lastApprovedMsg.get("artifact") or {}).get("code"),
                     "message_id": lastApprovedMsg.get("message_id"),
                     "table_name": newTransformedTableName,
                 }
@@ -584,6 +578,12 @@ class TransformationService:
             
             # Save truncated list to DB
             self._save_messages_to_db(projectId=projectId, transformationId=transformationId, messages=truncatedMessages)
+
+            # Invalidate agent's cached summary for this thread so it regenerates on next request
+            try:
+                self.agent.invalidateThreadCache(transformationId)
+            except Exception:
+                pass
             
             # Clear Redis preview caches for the target message and all discarded messages
             try:
@@ -622,6 +622,97 @@ class TransformationService:
             logger.error(exception)
             raise exception
 
+
+
+    async def renameTransformation(
+        self,
+        projectId: str,
+        transformationId: str,
+        newName: str,
+    ) -> dict:
+        """Rename an existing transformation workspace."""
+        import re
+        try:
+            if not newName or not newName.strip():
+                raise ValueError("Transformation name cannot be empty.")
+            if len(newName) > 63:
+                raise ValueError("Transformation name cannot exceed 63 characters.")
+            if not any(c.isalpha() for c in newName):
+                raise ValueError("Transformation name must contain at least one letter.")
+            if not re.match(r"^[A-Za-z0-9\s._-]+$", newName):
+                raise ValueError("Transformation name can only contain letters, numbers, spaces, periods, hyphens, and underscores.")
+
+            # Check if transformation exists
+            row = self._ensure_transformation(projectId=projectId, transformationId=transformationId)
+
+            # Check for duplicate names in the project
+            existing = (
+                self.supabase.table("transformations")
+                .select("transformation_name")
+                .eq("project_id", projectId)
+                .neq("transformation_id", transformationId)
+                .execute()
+            )
+            if existing.data and newName in [x.get("transformation_name") for x in existing.data]:
+                raise CustomException(
+                    ValueError("Duplicate name"),
+                    statusCode=409,
+                    uiMessage="A transformation with this name already exists in the project."
+                )
+
+            # Update transformation name
+            self.supabase.table("transformations").update({
+                "transformation_name": newName
+            }).eq("project_id", projectId).eq("transformation_id", transformationId).execute()
+
+            updateProjectModifiedAt(projectId)
+            return {"status": "200", "message": "Transformation renamed successfully."}
+        except CustomException:
+            raise
+        except Exception as e:
+            exception = CustomException(e, statusCode=400, uiMessage=str(e))
+            logger.error(exception)
+            raise exception
+
+    async def deleteTransformation(self, projectId: str, transformationId: str) -> dict:
+        """Delete a transformation workspace and its associated parquet file if it exists."""
+        try:
+            # 1. Fetch transformation to find the associated table name
+            row = self._ensure_transformation(projectId=projectId, transformationId=transformationId)
+            tableName = None
+            latest_approved = row.get("latest_approved_artifact")
+            if latest_approved and isinstance(latest_approved, dict):
+                tableName = latest_approved.get("table_name")
+            if not tableName:
+                transformationName = row.get("transformation_name")
+                tableName = self._sanitizeTableName(transformationName if transformationName else "table")
+
+            # 2. Delete the transformation row from database
+            self.supabase.table("transformations").delete().eq("project_id", projectId).eq("transformation_id", transformationId).execute()
+
+            # 3. Delete parquet file from storage if exists
+            if tableName:
+                try:
+                    storagePath = f"{projectId}/{tableName}.parquet"
+                    self.supabase.storage.from_("AnalyticsHub").remove(storagePath)
+                except Exception as e:
+                    logger.warning(f"Could not remove transformation table file during deletion: {e}")
+
+            # 4. Regenerate project metadata so the deleted table is no longer registered in metadata.json
+            try:
+                from api.services.managementService import managementService
+                managementService.generateMetadata(projectId=projectId)
+            except Exception as e:
+                logger.warning(f"Failed to generate metadata after deleting transformation: {e}")
+
+            updateProjectModifiedAt(projectId)
+            return {"status": "200", "message": "Transformation deleted successfully."}
+        except CustomException:
+            raise
+        except Exception as e:
+            exception = CustomException(e, statusCode=400, uiMessage=str(e))
+            logger.error(exception)
+            raise exception
 
 
 transformationService = TransformationService()

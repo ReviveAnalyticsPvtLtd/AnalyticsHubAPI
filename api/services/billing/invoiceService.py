@@ -31,6 +31,7 @@ from api.services.subscriptions.subscriptionFieldUtils import (
     subscriptionBillingState,
     subscriptionRenewalDomainCount,
 )
+from api.services.subscriptions.paymentValidationService import normalizeChurnedSubscription
 from supabase import create_client
 from utils.logger import logger
 from dateutil.relativedelta import relativedelta
@@ -428,6 +429,12 @@ def transitionToSuspended(subscription: dict, invoice: dict) -> bool:
     client.table("subscriptions").update({
         "status": "suspended",
     }).eq("id", subscriptionId).execute()
+
+    subscription["status"] = "suspended"
+    normalizeChurnedSubscription(
+        client, subscription, "annual_renewal_unpaid",
+        override_status="expired",
+    )
 
     logger.info(
         f"Subscription {subscriptionId} suspended due to non-payment"

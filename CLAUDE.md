@@ -27,7 +27,7 @@ uv run celery -A nubrix.triggers.celery.celeryApp beat --loglevel=info
 ```bash
 docker build -t nubrix-api . && docker run --env-file .env -p 7860:7860 nubrix-api
 ```
-The image runs `supervisord` (see `supervisord.conf`), which manages gunicorn (8 workers), celery worker, and celery beat under one process tree.
+The image runs `startup.sh` → `supervisord` (see `supervisord.conf`), which manages gunicorn (8 workers, `--max-requests=20 --max-requests-jitter=10 --timeout=300`), celery worker, and celery beat under one process tree.
 
 ### Tests
 There is no automated test suite in the repo. Validate changes by hitting endpoints via the docs UI or `curl`, and by running the celery tasks locally against a Redis/Supabase reachable via `.env`.
@@ -47,9 +47,9 @@ Single FastAPI app. Mounts routers under prefixes: `/auth`, `/projects`, `/loade
 - `models.py` — all pydantic request/response models in one place.
 
 ### `nubrix/` — domain logic and AI
-- `components/` — self-contained LLM-driven units (queryRephraser, codeGenerator, codeDebugger, metadataGenerator, insightGenerator, imageToInsights, pdfTableExtractor, speechToText, dashboardNameGenerator, domainKpiMapper, reportGenerator, signalEngine, subscriptionManager, subscriptionStatus, **transformationAgent**, **transformationExecutor**). Each is configured via sections in `config.ini` and prompts in `prompts.yaml`.
-- `workflows/reportingToolWorkflow.py` — LangGraph `StateGraph` for the reporting tool: `rephraseQuery → generateCode → runInPythonSandbox → (pass | fail→debugger→debuggerPythonSandbox) → formatJsonResponse`. Conditional edge on whether the rephraser flags a "doubt".
-- `triggers/celery.py` — `CeleryWrapper` that registers all tasks (`generateForecasts`, `dailyBilling`, `annualRenewal`, `renewalLifecycle`, `pastDueSuspension`, `entitlementBoundary`, `reconciliation`, `billingMetrics`) and the beat schedule. Tasks live under `triggers/tasks/`.
+- `components/` — self-contained LLM-driven units (queryRephraser, codeGenerator, codeDebugger, metadataGenerator, insightGenerator, **insightContextBuilder**, imageToInsights, pdfTableExtractor, speechToText, dashboardNameGenerator, domainKpiMapper, reportGenerator, signalEngine, subscriptionManager, subscriptionStatus, **transformationAgent**, **transformationExecutor**). Each is configured via sections in `config.ini` and prompts in `prompts.yaml`.
+- `workflows/reportingToolWorkflow.py` — LangGraph `StateGraph` for the reporting tool: `rephraseQuery → generateCode → runInPythonSandbox → (pass | fail→debugger→debuggerPythonSandbox) → formatJsonResponse`. Conditional edge on whether the rephraser flags a "doubt". `parallelReportingToolWorkflow.py` runs the same pipeline over multiple queries concurrently.
+- `triggers/celery.py` — `CeleryWrapper` that registers all tasks (`generateForecasts`, `dailyBilling`, `annualRenewal`, `renewalLifecycle`, `pastDueSuspension`, `entitlementBoundary`, `reconciliation`, `billingMetrics`, `subscriptionExpiry`) and the beat schedule. Tasks live under `triggers/tasks/`. To run a single task on demand (without beat): `uv run celery -A nubrix.triggers.celery.celeryApp call nubrix.triggers.celery.celeryApp.<taskName>`.
 - `utils.py` — `readYaml` and `getConfig` helpers.
 
 ### `utils/` — shared infrastructure
@@ -83,7 +83,7 @@ Conversational data transformation with SSE streaming:
 - `config.ini` — per-component model/temperature/maxTokens/dpi/concurrency. Sections: `QUERYREPHRASER`, `METADATAGENERATOR`, `CODEGENERATOR`, `CODEDEBUGGER`, `INSIGHTGENERATOR`, `DOMAINKPIMAPPER`, `SPEECHTOTEXT`, `IMAGETOINSIGHTS`, `PDFTABLE`, `DASHBOARDNAMEGENERATOR`, `TRANSFORMATIONAGENT`. Read via `nubrix.utils.getConfig`.
 - `prompts.yaml` — system prompts keyed by component. Read via `nubrix.utils.readYaml`.
 - `codeTemplates.yaml` — code templates referenced by `codeGenerator`.
-- `config/tax_rules.json` — country → tax rate for billing.
+- `config/tax_rules.json` — versioned product-tax-code → rule map (intra/inter-state GST split, cess, rounding, effective dates). Loaded by `api/services/billing/taxConfigLoader.py` and applied by `taxEngine.py`.
 
 ## Cross-cutting conventions
 
@@ -97,4 +97,4 @@ Conversational data transformation with SSE streaming:
 
 ## CI / scheduled jobs
 
-`.github/workflows/subscriptionCron.yaml` runs `nubrix/components/subscriptionManager.py` daily at 01:00 UTC using GitHub Actions secrets (separate from the FastAPI container's `.env`). The app's own subscription lifecycle runs via Celery Beat (see `nubrix/triggers/celery.py` beat schedule) — daily billing at 00:00 UTC, annual renewal sweep at 00:30, renewal reminders at 02:00, past-due/entitlement sweeps every 30 min, reconciliation every 15 min, billing metrics every 30 min.
+`.github/workflows/subscriptionCron.yaml` runs `nubrix/components/subscriptionManager.py` directly (outside the FastAPI container) daily at 01:00 UTC using GitHub Actions secrets. This is a **separate script** from the in-app `subscriptionExpiry` Celery task — it covers a different slice of subscription lifecycle. The container's `.env` is not used in that workflow. The app's other subscription/billing jobs run via Celery Beat (see `nubrix/triggers/celery.py` beat schedule) — daily billing at 00:00 UTC, annual renewal sweep at 00:30, renewal reminders at 02:00, past-due/entitlement sweeps every 30 min, reconciliation every 15 min, billing metrics every 30 min, subscription-expiry sweep at 01:00 UTC.

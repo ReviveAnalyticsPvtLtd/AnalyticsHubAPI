@@ -28,12 +28,35 @@ class QueryRephraserConfig:
     configPath: str = os.path.join(os.getcwd(), "config.ini")
 
 class QueryRephraseOutput(BaseModel):
-    """Pydantic model for the structured output of the query rephraser agent."""
+    """Pydantic model for the structured output of the query rephraser agent.
+
+    Both fields are MANDATORY in the LLM's JSON output. Each is given an
+    explicit default of None so that JsonOutputParser fills the field with
+    None when the LLM omits it, instead of silently dropping the key. This
+    guarantees downstream code (reportingToolWorkflow._router,
+    _formatJsonResponse) can always access rephrasedOutput['doubt'] without
+    a KeyError, and the LLM is told in the prompt that both fields must be
+    returned even when one of them is null.
+    """
     rephrasedOutput: str | None = Field(
-        description="A clear and concise rephrased version of the user's query. If the query is unclear, invalid, or requires clarification, this will be `None`."
+        default=None,
+        description=(
+            "A clear and concise rephrased version of the user's query with "
+            "step-by-step transformation instructions. Set to null when the "
+            "query is invalid or unclear, but the field MUST still be present "
+            "in the output. The output schema is enforced; an absent "
+            "rephrasedOutput field will be rejected."
+        ),
     )
     doubt: str | None = Field(
-        description="A message indicating any doubt, required clarification, or reason why the input query is invalid. If the query is successfully rephrased, this will be `None`."
+        default=None,
+        description=(
+            "A short, non-technical message indicating any doubt, required "
+            "clarification, or reason why the input query cannot be executed. "
+            "Set to null when the query is successfully rephrased, but the "
+            "field MUST still be present in the output. The output schema is "
+            "enforced; an absent doubt field will be rejected."
+        ),
     )
 
 class QueryRephaser:
@@ -75,6 +98,20 @@ class QueryRephaser:
         
         return AIMessage(content.strip())
 
+    def _ensureFields(self, parsed_dict: dict) -> dict:
+        """
+        Validates the parsed dictionary against QueryRephraseOutput using Pydantic,
+        which fills in default values (None) for any missing keys to prevent KeyErrors.
+        """
+        try:
+            return QueryRephraseOutput.model_validate(parsed_dict).model_dump()
+        except Exception as e:
+            logger.warning(f"Failed to validate rephraser output: {e}. Falling back to default keys.")
+            return {
+                "rephrasedOutput": parsed_dict.get("rephrasedOutput") if isinstance(parsed_dict, dict) else None,
+                "doubt": parsed_dict.get("doubt") if isinstance(parsed_dict, dict) else None
+            }
+
     def getQueryRephraserChain(self):
         """
         Constructs and returns a LangChain chain for query rephrasing.
@@ -102,7 +139,13 @@ class QueryRephaser:
                 temperature=self.config.getfloat("QUERYREPHRASER", "temperature"),
                 max_tokens=self.config.getint("QUERYREPHRASER", "maxTokens", fallback=8192)
             )
-            queryRephraseChain = queryRephrasePrompt | llm | RunnableLambda(self._removeThinkTokens) | queryRephraseParser
+            queryRephraseChain = (
+                queryRephrasePrompt 
+                | llm 
+                | RunnableLambda(self._removeThinkTokens) 
+                | queryRephraseParser 
+                | RunnableLambda(self._ensureFields)
+            )
             logger.info("Query rephraser chain constructed successfully.")
             return queryRephraseChain
         except Exception as e:
@@ -116,9 +159,22 @@ class ParallelQueryRephraseOutput(BaseModel):
     rephrasedOutput: str = Field(
         description="A clear and concise rephrased version of the user's query with step-by-step transformation instructions. This must ALWAYS be provided."
     )
-
 class ParallelQueryRephaser(QueryRephaser):
     """An agent that rephrases queries for parallel generation without issuing doubts."""
+
+    def _ensureParallelFields(self, parsed_dict: dict) -> dict:
+        """
+        Validates the parsed dictionary against ParallelQueryRephraseOutput using Pydantic,
+        filling in None/default values if missing.
+        """
+        try:
+            return ParallelQueryRephraseOutput.model_validate(parsed_dict).model_dump()
+        except Exception as e:
+            logger.warning(f"Failed to validate parallel rephraser output: {e}. Falling back.")
+            return {
+                "rephrasedOutput": parsed_dict.get("rephrasedOutput") if isinstance(parsed_dict, dict) else None
+            }
+
     def getQueryRephraserChain(self):
         try:
             logger.info("Constructing parallel query rephraser chain.")
@@ -134,7 +190,13 @@ class ParallelQueryRephaser(QueryRephaser):
                 temperature=self.config.getfloat("QUERYREPHRASER", "temperature"),
                 max_tokens=self.config.getint("QUERYREPHRASER", "maxTokens", fallback=8192)
             )
-            queryRephraseChain = queryRephrasePrompt | llm | RunnableLambda(self._removeThinkTokens) | queryRephraseParser
+            queryRephraseChain = (
+                queryRephrasePrompt 
+                | llm 
+                | RunnableLambda(self._removeThinkTokens) 
+                | queryRephraseParser
+                | RunnableLambda(self._ensureParallelFields)
+            )
             logger.info("Parallel query rephraser chain constructed successfully.")
             return queryRephraseChain
         except Exception as e:
