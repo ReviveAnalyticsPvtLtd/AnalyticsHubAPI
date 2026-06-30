@@ -47,7 +47,7 @@ class TransformationAgent:
             max_tokens=self.config.getint("TRANSFORMATIONAGENT", "maxTokens", fallback=8192),
         )
         self.structuredLlm = self.llm.with_structured_output(TransformationAgentResponse)
-        self._summaryCache: dict[str, str] = {}
+        self._summaryCache: dict[str, tuple[str, int]] = {}
 
     def _buildInput(self, userMessage: str, metadata: dict) -> str:
         """Build the prompt input from metadata and user request."""
@@ -93,40 +93,51 @@ class TransformationAgent:
             logger.warning(f"Failed to summarize history: {e}")
             return "Earlier conversation history summary could not be generated."
 
-    async def _getMessages(self, chatHistory: list[dict], formattedInput: str) -> list[BaseMessage]:
-        """Convert database chat history to LangChain messages, summarizing if history is too long."""
+    async def _getMessages(self, chatHistory: list[dict], formattedInput: str, transformationId: str) -> list[BaseMessage]:
+        """Convert database chat history to LangChain messages, summarizing older history efficiently."""
         history = []
         for msg in chatHistory:
             role = msg.get("role")
             if role == "user":
                 history.append(HumanMessage(content=msg.get("content") or ""))
             elif role == "assistant":
-                # Reconstruct assistant model output representation for chat context continuity
-                payload = {
+                # Reconstruct full assistant model output representation as JSON (including nulls)
+                assistantContent = json.dumps({
                     "userFacingResponse": msg.get("content") or "",
-                }
-                python_code = msg.get("python_code")
-                mermaid_code = msg.get("artifact", {}).get("code") if msg.get("artifact") else None
-                
-                if python_code is not None:
-                    payload["pythonCode"] = python_code
-                if mermaid_code is not None:
-                    payload["mermaidCode"] = mermaid_code
-
-                assistantContent = json.dumps(payload, ensure_ascii=False)
+                    "pythonCode": msg.get("python_code"),
+                    "mermaidCode": msg.get("artifact", {}).get("code") if msg.get("artifact") else None
+                }, ensure_ascii=False)
                 history.append(AIMessage(content=assistantContent))
 
-        # Summarize older history if message count exceeds 7
-        if len(history) > 7:
-            oldHistory = history[:-7]
-            recentHistory = history[-7:]
-            oldChatHistory = chatHistory[:-7]
-            cacheKey = ":".join(m.get("message_id", "") for m in oldChatHistory)
-            summaryText = await self._summarizeHistory(oldHistory, cacheKey)
+        # Keep past 10 messages in full
+        if len(history) > 10:
+            oldHistory = history[:-10]
+            recentHistory = history[-10:]
+            oldChatHistory = chatHistory[:-10]
+
+            # Get cached summary for this transformation thread
+            cached_summary, cached_count = self._summaryCache.get(transformationId, ("", 0))
+            
+            # Check how many new messages need to be summarized since the last summary
+            new_unsummarized_count = len(oldHistory) - cached_count
+
+            if new_unsummarized_count >= 4 or not cached_summary:
+                # Regenerate summary and cache it
+                logger.info(f"Regenerating conversation history summary for thread {transformationId}.")
+                # Compute a temporary key based on the message IDs of the entire oldHistory
+                cacheKey = ":".join(m.get("message_id", "") for m in oldChatHistory)
+                summaryText = await self._summarizeHistory(oldHistory, cacheKey)
+                self._summaryCache[transformationId] = (summaryText, len(oldHistory))
+                cached_summary = summaryText
+                unsummarized_msgs = []
+            else:
+                # Use cached summary and pass the unsummarized old messages in full
+                unsummarized_msgs = oldHistory[cached_count:]
+
             summaryMessage = SystemMessage(
-                content=f"Summary of earlier conversation history:\n{summaryText}"
+                content=f"Summary of earlier conversation history:\n{cached_summary}"
             )
-            return [summaryMessage, *recentHistory, HumanMessage(content=formattedInput)]
+            return [summaryMessage, *unsummarized_msgs, *recentHistory, HumanMessage(content=formattedInput)]
 
         return [*history, HumanMessage(content=formattedInput)]
 
@@ -146,6 +157,7 @@ class TransformationAgent:
             messages = await self._getMessages(
                 chatHistory=chatHistory,
                 formattedInput=formattedInput,
+                transformationId=transformationId,
             )
             response = await self.structuredLlm.ainvoke(messages)
             return response
