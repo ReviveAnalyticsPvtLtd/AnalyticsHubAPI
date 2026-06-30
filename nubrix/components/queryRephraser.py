@@ -159,9 +159,22 @@ class ParallelQueryRephraseOutput(BaseModel):
     rephrasedOutput: str = Field(
         description="A clear and concise rephrased version of the user's query with step-by-step transformation instructions. This must ALWAYS be provided."
     )
-
 class ParallelQueryRephaser(QueryRephaser):
     """An agent that rephrases queries for parallel generation without issuing doubts."""
+
+    def _ensureParallelFields(self, parsed_dict: dict) -> dict:
+        """
+        Validates the parsed dictionary against ParallelQueryRephraseOutput using Pydantic,
+        filling in None/default values if missing.
+        """
+        try:
+            return ParallelQueryRephraseOutput.model_validate(parsed_dict).model_dump()
+        except Exception as e:
+            logger.warning(f"Failed to validate parallel rephraser output: {e}. Falling back.")
+            return {
+                "rephrasedOutput": parsed_dict.get("rephrasedOutput") if isinstance(parsed_dict, dict) else None
+            }
+
     def getQueryRephraserChain(self):
         try:
             logger.info("Constructing parallel query rephraser chain.")
@@ -177,7 +190,13 @@ class ParallelQueryRephaser(QueryRephaser):
                 temperature=self.config.getfloat("QUERYREPHRASER", "temperature"),
                 max_tokens=self.config.getint("QUERYREPHRASER", "maxTokens", fallback=8192)
             )
-            queryRephraseChain = queryRephrasePrompt | llm | RunnableLambda(self._removeThinkTokens) | queryRephraseParser
+            queryRephraseChain = (
+                queryRephrasePrompt 
+                | llm 
+                | RunnableLambda(self._removeThinkTokens) 
+                | queryRephraseParser
+                | RunnableLambda(self._ensureParallelFields)
+            )
             logger.info("Parallel query rephraser chain constructed successfully.")
             return queryRephraseChain
         except Exception as e:
