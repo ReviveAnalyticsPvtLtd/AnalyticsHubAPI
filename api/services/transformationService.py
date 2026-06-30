@@ -578,6 +578,12 @@ class TransformationService:
             
             # Save truncated list to DB
             self._save_messages_to_db(projectId=projectId, transformationId=transformationId, messages=truncatedMessages)
+
+            # Invalidate agent's cached summary for this thread so it regenerates on next request
+            try:
+                self.agent.invalidateThreadCache(transformationId)
+            except Exception:
+                pass
             
             # Clear Redis preview caches for the target message and all discarded messages
             try:
