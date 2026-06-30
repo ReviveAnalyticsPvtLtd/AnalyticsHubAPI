@@ -7,10 +7,10 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["router"]
 
 
-from api.models import (
     CreateTransformationRequest,
     SendMessageRequest,
     RollbackRequest,
+    RenameTransformationRequest,
 )
 from api.services.transformationService import transformationService
 from utils.exceptionHandler import CustomException, raiseHttpException
@@ -153,6 +153,46 @@ async def rollbackTransformation(
             projectId=projectId,
             transformationId=transformation_id,
             messageId=request.messageId,
+        )
+        return ORJSONResponse(status_code=200, content=result)
+    except CustomException as e:
+        raiseHttpException(e)
+
+
+@router.patch("/{transformation_id}/rename")
+async def renameTransformation(
+    transformation_id: str,
+    projectId: str,
+    request: RenameTransformationRequest,
+    token=Depends(verifyToken),
+):
+    """
+    Rename an existing transformation workspace.
+    """
+    try:
+        result = await transformationService.renameTransformation(
+            projectId=projectId,
+            transformationId=transformation_id,
+            newName=request.newTransformationName,
+        )
+        return ORJSONResponse(status_code=200, content=result)
+    except CustomException as e:
+        raiseHttpException(e)
+
+
+@router.delete("/{transformation_id}")
+async def deleteTransformation(
+    transformation_id: str,
+    projectId: str,
+    token=Depends(verifyToken),
+):
+    """
+    Delete a transformation workspace and its associated parquet file if it exists.
+    """
+    try:
+        result = await transformationService.deleteTransformation(
+            projectId=projectId,
+            transformationId=transformation_id,
         )
         return ORJSONResponse(status_code=200, content=result)
     except CustomException as e:

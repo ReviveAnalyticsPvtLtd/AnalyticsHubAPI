@@ -239,6 +239,9 @@ class SendMessageRequest(BaseModel):
 class RollbackRequest(BaseModel):
     messageId: str
 
+class RenameTransformationRequest(BaseModel):
+    newTransformationName: str
+
 class TransformationArtifact(BaseModel):
     type: Literal["mermaid"] = "mermaid"
     code: str
