@@ -50,7 +50,8 @@ class TransformationAgent:
             temperature=self.config.getfloat("TRANSFORMATIONAGENT", "temperature"),
             max_tokens=self.config.getint("TRANSFORMATIONAGENT", "maxTokens", fallback=8192),
         )
-        self.structuredLlm = self.llm.with_structured_output(TransformationAgentResponse)
+        # Bind tool definition for structured generation
+        self.boundLlm = self.llm.bind_tools([TransformationAgentResponse])
         # LRU cache for raw LLM summaries (keyed by message-id chain)
         self._historySummaryCache: OrderedDict[str, str] = OrderedDict()
         # Per-thread summary state (keyed by transformationId)
@@ -182,15 +183,16 @@ class TransformationAgent:
         if summaryMessage:
             messages_to_send.append(summaryMessage)
 
-        # Only inject active code state when the last code message is outside the recent 10-message window
-        last_code_in_recent = last_code_msg_index >= recentWindowStart
-        if last_python_code and not last_code_in_recent:
+        # Inject the active code state if it exists, so the model always knows the current active code
+        if last_python_code:
             activeCodeMessage = SystemMessage(
                 content=(
                     "Current Active Code State:\n"
                     f"### Python Code:\n```python\n{last_python_code}\n```\n\n"
                     f"### Mermaid Flowchart:\n```mermaid\n{last_mermaid_code or ''}\n```\n"
-                    "You must build upon, modify, or refer to this active code state if the user's new request is a follow-up or modification."
+                    "CRITICAL DIRECTIVE: You must build upon, modify, or extend this active code state. "
+                    "Your output Python code must represent the cumulative pipeline (including the previous steps and the new step). "
+                    "Do not restart from scratch unless the user explicitly requests a reset."
                 )
             )
             messages_to_send.append(activeCodeMessage)
@@ -218,7 +220,40 @@ class TransformationAgent:
                 formattedInput=formattedInput,
                 transformationId=transformationId,
             )
-            response = await self.structuredLlm.ainvoke(messages)
+            raw_res = await self.boundLlm.ainvoke(messages)
+            
+            # Custom parsing to guarantee a robust structured response or a clean text fallback
+            response = None
+            if raw_res.tool_calls:
+                args = raw_res.tool_calls[0]["args"]
+                response = TransformationAgentResponse(
+                    pythonCode=args.get("pythonCode"),
+                    mermaidCode=args.get("mermaidCode"),
+                    userFacingResponse=args.get("userFacingResponse") or ""
+                )
+            else:
+                text = raw_res.content.strip()
+                # Clean enclosing markdown blocks if present
+                if text.startswith("```json"):
+                    text = text[7:]
+                if text.endswith("```"):
+                    text = text[:-3]
+                text = text.strip()
+                
+                try:
+                    parsed = json.loads(text)
+                    response = TransformationAgentResponse(
+                        pythonCode=parsed.get("pythonCode"),
+                        mermaidCode=parsed.get("mermaidCode"),
+                        userFacingResponse=parsed.get("userFacingResponse") or ""
+                    )
+                except Exception:
+                    # Treat the raw text block directly as a userFacingResponse conversational fallback
+                    response = TransformationAgentResponse(
+                        pythonCode=None,
+                        mermaidCode=None,
+                        userFacingResponse=raw_res.content
+                    )
             return response
         except Exception as e:
             exception = CustomException(e)

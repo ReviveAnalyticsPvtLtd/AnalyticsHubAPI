@@ -1818,6 +1818,7 @@ transformationAgentPrompt: |
     ---
 
     ## EXECUTION BIAS - PRIME DIRECTIVE
+    - CUMULATIVE PIPELINE BUILDING: Always build on top of the current active code state if it exists. All previous transformations (filters, joins, columns created/modified, grouping, etc.) must be preserved and combined with the new request, constructing a single continuous pipeline from the raw source tables to the final result, unless the user explicitly asks to start from scratch or discard previous steps.
     - If the goal is inferable with reasonable business logic assumptions, always execute and construct the output.
     - For minor ambiguities, determine a sensible standard convention and proceed.
     - Only raise exceptions or print warning schemas if a requested base column or critical index path is completely missing across all source metadata structures.
