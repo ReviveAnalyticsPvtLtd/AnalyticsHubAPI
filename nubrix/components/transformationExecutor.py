@@ -52,7 +52,10 @@ class TransformationExecutor:
 
     def _restricted_import(self, name, globals=None, locals=None, fromlist=(), level=0):
         """Allow only transformation-safe imports."""
-        allowedModules = {"pandas", "numpy", "datetime", "math", "re"}
+        allowedModules = {
+            "pandas", "numpy", "datetime", "math", "re", "time",
+            "sklearn", "scipy", "statsmodels"
+        }
         rootName = name.split(".")[0]
         if rootName not in allowedModules:
             raise ImportError(f"Import '{name}' is not allowed in transformation code.")
@@ -60,33 +63,16 @@ class TransformationExecutor:
 
     def _safe_builtins(self) -> dict:
         """Return a constrained builtins map for generated code."""
-        return {
-            "__import__": self._restricted_import,
-            "abs": abs,
-            "all": all,
-            "any": any,
-            "bool": bool,
-            "dict": dict,
-            "enumerate": enumerate,
-            "Exception": Exception,
-            "float": float,
-            "int": int,
-            "isinstance": isinstance,
-            "len": len,
-            "list": list,
-            "max": max,
-            "min": min,
-            "print": print,
-            "range": range,
-            "round": round,
-            "set": set,
-            "sorted": sorted,
-            "str": str,
-            "sum": sum,
-            "tuple": tuple,
-            "ValueError": ValueError,
-            "zip": zip,
-        }
+        import builtins
+        # Start with all standard builtins
+        safe = {k: v for k, v in builtins.__dict__.items()}
+        # Restrict dangerous system-access operations to ensure sandbox integrity
+        restricted = {"open", "compile", "eval", "exec", "globals", "locals", "memoryview", "input"}
+        for key in restricted:
+            safe.pop(key, None)
+        # Apply restricted import validator
+        safe["__import__"] = self._restricted_import
+        return safe
 
     def _execute_code(self, projectId: str, pythonCode: str) -> pd.DataFrame:
         """Execute generated code and return `final_df`."""

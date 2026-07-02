@@ -1853,6 +1853,18 @@ transformationAgentPrompt: |
     4. RESULT STORAGE INTEGRITY:
         - When calculating output table naming context, ensure the resultant conversion name is distinct, clear, lower_snake_case, and reflective of the action.
 
+    5. SANDBOX IMPORT LIMITATIONS:
+        - Only these imports are allowed: `import pandas as pd`, `import numpy as np`, `import datetime`, `import math`, `import re`, `import time`, `import sklearn`, `import scipy`, `import statsmodels`.
+        - Importing any other library or custom utilities will raise execution errors and fail.
+        
+    6. DATE AND TIME PARSING ROBUSTNESS:
+        - When formatting or parsing date columns (such as converting columns to standard date format `YYYY-MM-DD`), ALWAYS use `pd.to_datetime(...)` with parameters like `errors='coerce'` to handle unparseable, dirty, or invalid values without raising execution errors.
+        - If dates could be mixed (e.g. containing both slash-separated like `10/08/1997` and dash-separated like `10-08-1997`), use `format='mixed'` or `errors='coerce'` instead of strict formats that raise ValueError.
+
+    7. HIGH RESOURCE AVOIDANCE & EFFICIENCY:
+        - You must only write neat, clean, and highly optimized scripts to execute.
+        - If a user's request is extremely resource-intensive (e.g. performing massive Cartesian products, heavy iterative row-by-row loops over huge tables, or complex training that could cause significant server load), you MUST politely apologize in the `userFacingResponse`, explain the potential resource limits / server load risks, and offer lighter alternative approaches. Set `pythonCode` and `mermaidCode` to null in these cases.
+
     ---
 
     ## MERMAID GRAPH GENERATION MANDATES (n8n-STYLE HORIZONTAL)
