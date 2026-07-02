@@ -6,13 +6,25 @@ This module sets up the Supabase client, security dependencies, and provides tok
 
 __version__ = "1.0.0"
 __author__ = "Rauhan Ahmed Siddiqui"
-__all__ = ["client", "verifyToken", "verifyTokenWithExpiry", "updateProjectModifiedAt"] 
+__all__ = [
+    "client",
+    "verifyToken",
+    "verifyTokenWithExpiry",
+    "verifyUser",
+    "requireActiveSubscription",
+    "requireTrialOrAbove",
+    "requirePaidPlan",
+    "UserContext",
+    "updateProjectModifiedAt",
+]
 
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi import status, HTTPException
 from supabase.lib.client_options import ClientOptions
 from supabase import create_client
 from utils.logger import logger
+from utils.exceptionHandler import raiseFeatureGateHttpException
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from fastapi import Depends
 import os
@@ -113,6 +125,90 @@ def verifyTokenWithExpiry(credentials: HTTPAuthorizationCredentials = Depends(se
     Verify the provided access token and ensure it has not expired.
     """
     return _verifyTokenInternal(credentials, checkExpiry=True)
+
+
+@dataclass
+class UserContext:
+    """Decoded JWT claims including subscription state."""
+    userId: str
+    email: str
+    token: str
+    sub_status: str
+    plan_type: str
+
+
+def verifyUser(credentials: HTTPAuthorizationCredentials = Depends(security)) -> UserContext:
+    """
+    Verify the token and return a UserContext with subscription claims
+    decoded from the JWT. No additional DB query for subscription data.
+    """
+    token = _verifyTokenInternal(credentials, checkExpiry=False)
+    payload = jwt.decode(token, os.environ["SECRET_KEY"], algorithms=["HS256"])
+    return UserContext(
+        userId=payload["userId"],
+        email=payload["email"],
+        token=token,
+        sub_status=payload.get("sub_status", "none"),
+        plan_type=payload.get("plan_type", "none"),
+    )
+
+
+_ACTIVE_SUBSCRIPTION_STATUSES = {"active", "renewal_upcoming", "payment_pending", "cancelled"}
+
+def requireActiveSubscription(
+    user: UserContext = Depends(verifyUser),
+) -> UserContext:
+    """Gate: requires an active (or cancelled-but-in-period) subscription."""
+    if user.sub_status not in _ACTIVE_SUBSCRIPTION_STATUSES:
+        raiseFeatureGateHttpException(
+            statusCode=status.HTTP_403_FORBIDDEN,
+            uiMessage="This feature requires an active subscription.",
+            backendLogMessage=(
+                f"Feature gate requireActiveSubscription blocked userId={user.userId}, "
+                f"sub_status={user.sub_status}, "
+                f"allowed={sorted(_ACTIVE_SUBSCRIPTION_STATUSES)}"
+            ),
+            errorCode="FEATURE_BLOCKED",
+        )
+    return user
+
+
+_TRIAL_OR_ABOVE_STATUSES = {"trial", "active", "renewal_upcoming", "payment_pending", "cancelled"}
+
+def requireTrialOrAbove(
+    user: UserContext = Depends(verifyUser),
+) -> UserContext:
+    """Gate: requires at least a trial subscription."""
+    if user.sub_status not in _TRIAL_OR_ABOVE_STATUSES:
+        raiseFeatureGateHttpException(
+            statusCode=status.HTTP_403_FORBIDDEN,
+            uiMessage="Start a free trial or subscribe to access this feature.",
+            backendLogMessage=(
+                f"Feature gate requireTrialOrAbove blocked userId={user.userId}, "
+                f"sub_status={user.sub_status}, "
+                f"allowed={sorted(_TRIAL_OR_ABOVE_STATUSES)}"
+            ),
+            errorCode="FEATURE_BLOCKED",
+        )
+    return user
+
+
+def requirePaidPlan(
+    user: UserContext = Depends(verifyUser),
+) -> UserContext:
+    """Gate: requires a paid plan (pro or annual)."""
+    if user.plan_type in ("none", "free"):
+        raiseFeatureGateHttpException(
+            statusCode=status.HTTP_403_FORBIDDEN,
+            uiMessage="This feature requires a paid plan.",
+            backendLogMessage=(
+                f"Feature gate requirePaidPlan blocked userId={user.userId}, "
+                f"plan_type={user.plan_type}, sub_status={user.sub_status}"
+            ),
+            errorCode="FEATURE_BLOCKED",
+        )
+    return user
+
 
 def updateProjectModifiedAt(projectId: str) -> None:
     """

@@ -162,6 +162,23 @@ class SubscriptionService:
             raise Exception(f"Unsupported billingMode: {billingMode}")
         return normalized
 
+    def _reissueTokenWithUpdatedClaims(
+        self, oldToken: str, newStatus: str, newPlanType: str
+    ) -> str:
+        """
+        Re-mint the JWT with updated subscription claims and swap the
+        Sessions row so the old token is immediately invalidated.
+        """
+        payload = jwt.decode(oldToken, os.environ["SECRET_KEY"], algorithms=["HS256"])
+        payload["sub_status"] = newStatus
+        payload["plan_type"] = newPlanType
+        newToken = jwt.encode(payload, os.environ["SECRET_KEY"], "HS256")
+        self.client.table("Sessions") \
+            .update({"accessToken": newToken}) \
+            .eq("accessToken", oldToken) \
+            .execute()
+        return newToken
+
     def _createFrozenInvoiceFromSnapshot(
         self,
         userId: str,
@@ -792,6 +809,7 @@ class SubscriptionService:
             name = records.data[0]["fullName"] if records.data else userEmail
             self._sendFreeTrialEmail(email=userEmail, name=name)
             self._auditLog(userId, "free_trial.activated", status="TRIAL")
+            newToken = self._reissueTokenWithUpdatedClaims(token, "trial", "free")
             return {
                 "subscriptionPlan": "free",
                 "subscriptionStatus": "TRIAL",
@@ -799,6 +817,7 @@ class SubscriptionService:
                 "subscriptionExpiry": trialExpiry.isoformat(),
                 "subscriptionDaysLeft": trialDurationDays,
                 "subscribedExperts": experts,
+                "accessToken": newToken,
             }
         except CustomException:
             raise
@@ -945,7 +964,7 @@ class SubscriptionService:
             logger.error(exception)
             raise exception
         
-    def verifySubscription(self, payload: dict, token: str) -> None:
+    def verifySubscription(self, payload: dict, token: str) -> dict:
         """
         Verify Razorpay Order checkout signature and activate the subscription.
 
@@ -1116,6 +1135,9 @@ class SubscriptionService:
                     "anchorDay": currentTime.day,
                 }
             )
+            planType = "pro" if billingMode == "monthly_recurring" else "annual"
+            newToken = self._reissueTokenWithUpdatedClaims(token, "active", planType)
+            return {"accessToken": newToken}
         except PaymentValidationError as e:
             exception = self._paymentValidationException(e)
             logger.error(exception)
@@ -1702,7 +1724,17 @@ class SubscriptionService:
                 metadata={"cancel_at_cycle_end": True, "cancellationReason": reason}
             )
             logger.info(f"Subscription scheduled for cancellation at cycle end for user {userId}")
-            return {"cancelled": True, "effectiveAt": "cycle_end", "cancellationReason": reason}
+            billingMode = (subscription.get("billing_mode") or "none").lower()
+            planType = "pro" if billingMode == "monthly_recurring" else (
+                "annual" if billingMode == "annual_prepaid" else "free"
+            )
+            newToken = self._reissueTokenWithUpdatedClaims(token, "cancelled", planType)
+            return {
+                "cancelled": True,
+                "effectiveAt": "cycle_end",
+                "cancellationReason": reason,
+                "accessToken": newToken,
+            }
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
@@ -2083,12 +2115,17 @@ class SubscriptionService:
                 )
 
             if (payment.get("status") or "").lower() == "captured":
-                return self._finalizeCapturedAnnualRenewalPayment(
+                result = self._finalizeCapturedAnnualRenewalPayment(
                     invoice=invoice,
                     subscription=subscription,
                     payment=payment,
                     userId=userId,
                 )
+                if result.get("finalized") and not result.get("alreadyFinalized"):
+                    result["accessToken"] = self._reissueTokenWithUpdatedClaims(
+                        token, "active", "annual"
+                    )
+                return result
 
             existingMetadata = invoice.get("metadata_json")
             metadata = dict(existingMetadata) if isinstance(existingMetadata, dict) else {}

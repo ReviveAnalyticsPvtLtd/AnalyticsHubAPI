@@ -17,7 +17,7 @@ from api.services.transformationService import transformationService
 from utils.exceptionHandler import CustomException, raiseHttpException
 from fastapi.responses import ORJSONResponse, StreamingResponse
 from fastapi import APIRouter, Depends
-from api.commons import verifyToken
+from api.commons import verifyToken, requireActiveSubscription, UserContext
 
 
 router = APIRouter()
@@ -30,7 +30,7 @@ Router for transformation-related endpoints.
 async def createTransformation(
     projectId: str,
     request: CreateTransformationRequest,
-    token=Depends(verifyToken),
+    user: UserContext = Depends(requireActiveSubscription),
 ):
     """
     Create a new transformation workspace for a project.
@@ -82,7 +82,7 @@ async def sendTransformationMessage(
     transformation_id: str,
     projectId: str,
     request: SendMessageRequest,
-    token=Depends(verifyToken),
+    user: UserContext = Depends(requireActiveSubscription),
 ):
     """
     Send a user message and stream the assistant response over SSE.
@@ -102,7 +102,7 @@ async def approveTransformationMessage(
     transformation_id: str,
     message_id: str,
     projectId: str,
-    token=Depends(verifyToken),
+    user: UserContext = Depends(requireActiveSubscription),
 ):
     """
     Approve a Mermaid artifact and return a transformed table preview.
@@ -123,7 +123,7 @@ async def applyTransformationMessage(
     transformation_id: str,
     message_id: str,
     projectId: str,
-    token=Depends(verifyToken),
+    user: UserContext = Depends(requireActiveSubscription),
 ):
     """
     Persist an approved transformation output as a project table.
@@ -144,7 +144,7 @@ async def rollbackTransformation(
     transformation_id: str,
     projectId: str,
     request: RollbackRequest,
-    token=Depends(verifyToken),
+    user: UserContext = Depends(requireActiveSubscription),
 ):
     """
     Rollback workspace state and messages to a specific message ID.

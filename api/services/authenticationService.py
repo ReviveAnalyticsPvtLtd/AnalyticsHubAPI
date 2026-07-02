@@ -369,10 +369,22 @@ class AuthenticationService:
                     )
             sessionStartTime = datetime.datetime.now(datetime.timezone.utc)
             expiresAt = sessionStartTime + datetime.timedelta(hours=24)
+            subscription = self._ensureSubscriptionSnapshot(dataSlice["userId"])
+            subscriptionDaysLeft = self._refreshLifecycleSnapshot(
+                dataSlice["userId"],
+                subscription,
+            )
+            subscriptionStatus = self._mapSubscriptionStatus(subscription.get("status") if subscription else None)
+            subscriptionPlan = self._mapBillingModeToPlan(
+                subscription.get("billing_mode") if subscription else None,
+                subscription.get("status") if subscription else None,
+            )
             tokenPayload = {
                 "userId": dataSlice["userId"],
                 "email": loginDetails.email,
-                "sessionStartTime": str(sessionStartTime)
+                "sessionStartTime": str(sessionStartTime),
+                "sub_status": (subscription.get("status") or "none").lower(),
+                "plan_type": subscriptionPlan,
             }
             accessToken = jwt.encode(tokenPayload, os.environ["SECRET_KEY"], "HS256")
             self.client.table("Sessions").insert({
@@ -384,16 +396,6 @@ class AuthenticationService:
                 "createdAt": str(sessionStartTime),
                 "expiresAt": str(expiresAt)
             }).execute()
-            subscription = self._ensureSubscriptionSnapshot(dataSlice["userId"])
-            subscriptionDaysLeft = self._refreshLifecycleSnapshot(
-                dataSlice["userId"],
-                subscription,
-            )
-            subscriptionStatus = self._mapSubscriptionStatus(subscription.get("status") if subscription else None)
-            subscriptionPlan = self._mapBillingModeToPlan(
-                subscription.get("billing_mode") if subscription else None,
-                subscription.get("status") if subscription else None,
-            )
             profileImage = dataSlice.get("profileImage") or DEFAULT_PROFILE_IMAGE
             return {
                 "status": "SUCCESS",
@@ -513,7 +515,9 @@ class AuthenticationService:
             tokenPayload = {
                 "userId": userData["userId"],
                 "email": userData["email"],
-                "sessionStartTime": str(sessionStartTime)
+                "sessionStartTime": str(sessionStartTime),
+                "sub_status": (subscription.get("status") or "none").lower(),
+                "plan_type": subscriptionPlan,
             }
             accessToken = jwt.encode(tokenPayload, os.environ["SECRET_KEY"], "HS256")
             self.client.table("Sessions").insert({

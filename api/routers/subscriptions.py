@@ -87,12 +87,13 @@ async def verifySubscription(
         ORJSONResponse: Verification result.
     """
     try:
-        subscriptionService.verifySubscription(payload=payload.dict(), token=token)
+        result = subscriptionService.verifySubscription(payload=payload.dict(), token=token)
         return ORJSONResponse(
             status_code=200,
             content={
                 "status": "SUCCESS",
-                "message": "Subscription verified successfully."
+                "message": "Subscription verified successfully.",
+                **(result or {}),
             }
         )
     except CustomException as e:

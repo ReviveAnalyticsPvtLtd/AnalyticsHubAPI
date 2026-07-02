@@ -7,7 +7,7 @@ for debugging and logging.
 
 __version__ = "1.0.0"
 __author__ = "Rauhan Ahmed Siddiqui"
-__all__ = ["CustomException"]
+__all__ = ["CustomException", "raiseHttpException", "raiseFeatureGateHttpException"]
 
 
 from fastapi import HTTPException
@@ -51,4 +51,25 @@ def raiseHttpException(e: CustomException):
             "message": e.uiMessage,
             "backendLogMessage": e.customErrorMessage,
         }
+    )
+
+
+def raiseFeatureGateHttpException(
+    statusCode: int,
+    uiMessage: str,
+    backendLogMessage: str,
+    errorCode: str,
+) -> None:
+    """
+    Raise a feature-gate HTTPException using the same response shape as
+    raiseHttpException, plus errorCode for frontend discrimination.
+    """
+    raise HTTPException(
+        status_code=statusCode,
+        detail={
+            "status": statusCode,
+            "message": uiMessage,
+            "backendLogMessage": backendLogMessage,
+            "errorCode": errorCode,
+        },
     )

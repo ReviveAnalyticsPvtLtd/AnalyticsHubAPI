@@ -1051,6 +1051,26 @@ class ManagementService:
             nextBilling = None
             if currentStatus == "ACTIVE":
                 nextBilling = subscription.get("renewal_due_at") or expiryStr
+
+            dbStatus = (subscription.get("status") or "none").lower()
+            freshPlanType = self._mapBillingModeToPlanType(
+                subscription.get("billing_mode"),
+                subscription.get("status"),
+            )
+            jwtStatus = decodedToken.get("sub_status", "none")
+            jwtPlanType = decodedToken.get("plan_type", "none")
+            refreshedAccessToken = None
+            if jwtStatus != dbStatus or jwtPlanType != freshPlanType:
+                decodedToken["sub_status"] = dbStatus
+                decodedToken["plan_type"] = freshPlanType
+                refreshedAccessToken = jwt.encode(
+                    decodedToken, os.environ["SECRET_KEY"], "HS256"
+                )
+                self.client.table("Sessions") \
+                    .update({"accessToken": refreshedAccessToken}) \
+                    .eq("accessToken", token) \
+                    .execute()
+
             profileResponse = {
                 "userId": record.get("userId"),
                 "userName": record.get("fullName"),
@@ -1060,10 +1080,7 @@ class ManagementService:
                 "position": record.get("role"),
                 "bio": record.get("profileBio"),
                 "plan": {
-                    "planType": self._mapBillingModeToPlanType(
-                        subscription.get("billing_mode"),
-                        subscription.get("status"),
-                    ),
+                    "planType": freshPlanType,
                     "status": currentStatus,
                     "planExpire": expiryStr,
                     "nextBilling": nextBilling,
@@ -1075,6 +1092,8 @@ class ManagementService:
                     "renewalDueAt": subscription.get("renewal_due_at"),
                 }
             }
+            if refreshedAccessToken:
+                profileResponse["accessToken"] = refreshedAccessToken
             return profileResponse
         except CustomException:
             raise
