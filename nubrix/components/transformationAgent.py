@@ -211,8 +211,11 @@ class TransformationAgent:
         chatHistory: list[dict],
     ) -> TransformationAgentResponse:
         """
-        Generate a structured transformation response.
+        Generate a structured transformation response, with self-healing retries.
         """
+        from nubrix.components.transformationExecutor import TransformationExecutor
+        executor = TransformationExecutor()
+
         try:
             formattedInput = self._buildInput(userMessage=userMessage, metadata=metadata)
             messages = await self._getMessages(
@@ -220,40 +223,78 @@ class TransformationAgent:
                 formattedInput=formattedInput,
                 transformationId=transformationId,
             )
-            raw_res = await self.boundLlm.ainvoke(messages)
-            
-            # Custom parsing to guarantee a robust structured response or a clean text fallback
-            response = None
-            if raw_res.tool_calls:
-                args = raw_res.tool_calls[0]["args"]
-                response = TransformationAgentResponse(
-                    pythonCode=args.get("pythonCode"),
-                    mermaidCode=args.get("mermaidCode"),
-                    userFacingResponse=args.get("userFacingResponse") or ""
-                )
-            else:
-                text = raw_res.content.strip()
-                # Clean enclosing markdown blocks if present
-                if text.startswith("```json"):
-                    text = text[7:]
-                if text.endswith("```"):
-                    text = text[:-3]
-                text = text.strip()
+
+            max_retries = 3
+            current_messages = list(messages)
+
+            for attempt in range(max_retries):
+                raw_res = await self.boundLlm.ainvoke(current_messages)
                 
+                # Custom parsing to guarantee a robust structured response or a clean text fallback
+                response = None
+                if raw_res.tool_calls:
+                    args = raw_res.tool_calls[0]["args"]
+                    response = TransformationAgentResponse(
+                        pythonCode=args.get("pythonCode"),
+                        mermaidCode=args.get("mermaidCode"),
+                        userFacingResponse=args.get("userFacingResponse") or ""
+                    )
+                else:
+                    text = raw_res.content.strip()
+                    # Clean enclosing markdown blocks if present
+                    if text.startswith("```json"):
+                        text = text[7:]
+                    if text.endswith("```"):
+                        text = text[:-3]
+                    text = text.strip()
+                    
+                    try:
+                        parsed = json.loads(text)
+                        response = TransformationAgentResponse(
+                            pythonCode=parsed.get("pythonCode"),
+                            mermaidCode=parsed.get("mermaidCode"),
+                            userFacingResponse=parsed.get("userFacingResponse") or ""
+                        )
+                    except Exception:
+                        # Treat the raw text block directly as a userFacingResponse conversational fallback
+                        response = TransformationAgentResponse(
+                            pythonCode=None,
+                            mermaidCode=None,
+                            userFacingResponse=raw_res.content
+                        )
+
+                # If no Python code is returned (e.g. conversational response or clarification),
+                # no execution is needed, return it directly.
+                if not response.pythonCode:
+                    return response
+
+                # Test execution of the generated Python code
                 try:
-                    parsed = json.loads(text)
-                    response = TransformationAgentResponse(
-                        pythonCode=parsed.get("pythonCode"),
-                        mermaidCode=parsed.get("mermaidCode"),
-                        userFacingResponse=parsed.get("userFacingResponse") or ""
-                    )
-                except Exception:
-                    # Treat the raw text block directly as a userFacingResponse conversational fallback
-                    response = TransformationAgentResponse(
-                        pythonCode=None,
-                        mermaidCode=None,
-                        userFacingResponse=raw_res.content
-                    )
+                    executor._execute_code(projectId=projectId, pythonCode=response.pythonCode)
+                    # If it successfully executed, return the working response!
+                    logger.info(f"Generated python code executed successfully on attempt {attempt + 1}.")
+                    return response
+                except Exception as e:
+                    error_msg = str(e)
+                    logger.warning(f"Transformation code execution failed on attempt {attempt + 1}: {error_msg}")
+                    if attempt == max_retries - 1:
+                        # Out of retries, return the response as is (caller will handle the error)
+                        return response
+                    
+                    # Feed the error back to the model for self-healing
+                    # We append the model's failed attempt and a correction request
+                    current_messages.append(AIMessage(content=json.dumps({
+                        "pythonCode": response.pythonCode,
+                        "mermaidCode": response.mermaidCode,
+                        "userFacingResponse": response.userFacingResponse
+                    })))
+                    current_messages.append(HumanMessage(content=(
+                        f"The Python code you generated failed to execute with the following error:\n"
+                        f"```\n{error_msg}\n```\n"
+                        "Please analyze the error, rewrite the Python code and Mermaid diagram to resolve it, "
+                        "and ensure the output is correct and executable."
+                    )))
+            
             return response
         except Exception as e:
             exception = CustomException(e)
