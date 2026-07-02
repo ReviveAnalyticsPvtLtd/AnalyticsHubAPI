@@ -184,7 +184,7 @@ class SubscriptionService:
         payload["plan_type"] = newPlanType
         newToken = jwt.encode(payload, os.environ["SECRET_KEY"], "HS256")
         now = str(datetime.datetime.now(datetime.timezone.utc))
-        self.client.table("Sessions").insert({
+        self.client.table("Sessions").upsert({
             "userId": session["userId"],
             "email": session["email"],
             "accessToken": newToken,
@@ -192,7 +192,7 @@ class SubscriptionService:
             "lastActivity": now,
             "createdAt": now,
             "expiresAt": session.get("expiresAt", now),
-        }).execute()
+        }, on_conflict="accessToken").execute()
         return newToken
 
     def _createFrozenInvoiceFromSnapshot(

@@ -1074,7 +1074,7 @@ class ManagementService:
                 if oldSession:
                     sess = oldSession[0]
                     now = str(datetime.datetime.now(datetime.timezone.utc))
-                    self.client.table("Sessions").insert({
+                    self.client.table("Sessions").upsert({
                         "userId": sess["userId"],
                         "email": sess["email"],
                         "accessToken": refreshedAccessToken,
@@ -1082,7 +1082,7 @@ class ManagementService:
                         "lastActivity": now,
                         "createdAt": now,
                         "expiresAt": sess.get("expiresAt", now),
-                    }).execute()
+                    }, on_conflict="accessToken").execute()
 
             profileResponse = {
                 "userId": record.get("userId"),
