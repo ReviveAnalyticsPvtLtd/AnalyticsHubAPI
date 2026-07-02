@@ -1066,10 +1066,23 @@ class ManagementService:
                 refreshedAccessToken = jwt.encode(
                     decodedToken, os.environ["SECRET_KEY"], "HS256"
                 )
-                self.client.table("Sessions") \
-                    .update({"accessToken": refreshedAccessToken}) \
+                oldSession = self.client.table("Sessions") \
+                    .select("userId, email, sessionStartTime, expiresAt") \
                     .eq("accessToken", token) \
-                    .execute()
+                    .limit(1) \
+                    .execute().data
+                if oldSession:
+                    sess = oldSession[0]
+                    now = str(datetime.datetime.now(datetime.timezone.utc))
+                    self.client.table("Sessions").insert({
+                        "userId": sess["userId"],
+                        "email": sess["email"],
+                        "accessToken": refreshedAccessToken,
+                        "sessionStartTime": sess.get("sessionStartTime", now),
+                        "lastActivity": now,
+                        "createdAt": now,
+                        "expiresAt": sess.get("expiresAt", now),
+                    }).execute()
 
             profileResponse = {
                 "userId": record.get("userId"),

@@ -166,17 +166,33 @@ class SubscriptionService:
         self, oldToken: str, newStatus: str, newPlanType: str
     ) -> str:
         """
-        Re-mint the JWT with updated subscription claims and swap the
-        Sessions row so the old token is immediately invalidated.
+        Re-mint the JWT with updated subscription claims and insert a
+        new Sessions row for the fresh token.  The old session row is
+        left intact so in-flight requests using the previous token
+        continue to pass verifyToken until natural expiry.
         """
+        oldSession = self.client.table("Sessions") \
+            .select("userId, email, sessionStartTime, expiresAt") \
+            .eq("accessToken", oldToken) \
+            .limit(1) \
+            .execute().data
+        if not oldSession:
+            raise Exception("Session not found for token reissue")
+        session = oldSession[0]
         payload = jwt.decode(oldToken, os.environ["SECRET_KEY"], algorithms=["HS256"])
         payload["sub_status"] = newStatus
         payload["plan_type"] = newPlanType
         newToken = jwt.encode(payload, os.environ["SECRET_KEY"], "HS256")
-        self.client.table("Sessions") \
-            .update({"accessToken": newToken}) \
-            .eq("accessToken", oldToken) \
-            .execute()
+        now = str(datetime.datetime.now(datetime.timezone.utc))
+        self.client.table("Sessions").insert({
+            "userId": session["userId"],
+            "email": session["email"],
+            "accessToken": newToken,
+            "sessionStartTime": session.get("sessionStartTime", now),
+            "lastActivity": now,
+            "createdAt": now,
+            "expiresAt": session.get("expiresAt", now),
+        }).execute()
         return newToken
 
     def _createFrozenInvoiceFromSnapshot(
