@@ -15,8 +15,9 @@ import time
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from app.core import concurrency
 from app.core.auth import verify_request
-from app.core.concurrency import execution_pool, CapacityExhaustedError
+from app.core.concurrency import CapacityExhaustedError
 from app.core.config import settings
 from app.core.logging import logger
 from app.executor.models import (
@@ -50,7 +51,7 @@ async def execute_sync(request: Request):
     _validate_mode(exec_request.mode)
 
     try:
-        await execution_pool.acquire()
+        await concurrency.execution_pool.acquire()
     except CapacityExhaustedError:
         return JSONResponse(
             status_code=429,
@@ -65,7 +66,7 @@ async def execute_sync(request: Request):
     try:
         result = await execute_code(exec_request)
     finally:
-        await execution_pool.release()
+        await concurrency.execution_pool.release()
 
     _log_execution(result, exec_request)
 
@@ -136,7 +137,7 @@ async def execute_batch_sync(request: Request):
 async def _execute_with_semaphore(exec_request: ExecutionRequest) -> ExecutionResponse:
     """Acquire semaphore, execute, release. On capacity exhaustion, return rejection."""
     try:
-        await execution_pool.acquire()
+        await concurrency.execution_pool.acquire()
     except CapacityExhaustedError:
         return ExecutionResponse(
             execution_id=exec_request.execution_id,
@@ -148,7 +149,7 @@ async def _execute_with_semaphore(exec_request: ExecutionRequest) -> ExecutionRe
     try:
         return await execute_code(exec_request)
     finally:
-        await execution_pool.release()
+        await concurrency.execution_pool.release()
 
 
 _VALID_MODES = {"reporting_chart", "reporting_report", "dashboard_widget", "dashboard_filter"}

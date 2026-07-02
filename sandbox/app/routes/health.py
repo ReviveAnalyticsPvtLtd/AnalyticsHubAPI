@@ -15,8 +15,8 @@ import redis
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
+from app.core import concurrency
 from app.core.config import settings
-from app.core.concurrency import execution_pool
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -50,8 +50,8 @@ async def readiness():
         checks["redis"] = f"fail: {e}"
         return JSONResponse(status_code=503, content={"status": "not_ready", "checks": checks})
 
-    if execution_pool:
-        pool_stats = execution_pool.stats
+    if concurrency.execution_pool:
+        pool_stats = concurrency.execution_pool.stats
         checks["execution_pool"] = pool_stats
         if pool_stats["active"] >= pool_stats["max_concurrent"] and pool_stats["waiting"] >= pool_stats["max_queue_depth"]:
             checks["capacity"] = "exhausted"
