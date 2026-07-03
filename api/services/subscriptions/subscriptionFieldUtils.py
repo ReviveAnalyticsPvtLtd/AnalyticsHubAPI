@@ -231,10 +231,12 @@ def buildChurnResetPayload(
     """
     Build a partial-reset payload for a churned subscription.
 
-    Preserves ``billing_mode``, ``razorpay_customer_id``, and identity fields
-    while clearing period dates, entitlements, pending changes, and stale
-    payment tokens.  Archives previous values in ``billing_state.churn_snapshot``
-    so support can see what was active before churn.
+    Preserves ``billing_mode``, ``razorpay_customer_id``, ``subscribed_experts``,
+    ``domain_count``, and identity fields while clearing period dates, pending
+    changes, and stale payment tokens.  Domain fields are intentionally kept so
+    expired users retain access to their project data in the frontend.
+    Archives previous values in ``billing_state.churn_snapshot`` so support can
+    see what was active before churn.
 
     Returns ``None`` when the row is already in a reset state (idempotent guard).
     """
@@ -247,8 +249,7 @@ def buildChurnResetPayload(
     period_end = subscription.get("current_period_end")
 
     already_reset = (
-        not experts
-        and period_end is None
+        period_end is None
         and current_status == "expired"
         and override_status in (None, "expired")
     )
@@ -275,8 +276,6 @@ def buildChurnResetPayload(
         "current_period_start": None,
         "current_period_end": None,
         "renewal_due_at": None,
-        "subscribed_experts": [],
-        "domain_count": 0,
         "pending_removals": [],
         "pending_additions": [],
         "razorpay_token_id": None,
