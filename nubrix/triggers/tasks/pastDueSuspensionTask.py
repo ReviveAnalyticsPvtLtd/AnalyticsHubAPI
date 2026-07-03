@@ -256,7 +256,7 @@ class PastDueSuspensionTask:
         try:
             response = requests.post(
                 url=emailUrl,
-                data=json.dumps(payload),
+                json=payload,
                 headers={"Authorization": f"Bearer {os.environ.get('SUPABASE_KEY', '')}"},
                 timeout=10,
             )
@@ -264,7 +264,7 @@ class PastDueSuspensionTask:
                 deliveryStatus = "DELIVERY_FAILED"
                 logger.warning(
                     f"Suspension notice delivery failed for user {userId}, "
-                    f"status={response.status_code}"
+                    f"status={response.status_code}: {response.text}"
                 )
         except Exception as e:
             deliveryStatus = "DELIVERY_FAILED"

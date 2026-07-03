@@ -880,18 +880,24 @@ class WebhookService:
             logger.info("PAYMENT_FAILED_EMAIL_URL not configured, skipping failure email.")
             return
         try:
-            requests.post(
+            response = requests.post(
                 url=emailUrl,
-                data=json.dumps({
+                json={
                     "email": email,
                     "name": name,
                     "reason": reason
-                }),
+                },
                 headers={
-                    "Authorization": f"Bearer {os.environ['SUPABASE_KEY']}"
+                    "Authorization": f"Bearer {os.environ.get('SUPABASE_KEY', '')}"
                 },
                 timeout=10
             )
+            if response.status_code >= 400:
+                logger.warning(
+                    f"Payment failure email failed to send to {email}, status={response.status_code}: {response.text}"
+                )
+            else:
+                logger.info(f"Payment failure email successfully dispatched to {email}")
         except Exception as e:
             logger.error(f"Failed to send payment failure email to {email}: {e}")
 
@@ -951,7 +957,7 @@ class WebhookService:
         try:
             response = requests.post(
                 url=emailUrl,
-                data=json.dumps(payload),
+                json=payload,
                 headers={"Authorization": f"Bearer {os.environ.get('SUPABASE_KEY', '')}"},
                 timeout=10,
             )
@@ -959,7 +965,7 @@ class WebhookService:
                 deliveryStatus = "DELIVERY_FAILED"
                 logger.warning(
                     f"{template} email delivery failed for user {userId}, "
-                    f"status={response.status_code}"
+                    f"status={response.status_code}: {response.text}"
                 )
         except Exception as e:
             deliveryStatus = "DELIVERY_FAILED"

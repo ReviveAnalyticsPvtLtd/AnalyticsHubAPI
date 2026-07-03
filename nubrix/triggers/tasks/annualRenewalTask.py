@@ -296,7 +296,7 @@ class AnnualRenewalTask:
         try:
             response = requests.post(
                 url=emailUrl,
-                data=json.dumps(payload),
+                json=payload,
                 headers={"Authorization": f"Bearer {os.environ.get('SUPABASE_KEY', '')}"},
                 timeout=10,
             )
@@ -304,7 +304,7 @@ class AnnualRenewalTask:
                 deliveryStatus = "DELIVERY_FAILED"
                 logger.warning(
                     f"T-30 email delivery failed for invoice {invoiceId}, "
-                    f"status={response.status_code}"
+                    f"status={response.status_code}: {response.text}"
                 )
         except Exception as e:
             deliveryStatus = "DELIVERY_FAILED"
@@ -387,7 +387,7 @@ class AnnualRenewalTask:
         try:
             response = requests.post(
                 url=emailUrl,
-                data=json.dumps(payload),
+                json=payload,
                 headers={"Authorization": f"Bearer {os.environ.get('SUPABASE_KEY', '')}"},
                 timeout=10,
             )
@@ -395,7 +395,7 @@ class AnnualRenewalTask:
                 deliveryStatus = "DELIVERY_FAILED"
                 logger.warning(
                     f"T-7 email delivery failed for invoice {invoiceId}, "
-                    f"status={response.status_code}"
+                    f"status={response.status_code}: {response.text}"
                 )
         except Exception as e:
             deliveryStatus = "DELIVERY_FAILED"

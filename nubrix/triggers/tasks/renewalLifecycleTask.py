@@ -209,14 +209,14 @@ class RenewalLifecycleTask:
         try:
             response = requests.post(
                 url=emailUrl,
-                data=json.dumps(payload),
+                json=payload,
                 headers={"Authorization": f"Bearer {os.environ.get('SUPABASE_KEY', '')}"},
                 timeout=10,
             )
             if response.status_code >= 400:
                 logger.warning(
                     f"Reminder email delivery failed for template {template}, "
-                    f"status={response.status_code}"
+                    f"status={response.status_code}: {response.text}"
                 )
                 return "DELIVERY_FAILED"
         except Exception as e:

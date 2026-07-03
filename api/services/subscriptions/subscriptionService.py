@@ -768,20 +768,29 @@ class SubscriptionService:
             email (str): The email address of the user.
             name (str): The name of the user.
         """
+        url = os.environ.get("FREE_TRIAL_EMAIL_URL")
+        if not url:
+            logger.warning("FREE_TRIAL_EMAIL_URL not configured, skipping free trial email.")
+            return
         try:
-            requests.post(
-                url=os.environ["FREE_TRIAL_EMAIL_URL"],
-                data=json.dumps({
+            response = requests.post(
+                url=url,
+                json={
                     "email": email,
                     "name": name
-                }),
+                },
                 headers={
-                    "Authorization": f"Bearer {os.environ['SUPABASE_KEY']}"
-                }
+                    "Authorization": f"Bearer {os.environ.get('SUPABASE_KEY', '')}"
+                },
+                timeout=10
             )
+            if response.status_code >= 400:
+                logger.warning(f"Free trial email failed to send to {email}, status={response.status_code}: {response.text}")
+            else:
+                logger.info(f"Free trial email successfully dispatched to {email}")
         except Exception as e:
             exception = CustomException(e)
-            logger.error(exception)
+            logger.error(f"Error while sending free trial email to {email}: {exception}")
             raise exception
 
     def activateFreeTrial(self, token: str) -> dict:
