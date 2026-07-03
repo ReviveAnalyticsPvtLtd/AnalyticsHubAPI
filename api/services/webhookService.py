@@ -500,6 +500,7 @@ class WebhookService:
             newExpiry = expiryDt + relativedelta(months=1)
             self.client.table("subscriptions").update({
                 "status": "active",
+                "plan_type": "pro",
                 "current_period_start": expiryDt.isoformat(),
                 "current_period_end": newExpiry.isoformat(),
                 "renewal_due_at": newExpiry.isoformat(),
@@ -583,6 +584,7 @@ class WebhookService:
             newExpiry = expiryDt + relativedelta(years=1)
             self.client.table("subscriptions").update({
                 "status": "active",
+                "plan_type": "annual",
                 "current_period_start": expiryDt.isoformat(),
                 "current_period_end": newExpiry.isoformat(),
                 "renewal_due_at": newExpiry.isoformat(),

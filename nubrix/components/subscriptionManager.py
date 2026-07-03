@@ -18,6 +18,7 @@ from supabase import create_client
 from datetime import datetime, timezone
 from utils.logger import logger
 from api.services.billing.billingEventService import BillingEventService
+from api.services.subscriptions.subscriptionFieldUtils import mapBillingModeToPlanType
 from api.services.subscriptions.paymentValidationService import (
     mergeSubscriptionLifecycleSnapshot,
     normalizeChurnedSubscription,
@@ -126,6 +127,7 @@ def recalculateSubscriptionDays() -> None:
             if deltaDays < 0:
                 if currentStatus not in ("expired", "suspended"):
                     updatePayload["status"] = "expired"
+                    updatePayload["plan_type"] = mapBillingModeToPlanType(billingMode, "expired")
 
             client.table("subscriptions").update(updatePayload).eq("id", subscription["id"]).execute()
 

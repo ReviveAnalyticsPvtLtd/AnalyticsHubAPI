@@ -985,6 +985,9 @@ class ManagementService:
         updatePayload = {"billing_state": billingState}
         if effectiveStatus != currentStatus:
             updatePayload["status"] = effectiveStatus
+            updatePayload["plan_type"] = mapBillingModeToPlanType(
+                subscription.get("billing_mode"), effectiveStatus,
+            )
 
         try:
             self.client.table("subscriptions").update(updatePayload).eq("user_id", userId).execute()

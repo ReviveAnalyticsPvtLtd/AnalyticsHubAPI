@@ -19,6 +19,7 @@ from api.services.billing.billingEngine import computeInvoiceSnapshot
 from api.services.billing.billingEventService import BillingEventService
 from api.services.subscriptions.subscriptionFieldUtils import (
     CANONICAL_SUBSCRIPTION_SELECT,
+    mapBillingModeToPlanType,
     normalizeDomainList,
     subscriptionAnchorDay,
     subscriptionBillingState,
@@ -119,15 +120,18 @@ class SubscriptionService:
         subscriptionAnchorDay=None,
         recurringFailures=None,
         cancellationReason=None,
+        planType: str | None = None,
     ) -> None:
         """
         Upsert canonical subscription row for a user.
         """
         existing = self._getCanonicalSubscription(userId=userId, required=False)
+        resolvedPlanType = planType or mapBillingModeToPlanType(billingMode, status)
         payload = {
             "user_id": userId,
             "billing_mode": billingMode,
             "status": status,
+            "plan_type": resolvedPlanType,
             "current_period_start": currentPeriodStart,
             "current_period_end": currentPeriodEnd,
             "renewal_due_at": renewalDueAt,
@@ -365,6 +369,7 @@ class SubscriptionService:
 
         self.client.table("subscriptions").update({
             "status": "active",
+            "plan_type": "annual",
             "current_period_start": previousExpiryNaive.isoformat(),
             "current_period_end": newExpiry.isoformat(),
             "renewal_due_at": newExpiry.isoformat(),
@@ -829,6 +834,7 @@ class SubscriptionService:
                 pendingRemovals=[],
                 pendingAdditions=[],
                 recurringFailures=0,
+                planType="free",
             )
             records = self.client.table("Users").select("fullName").eq("userId", userId).limit(1).execute()
             name = records.data[0]["fullName"] if records.data else userEmail
@@ -1114,6 +1120,7 @@ class SubscriptionService:
                     recurringFailures=0,
                     pendingRemovals=[],
                     pendingAdditions=[],
+                    planType="pro",
                 )
             else:
                 expiry = currentTime + relativedelta(years=1)
@@ -1132,6 +1139,7 @@ class SubscriptionService:
                     recurringFailures=0,
                     pendingRemovals=[],
                     pendingAdditions=[],
+                    planType="annual",
                 )
                 annualSubscription = self._getCanonicalSubscription(userId=userId, required=True)
                 self.client.table("subscriptions").update({
@@ -1738,8 +1746,11 @@ class SubscriptionService:
             currentStatus = (subscription.get("status") or "").lower()
             if not self._isSubscriptionActive(currentStatus):
                 raise Exception("No active subscription found for this user")
+            billingMode = (subscription.get("billing_mode") or "none").lower()
+            planType = mapBillingModeToPlanType(billingMode, "cancelled")
             self.client.table("subscriptions").update({
                 "status": "cancelled",
+                "plan_type": planType,
                 "auto_renew_enabled": False,
                 "cancellation_reason": reason,
             }).eq("id", subscription["id"]).execute()
@@ -1749,10 +1760,6 @@ class SubscriptionService:
                 metadata={"cancel_at_cycle_end": True, "cancellationReason": reason}
             )
             logger.info(f"Subscription scheduled for cancellation at cycle end for user {userId}")
-            billingMode = (subscription.get("billing_mode") or "none").lower()
-            planType = "pro" if billingMode == "monthly_recurring" else (
-                "annual" if billingMode == "annual_prepaid" else "free"
-            )
             newToken = self._reissueTokenWithUpdatedClaims(token, "cancelled", planType)
             return {
                 "cancelled": True,

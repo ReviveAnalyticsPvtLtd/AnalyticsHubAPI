@@ -129,6 +129,9 @@ class AuthenticationService:
         updatePayload = {"billing_state": billingState}
         if effectiveStatus != currentStatus:
             updatePayload["status"] = effectiveStatus
+            updatePayload["plan_type"] = mapBillingModeToPlanType(
+                subscription.get("billing_mode"), effectiveStatus,
+            )
 
         try:
             self.client.table("subscriptions").update(updatePayload).eq("user_id", userId).execute()
@@ -154,6 +157,7 @@ class AuthenticationService:
             "user_id": userId,
             "billing_mode": "none",
             "status": "none",
+            "plan_type": "none",
             "auto_renew_enabled": False,
             "payment_collection_mode": "authenticated_checkout",
             "default_currency": "INR",

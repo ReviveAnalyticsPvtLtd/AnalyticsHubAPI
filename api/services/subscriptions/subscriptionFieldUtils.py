@@ -43,7 +43,7 @@ SUBSCRIPTION_BILLING_FIELDS_SELECT = (
 )
 
 CANONICAL_SUBSCRIPTION_SELECT = (
-    "id, user_id, billing_mode, status, current_period_start, current_period_end, "
+    "id, user_id, billing_mode, status, plan_type, current_period_start, current_period_end, "
     "renewal_due_at, auto_renew_enabled, payment_collection_mode, "
     "default_currency, version, "
     f"{SUBSCRIPTION_BILLING_FIELDS_SELECT}"
@@ -193,6 +193,10 @@ def toApiPlanFields(subscription: dict | None) -> dict:
         "subscribedExperts": subscriptionExperts(subscription),
         "domainCount": subscriptionDomainCount(subscription),
         "pendingRemovals": subscriptionPendingRemovals(subscription),
+        "planType": (subscription or {}).get("plan_type") or mapBillingModeToPlanType(
+            (subscription or {}).get("billing_mode"),
+            (subscription or {}).get("status"),
+        ),
     }
 
 
@@ -286,5 +290,8 @@ def buildChurnResetPayload(
 
     if override_status:
         payload["status"] = override_status
+        payload["plan_type"] = mapBillingModeToPlanType(
+            subscription.get("billing_mode"), override_status,
+        )
 
     return payload
