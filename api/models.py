@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from enum import Enum
 
 class SignUp(BaseModel):
@@ -276,6 +276,15 @@ class TransformationAgentResponse(BaseModel):
         ...,
         description="A concise sentence/paragraph explaining the business impact, answering the user's question, or replying to their message."
     )
+
+    @model_validator(mode="after")
+    def validate_parity_and_final_df(self) -> 'TransformationAgentResponse':
+        if self.mermaidCode and not self.pythonCode:
+            raise ValueError("pythonCode cannot be None/empty when mermaidCode is provided.")
+        if self.pythonCode:
+            if "final_df" not in self.pythonCode:
+                raise ValueError("pythonCode must define or reference the 'final_df' variable.")
+        return self
 
 class TablePreviewResponse(BaseModel):
     data: list[dict]

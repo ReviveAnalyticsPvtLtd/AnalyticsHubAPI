@@ -10,7 +10,8 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["TransformationAgent"]
 
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 from utils.exceptionHandler import CustomException
 from api.models import TransformationAgentResponse
@@ -50,8 +51,6 @@ class TransformationAgent:
             temperature=self.config.getfloat("TRANSFORMATIONAGENT", "temperature"),
             max_tokens=self.config.getint("TRANSFORMATIONAGENT", "maxTokens", fallback=8192),
         )
-        # Bind tool definition for structured generation
-        self.boundLlm = self.llm.bind_tools([TransformationAgentResponse])
         # LRU cache for raw LLM summaries (keyed by message-id chain)
         self._historySummaryCache: OrderedDict[str, str] = OrderedDict()
         # Per-thread summary state (keyed by transformationId)
@@ -211,90 +210,189 @@ class TransformationAgent:
         chatHistory: list[dict],
     ) -> TransformationAgentResponse:
         """
-        Generate a structured transformation response, with self-healing retries.
+        Generate a structured transformation response, with self-healing retries and a ReAct agent loop.
         """
         from nubrix.components.transformationExecutor import TransformationExecutor
+        from langchain.agents import create_agent
+        from langchain_core.tools import tool
+
         executor = TransformationExecutor()
 
+        # Define the inspection tool
+        @tool
+        def inspect_dataset(pythonCode: str) -> str:
+            """
+            Run pandas inspection code in a safe Python sandbox on the project's data.
+            Use this tool to inspect table shapes, column names, duplicate counts, unique values, and sample data.
+            Your code MUST fetch data using fetch_data(projectId, '<table_name>'), perform inspection operations, and print the results.
+            The printed output will be returned to you. Limit pythonCode to read-only inspection operations.
+            """
+            code_to_exec = pythonCode.strip()
+            # If the LLM wraps the argument as a JSON/dict object, defensively unpack it
+            if (code_to_exec.startswith("{") and code_to_exec.endswith("}")) or "pythonCode" in code_to_exec:
+                try:
+                    parsed = json.loads(code_to_exec)
+                    if isinstance(parsed, dict) and "pythonCode" in parsed:
+                        code_to_exec = parsed["pythonCode"]
+                except Exception:
+                    # Attempt simple regex extraction for escaped/nested quotes
+                    import re
+                    match = re.search(r'"pythonCode"\s*:\s*"(.*?)"', code_to_exec, re.DOTALL)
+                    if match:
+                        try:
+                            code_to_exec = match.group(1).encode().decode('unicode-escape')
+                        except Exception:
+                            code_to_exec = match.group(1)
+            
+            return executor.executeInspection(projectId, code_to_exec)
+
+        tools = [inspect_dataset]
+
         try:
-            formattedInput = self._buildInput(userMessage=userMessage, metadata=metadata)
-            messages = await self._getMessages(
-                chatHistory=chatHistory,
-                formattedInput=formattedInput,
-                transformationId=transformationId,
+            # Load previous code context from database messages
+            last_python_code = None
+            last_mermaid_code = None
+            for msg in reversed(chatHistory):
+                if msg.get("role") == "assistant" and msg.get("python_code"):
+                    last_python_code = msg.get("python_code")
+                    last_mermaid_code = msg.get("artifact", {}).get("code") if msg.get("artifact") else None
+                    break
+
+            active_code_prefix = ""
+            if last_python_code:
+                active_code_prefix = (
+                    "Current Active Code State:\n"
+                    f"### Python Code:\n```python\n{last_python_code}\n```\n\n"
+                    f"### Mermaid Flowchart:\n```mermaid\n{last_mermaid_code or ''}\n```\n"
+                    "CRITICAL DIRECTIVE: You must build upon, modify, or extend this active code state. "
+                    "Your output Python code must represent the cumulative pipeline (including the previous steps and the new step). "
+                    "Do not restart from scratch unless the user explicitly requests a reset.\n\n"
+                )
+
+            # Build system_prompt and base input
+            metadataJson = json.dumps(metadata, ensure_ascii=False, default=str)
+            system_prompt = self.systemPrompt.replace("{metadata}", metadataJson).replace("{user_request}", userMessage)
+            
+            base_input = active_code_prefix + f"Please perform the transformation: {userMessage}"
+
+            # Format the conversation history
+            messages = []
+            for msg in chatHistory:
+                role = "user" if msg.get("role") == "user" else "assistant"
+                content = msg.get("content") or ""
+                if msg.get("python_code"):
+                    content += f"\nGenerated Python Code:\n```python\n{msg.get('python_code')}\n```"
+                if msg.get("artifact", {}).get("code"):
+                    content += f"\nGenerated Flowchart:\n```mermaid\n{msg.get('artifact', {}).get('code')}\n```"
+                messages.append((role, content))
+
+            # Instantiate the LangChain 1.x agent using create_agent
+            agent = create_agent(
+                model=self.llm,
+                tools=tools,
+                system_prompt=system_prompt,
+                response_format=TransformationAgentResponse
             )
 
+            # Custom parser helper in case structured_response is missing
+            def parse_agent_response(text: str) -> tuple[TransformationAgentResponse | None, str | None]:
+                text = text.strip()
+                # Clean enclosing markdown blocks if present
+                clean_text = text
+                if clean_text.startswith("```json"):
+                    clean_text = clean_text[7:]
+                if clean_text.endswith("```"):
+                    clean_text = clean_text[:-3]
+                clean_text = clean_text.strip()
+                
+                try:
+                    parsed = json.loads(clean_text)
+                    resp = TransformationAgentResponse(
+                        pythonCode=parsed.get("pythonCode"),
+                        mermaidCode=parsed.get("mermaidCode"),
+                        userFacingResponse=parsed.get("userFacingResponse") or ""
+                    )
+                    return resp, None
+                except Exception:
+                    start = text.find('{')
+                    end = text.rfind('}')
+                    if start != -1 and end != -1 and end > start:
+                        preamble = text[:start].strip()
+                        json_candidate = text[start:end+1]
+                        try:
+                            parsed = json.loads(json_candidate)
+                            user_resp = parsed.get("userFacingResponse") or ""
+                            if preamble:
+                                user_resp = f"{preamble}\n\n{user_resp}"
+                            resp = TransformationAgentResponse(
+                                pythonCode=parsed.get("pythonCode"),
+                                mermaidCode=parsed.get("mermaidCode"),
+                                userFacingResponse=user_resp
+                            )
+                            return resp, None
+                        except Exception as e:
+                            return None, f"JSON candidate block found but failed to parse/validate: {str(e)}"
+
+                resp = TransformationAgentResponse(
+                    pythonCode=None,
+                    mermaidCode=None,
+                    userFacingResponse=text
+                )
+                return resp, None
+
             max_retries = 3
-            current_messages = list(messages)
+            error_feedback = ""
 
             for attempt in range(max_retries):
-                raw_res = await self.boundLlm.ainvoke(current_messages)
-                
-                # Custom parsing to guarantee a robust structured response or a clean text fallback
-                response = None
-                if raw_res.tool_calls:
-                    args = raw_res.tool_calls[0]["args"]
-                    response = TransformationAgentResponse(
-                        pythonCode=args.get("pythonCode"),
-                        mermaidCode=args.get("mermaidCode"),
-                        userFacingResponse=args.get("userFacingResponse") or ""
-                    )
-                else:
-                    text = raw_res.content.strip()
-                    # Clean enclosing markdown blocks if present
-                    if text.startswith("```json"):
-                        text = text[7:]
-                    if text.endswith("```"):
-                        text = text[:-3]
-                    text = text.strip()
-                    
-                    try:
-                        parsed = json.loads(text)
-                        response = TransformationAgentResponse(
-                            pythonCode=parsed.get("pythonCode"),
-                            mermaidCode=parsed.get("mermaidCode"),
-                            userFacingResponse=parsed.get("userFacingResponse") or ""
-                        )
-                    except Exception:
-                        # Treat the raw text block directly as a userFacingResponse conversational fallback
-                        response = TransformationAgentResponse(
-                            pythonCode=None,
-                            mermaidCode=None,
-                            userFacingResponse=raw_res.content
-                        )
+                # Construct final prompt with feedback if there was a previous failure
+                current_input = base_input
+                if error_feedback:
+                    current_input = f"{base_input}\n\n[RETRY FEEDBACK]: Your previous response failed with the following error:\n{error_feedback}\nPlease correct the formatting and code structure."
 
-                # If no Python code is returned (e.g. conversational response or clarification),
-                # no execution is needed, return it directly.
+                # Append current user query
+                current_messages = list(messages) + [("user", current_input)]
+
+                # Invoke the agent graph
+                res = await agent.ainvoke({
+                    "messages": current_messages
+                })
+
+                response = res.get("structured_response")
+                if not response:
+                    last_msg = res["messages"][-1]
+                    response, parse_err = parse_agent_response(last_msg.content)
+                else:
+                    parse_err = None
+
+                if parse_err:
+                    logger.warning(f"Agent response parsing failed on attempt {attempt + 1}: {parse_err}")
+                    error_feedback = (
+                        f"Your output failed structure or schema validation with the following error:\n"
+                        f"{parse_err}\n"
+                        "Please correct the output format, ensure pythonCode and mermaidCode are aligned, "
+                        "and strictly conform to the expected JSON schema."
+                    )
+                    continue
+
                 if not response.pythonCode:
                     return response
 
                 # Test execution of the generated Python code
                 try:
                     executor._execute_code(projectId=projectId, pythonCode=response.pythonCode)
-                    # If it successfully executed, return the working response!
                     logger.info(f"Generated python code executed successfully on attempt {attempt + 1}.")
                     return response
                 except Exception as e:
                     error_msg = str(e)
                     logger.warning(f"Transformation code execution failed on attempt {attempt + 1}: {error_msg}")
-                    if attempt == max_retries - 1:
-                        # Out of retries, return the response as is (caller will handle the error)
-                        return response
-                    
-                    # Feed the error back to the model for self-healing
-                    # We append the model's failed attempt and a correction request
-                    current_messages.append(AIMessage(content=json.dumps({
-                        "pythonCode": response.pythonCode,
-                        "mermaidCode": response.mermaidCode,
-                        "userFacingResponse": response.userFacingResponse
-                    })))
-                    current_messages.append(HumanMessage(content=(
+                    error_feedback = (
                         f"The Python code you generated failed to execute with the following error:\n"
-                        f"```\n{error_msg}\n```\n"
+                        f"{error_msg}\n"
                         "Please analyze the error, rewrite the Python code and Mermaid diagram to resolve it, "
                         "and ensure the output is correct and executable."
-                    )))
-            
+                    )
+
+            # If all retries failed, return the last parsed response
             return response
         except Exception as e:
             exception = CustomException(e)

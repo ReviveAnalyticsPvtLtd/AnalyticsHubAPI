@@ -97,6 +97,33 @@ class TransformationExecutor:
             raise ValueError("final_df must be a pandas DataFrame.")
         return finalDf
 
+    def executeInspection(self, projectId: str, pythonCode: str) -> str:
+        """
+        Execute inspection code in the sandbox and return stdout + stderr.
+        """
+        stdoutBuffer = io.StringIO()
+        stderrBuffer = io.StringIO()
+        executionGlobals = {
+            "__builtins__": self._safe_builtins(),
+            "datetime": datetime,
+            "fetch_data": fetch_data,
+            "math": math,
+            "np": np,
+            "pd": pd,
+            "projectId": projectId,
+            "serializer": serializer,
+        }
+        try:
+            with redirect_stdout(stdoutBuffer), redirect_stderr(stderrBuffer):
+                exec(pythonCode, executionGlobals)
+            output = stdoutBuffer.getvalue()
+            errors = stderrBuffer.getvalue()
+            if errors:
+                return f"Stdout:\n{output}\nStderr/Errors:\n{errors}"
+            return output if output else "Inspection executed successfully with no output."
+        except Exception as e:
+            return f"Execution failed with error:\n{str(e)}\nStdout:\n{stdoutBuffer.getvalue()}\nStderr:\n{stderrBuffer.getvalue()}"
+
     def executeAndPreview(self, projectId: str, pythonCode: str, tableName: str) -> tuple[list[dict], bytes]:
         """
         Execute code and return preview rows plus parquet bytes.
