@@ -50,6 +50,7 @@ dependencies = [
     "scikit-learn>=1.7.0",
     "scipy>=1.15.3",
     "seaborn>=0.13.2",
+    "setuptools==80.9.0",
     "sqlalchemy>=2.0.41",
     "statsmodels>=0.14.5",
     "supabase>=2.16.0",
