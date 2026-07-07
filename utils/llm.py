@@ -8,6 +8,8 @@ def getGenaiLlm(model: str, temperature: float, max_tokens: int = None) -> ChatG
     """
     # Enforce NO_GCE_CHECK to disable GCE metadata checks globally in google-auth
     os.environ["NO_GCE_CHECK"] = "true"
+    # Force the use of Google AI Studio (API key) instead of Vertex AI (which requires GCP IAM credentials)
+    os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "false"
     
     api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not api_key:
