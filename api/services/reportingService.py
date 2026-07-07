@@ -327,7 +327,7 @@ class ReportingService:
             raise exception
 
     @staticmethod
-    def _generateSingleChartForParallel(metadata: dict, projectId: str, query: str) -> dict:
+    def _generateSingleChartForParallel(metadata: dict, projectId: str, query: str, userId: str | None = None) -> dict:
         """
         Helper function to generate a single chart in parallel.
 
@@ -335,6 +335,7 @@ class ReportingService:
             metadata: The metadata for the project.
             projectId: The project ID.
             query: The input query for the chart.
+            userId: The user ID for credit/observability tracking.
 
         Returns:
             dict: The generated chart data.
@@ -342,11 +343,19 @@ class ReportingService:
         try:
             from utils.llm import getLangfuseConfig
             workflow = threadLocal.parallelWorkflow
+            reportConfig = getLangfuseConfig(
+                trace_name="ParallelReportingWorkflow", projectId=projectId, userId=userId,
+                tags=["reporting", "parallelChart"],
+            )
+            if userId:
+                reportConfig.setdefault("callbacks", []).append(
+                    CreditTrackingCallback(userId=userId, operationType="reporting_query")
+                )
             response = workflow.invoke({
                 "metadata": metadata,
                 "inputQuery": query,
                 "projectId": projectId
-            }, config=getLangfuseConfig(trace_name="ParallelReportingWorkflow", projectId=projectId))
+            }, config=reportConfig or None)
             _ = response.pop("metadata", None)
             _ = response.pop("rephrasedQuery", None)
             _ = response.pop("codeOutput", None)
@@ -390,7 +399,7 @@ class ReportingService:
 
             with ThreadPoolExecutor(max_workers=6, initializer=initParallelWorkflow) as executor:
                 futures = [
-                    executor.submit(self._generateSingleChartForParallel, metadata, details.projectId, query)
+                    executor.submit(self._generateSingleChartForParallel, metadata, details.projectId, query, userId)
                     for query in uniqueQueries
                 ]
                 responses = [f.result() for f in futures]

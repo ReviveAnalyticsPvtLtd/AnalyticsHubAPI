@@ -28,7 +28,7 @@ class SpeechToText:
         self.config = getConfig(os.path.join(os.getcwd(), "config.ini"))
         self.client = Groq()
 
-    def getTranscript(self, b64String = str) -> str:
+    def getTranscript(self, b64String = str) -> dict:
         """
         Converts a base64-encoded audio string to a text transcript using the configured speech-to-text model.
 
@@ -36,7 +36,8 @@ class SpeechToText:
             b64String (str): The base64-encoded audio string (default: str).
 
         Returns:
-            str: The transcribed text from the audio input.
+            dict: {"text": str, "duration": float | None} where duration is audio
+                  length in seconds (available with verbose_json response format).
 
         Raises:
             CustomException: If transcription fails or an error occurs in the process.
@@ -45,9 +46,11 @@ class SpeechToText:
             logger.info("generating transcript.")
             transcription = self.client.audio.transcriptions.create(
                 url = f'data:audio/webm;base64,{b64String}',
-                model = self.config.get("SPEECHTOTEXT", "model")
+                model = self.config.get("SPEECHTOTEXT", "model"),
+                response_format = "verbose_json",
             )
-            return transcription.text.strip()
+            duration = getattr(transcription, "duration", None)
+            return {"text": transcription.text.strip(), "duration": duration}
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)

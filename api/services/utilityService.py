@@ -52,6 +52,11 @@ class UtilityService:
         self.speechToTextModule = SpeechToText()
         self.client = client
     
+    # ~50 estimated tokens per second of audio for billing purposes (covers
+    # input processing overhead on top of output token generation).
+    _STT_TOKENS_PER_SECOND = 50
+    _STT_MIN_TOKENS = 200
+
     def getSpeechTranscript(self, speechToText: SpeechToTextModel, userId: str | None = None) -> str:
         """
         Converts base64-encoded audio to text using the SpeechToText module.
@@ -65,11 +70,18 @@ class UtilityService:
             CustomException: If transcription fails.
         """
         try:
-            transcriptText = self.speechToTextModule.getTranscript(b64String = speechToText.b64String)
+            result = self.speechToTextModule.getTranscript(b64String = speechToText.b64String)
+            transcriptText = result["text"]
+            audioDuration = result.get("duration")
+
             if userId:
                 try:
                     from api.services.credits.creditService import creditService
-                    creditService.deductCredits(userId=userId, tokensUsed=200, operationType="speech_to_text")
+                    if audioDuration is not None and audioDuration > 0:
+                        estimatedTokens = max(self._STT_MIN_TOKENS, int(audioDuration * self._STT_TOKENS_PER_SECOND))
+                    else:
+                        estimatedTokens = self._STT_MIN_TOKENS
+                    creditService.deductCredits(userId=userId, tokensUsed=estimatedTokens, operationType="speech_to_text")
                 except Exception as e:
                     logger.warning(f"STT credit deduction failed: {e}")
                 try:
@@ -80,7 +92,7 @@ class UtilityService:
                         userId=userId,
                         name="speech-to-text",
                         model=sttModel,
-                        inputSummary={"type": "audio/webm", "encoding": "base64"},
+                        inputSummary={"type": "audio/webm", "encoding": "base64", "duration_seconds": audioDuration},
                         output=transcriptText,
                         tags=["utility", "speech_to_text"],
                     )
