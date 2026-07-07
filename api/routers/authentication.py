@@ -13,7 +13,7 @@ from utils.exceptionHandler import CustomException, raiseHttpException
 from api.services.authenticationService import authenticationService, DEFAULT_PROFILE_IMAGE
 from fastapi import APIRouter, Depends
 from fastapi.responses import ORJSONResponse
-from api.commons import verifyToken, verifyTokenWithExpiry
+from api.commons import verifyToken, verifyTokenWithExpiry, verifyUser, UserContext
 from api.models import (
     OnboardingDetails,
     LoginWithProvider,
@@ -25,17 +25,27 @@ from api.models import (
 router = APIRouter()
 
 @router.get("/verify")
-async def verify(token = Depends(verifyTokenWithExpiry)):
+async def verify(user: UserContext = Depends(verifyUser)):
     """
-    Verify the provided access token. This endpoint specifically checks for token existence and expiry.
+    Verify the provided access token and return the current credit balance
+    so the frontend can refresh credit state on app load.
 
     Args:
-        token: Authorization token (injected by FastAPI).
+        user: UserContext injected after token verification.
 
     Returns:
-        ORJSONResponse: Success status.
+        ORJSONResponse: Success status with credit balance snapshot.
     """
-    return ORJSONResponse(status_code=200, content={"status": "SUCCESS", "message": "Token is valid and has not expired."})
+    try:
+        from api.services.credits.creditService import creditService
+        credits = creditService.getBalanceSnapshot(user.userId)
+    except Exception:
+        credits = None
+    return ORJSONResponse(status_code=200, content={
+        "status": "SUCCESS",
+        "message": "Token is valid and has not expired.",
+        "credits": credits,
+    })
 
 @router.post("/signUp")
 async def signup(signupDetails: SignUp):

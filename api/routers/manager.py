@@ -20,7 +20,7 @@ from api.models import (
     EditMetadata,
     RenameProject
 )
-from api.commons import verifyToken
+from api.commons import verifyToken, requireCredits, UserContext
 
 router = APIRouter()
 """
@@ -232,25 +232,25 @@ async def updateTrash(updateTrashDetails: UpdateProjectState, token = Depends(ve
         raiseHttpException(e)
     
 @router.post("/generateMetadata/{projectId}")
-async def generateMetadata(projectId: str, token = Depends(verifyToken)):
+async def generateMetadata(projectId: str, user: UserContext = Depends(requireCredits("metadata_generation"))):
     """
     Generate metadata for a given project.
 
     Args:
         projectId (str): The ID of the project.
-        token: Authorization token dependency.
+        user: UserContext injected after credit validation.
 
     Returns:
         ORJSONResponse: Generated metadata and insights or error message.
     """
     try:
-        jsonData = managementService.generateMetadata(projectId = projectId)
+        jsonData = managementService.generateMetadata(projectId=projectId, userId=user.userId)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "metadata": jsonData})
     except CustomException as e:
         raiseHttpException(e)
     
 @router.post("/generateKpis/{projectId}")
-async def generateKpis(projectId: str, preserveCharted: bool = False, token = Depends(verifyToken)):
+async def generateKpis(projectId: str, preserveCharted: bool = False, user: UserContext = Depends(requireCredits("insight_generation"))):
     """
     Generate important KPIs for a given project.
 
@@ -258,13 +258,13 @@ async def generateKpis(projectId: str, preserveCharted: bool = False, token = De
         projectId (str): The ID of the project.
         preserveCharted (bool): When true, existing charted KPIs are retained
             and only non-charted KPIs are regenerated. Defaults to false.
-        token: Authorization token dependency.
+        user: UserContext injected after credit validation.
 
     Returns:
         ORJSONResponse: Generated metadata and insights or error message.
     """
     try:
-        jsonData = managementService.generateInsightsForProject(projectId = projectId, preserveCharted = preserveCharted)
+        jsonData = managementService.generateInsightsForProject(projectId=projectId, preserveCharted=preserveCharted, userId=user.userId)
         response = {"status": "SUCCESS"}
         response.update(jsonData)
         return ORJSONResponse(status_code = 200, content = response)

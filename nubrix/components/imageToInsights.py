@@ -92,7 +92,7 @@ class ImageToInsights:
 
         return "\n\n".join(sections)
 
-    def getInsights(self, b64String: str, context: dict | None = None) -> dict | str:
+    def getInsights(self, b64String: str, context: dict | None = None, callbacks: list | None = None) -> dict | str:
         """
         Processes a base64-encoded image string (e.g., a dashboard screenshot)
         and returns extracted insights based on the model's interpretation.
@@ -142,12 +142,16 @@ class ImageToInsights:
             
             from utils.llm import getLangfuseConfig
             projectId = context.get("projectId") if isinstance(context, dict) else None
-            config = getLangfuseConfig(trace_name="ImageToInsights", projectId=projectId)
-            
+            userId = context.get("userId") if isinstance(context, dict) else None
+            config = getLangfuseConfig(trace_name="ImageToInsights", projectId=projectId, userId=userId)
+            if callbacks:
+                config.setdefault("callbacks", []).extend(callbacks)
+            invokeConfig = config or None
+
             if stopSequence:
-                response = self.llm.bind(stop=[stopSequence]).invoke(messages, config=config)
+                response = self.llm.bind(stop=[stopSequence]).invoke(messages, config=invokeConfig)
             else:
-                response = self.llm.invoke(messages, config=config)
+                response = self.llm.invoke(messages, config=invokeConfig)
 
             rawOutput = response.content
 

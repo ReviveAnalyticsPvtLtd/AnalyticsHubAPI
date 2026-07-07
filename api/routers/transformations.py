@@ -17,7 +17,7 @@ from api.services.transformationService import transformationService
 from utils.exceptionHandler import CustomException, raiseHttpException
 from fastapi.responses import ORJSONResponse, StreamingResponse
 from fastapi import APIRouter, Depends
-from api.commons import verifyToken, requireActiveSubscription, UserContext
+from api.commons import verifyToken, requireActiveSubscription, requireCredits, UserContext
 
 
 router = APIRouter()
@@ -82,7 +82,7 @@ async def sendTransformationMessage(
     transformation_id: str,
     projectId: str,
     request: SendMessageRequest,
-    user: UserContext = Depends(requireActiveSubscription),
+    user: UserContext = Depends(requireCredits("transformation_message")),
 ):
     """
     Send a user message and stream the assistant response over SSE.
@@ -92,6 +92,7 @@ async def sendTransformationMessage(
             projectId=projectId,
             transformationId=transformation_id,
             content=request.content,
+            userId=user.userId,
         ),
         media_type="text/event-stream",
     )

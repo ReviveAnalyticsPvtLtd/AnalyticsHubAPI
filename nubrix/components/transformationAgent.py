@@ -212,6 +212,8 @@ class TransformationAgent:
         userMessage: str,
         metadata: dict,
         chatHistory: list[dict],
+        callbacks: list | None = None,
+        userId: str | None = None,
     ) -> TransformationAgentResponse:
         """
         Generate a structured transformation response, with self-healing retries and a ReAct agent loop.
@@ -358,9 +360,13 @@ class TransformationAgent:
 
                 # Invoke the agent graph
                 from utils.llm import getLangfuseConfig
-                res = await agent.ainvoke({
-                    "messages": current_messages
-                }, config=getLangfuseConfig(trace_name="TransformationAgent", projectId=projectId))
+                agentConfig = getLangfuseConfig(trace_name="TransformationAgent", projectId=projectId, userId=userId)
+                if callbacks:
+                    agentConfig.setdefault("callbacks", []).extend(callbacks)
+                res = await agent.ainvoke(
+                    {"messages": current_messages},
+                    config=agentConfig or None,
+                )
 
                 response = res.get("structured_response")
                 if not response:
@@ -411,6 +417,8 @@ class TransformationAgent:
         userMessage: str,
         metadata: dict,
         chatHistory: list[dict],
+        callbacks: list | None = None,
+        userId: str | None = None,
     ):
         """
         Stream transformation output events, yielding progress status updates.
@@ -423,6 +431,8 @@ class TransformationAgent:
             userMessage=userMessage,
             metadata=metadata,
             chatHistory=chatHistory,
+            callbacks=callbacks,
+            userId=userId,
         )
         summaryTokens = response.userFacingResponse.split(" ")
         for token in summaryTokens:

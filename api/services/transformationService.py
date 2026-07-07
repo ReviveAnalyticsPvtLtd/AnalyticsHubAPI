@@ -9,6 +9,7 @@ __author__ = "Platform Engineering"
 __all__ = ["TransformationService", "transformationService"]
 
 
+from api.services.credits.creditTrackingCallback import CreditTrackingCallback
 from utils.exceptionHandler import CustomException
 from api.models import TransformationAgentResponse
 from api.commons import client, updateProjectModifiedAt
@@ -264,7 +265,7 @@ class TransformationService:
             logger.error(exception)
             raise exception
 
-    async def sendMessageStream(self, projectId: str, transformationId: str, content: str):
+    async def sendMessageStream(self, projectId: str, transformationId: str, content: str, userId: str | None = None):
         """
         Persist a user message, stream the agent response, and persist the assistant artifact.
         """
@@ -289,12 +290,18 @@ class TransformationService:
             metadata = await self._get_metadata(projectId=projectId)
             structuredResponse = None
 
+            agentCallbacks = []
+            if userId:
+                agentCallbacks.append(CreditTrackingCallback(userId=userId, operationType="transformation_message"))
+
             async for event in self.agent.astream(
                 projectId=projectId,
                 transformationId=transformationId,
                 userMessage=content,
                 metadata=metadata,
                 chatHistory=messages[:-1],
+                callbacks=agentCallbacks if agentCallbacks else None,
+                userId=userId,
             ):
                 if event.get("type") == "status":
                     yield self._sse("status", {"message": event.get("message", "")})

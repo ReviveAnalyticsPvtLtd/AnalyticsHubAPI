@@ -14,6 +14,7 @@ __all__ = [
     "requireActiveSubscription",
     "requireTrialOrAbove",
     "requirePaidPlan",
+    "requireCredits",
     "UserContext",
     "updateProjectModifiedAt",
 ]
@@ -208,6 +209,46 @@ def requirePaidPlan(
             errorCode="FEATURE_BLOCKED",
         )
     return user
+
+
+def requireCredits(operationType: str):
+    """
+    Dependency factory that returns a FastAPI dependency checking whether
+    the user has enough credits for the specified operation type.
+
+    Usage::
+
+        @router.post("/generateChart")
+        async def generateChart(body: ..., user=Depends(requireCredits("reporting_query"))):
+            ...
+
+    Raises HTTPException 402 when the user's remaining credits are below
+    the configured minimum for the operation.
+    """
+    def _dependency(user: UserContext = Depends(verifyUser)) -> UserContext:
+        from api.services.credits.creditService import creditService
+        from api.services.credits.creditConfig import getOperationMinimum
+
+        remaining = creditService.getRemainingCredits(user.userId)
+        minimum = getOperationMinimum(operationType)
+
+        if remaining != -1 and remaining < minimum:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail={
+                    "status": "FAILURE",
+                    "message": (
+                        f"Insufficient credits. You need at least {minimum} credits "
+                        f"for this operation but have {remaining} remaining."
+                    ),
+                    "errorCode": "INSUFFICIENT_CREDITS",
+                    "remaining": remaining,
+                    "required": minimum,
+                },
+            )
+        return user
+
+    return _dependency
 
 
 def updateProjectModifiedAt(projectId: str) -> None:

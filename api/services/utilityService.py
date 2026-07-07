@@ -16,6 +16,7 @@ from nubrix.components.insightContextBuilder import InsightContextBuilder
 from nubrix.components.imageToInsights import ImageToInsights
 from nubrix.components.signalEngine import SignalEngine
 from nubrix.components.speechToText import SpeechToText
+from api.services.credits.creditTrackingCallback import CreditTrackingCallback
 from api.models import SpeechToTextModel, ImageToInsightsModel
 from utils.exceptionHandler import CustomException
 from nubrix.triggers.celery import celeryApp
@@ -51,12 +52,13 @@ class UtilityService:
         self.speechToTextModule = SpeechToText()
         self.client = client
     
-    def getSpeechTranscript(self, speechToText: SpeechToTextModel) -> str:
+    def getSpeechTranscript(self, speechToText: SpeechToTextModel, userId: str | None = None) -> str:
         """
         Converts base64-encoded audio to text using the SpeechToText module.
 
         Args:
             speechToText (SpeechToTextModel): Model containing the base64-encoded audio string.
+            userId (str | None): The user ID for credit deduction and Langfuse tracing.
         Returns:
             str: The transcribed text from the audio.
         Raises:
@@ -64,13 +66,33 @@ class UtilityService:
         """
         try:
             transcriptText = self.speechToTextModule.getTranscript(b64String = speechToText.b64String)
+            if userId:
+                try:
+                    from api.services.credits.creditService import creditService
+                    creditService.deductCredits(userId=userId, tokensUsed=200, operationType="speech_to_text")
+                except Exception as e:
+                    logger.warning(f"STT credit deduction failed: {e}")
+                try:
+                    from utils.langfuseClient import logManualGeneration
+                    from nubrix.utils import getConfig
+                    sttModel = getConfig(os.path.join(os.getcwd(), "config.ini")).get("SPEECHTOTEXT", "model", fallback="whisper-large-v3-turbo")
+                    logManualGeneration(
+                        userId=userId,
+                        name="speech-to-text",
+                        model=sttModel,
+                        inputSummary={"type": "audio/webm", "encoding": "base64"},
+                        output=transcriptText,
+                        tags=["utility", "speech_to_text"],
+                    )
+                except Exception as e:
+                    logger.warning(f"STT Langfuse trace failed: {e}")
             return transcriptText
         except Exception as e:
             exception  = CustomException(e)
             logger.error(exception)
             raise exception
         
-    def getInsightsFromImage(self, imageToInsights: ImageToInsightsModel) -> dict:
+    def getInsightsFromImage(self, imageToInsights: ImageToInsightsModel, userId: str | None = None) -> dict:
         """
         Extracts structured, evidence-backed insights from a base64-encoded dashboard image
         using the hybrid data + statistics + domain + LLM pipeline.
@@ -111,9 +133,16 @@ class UtilityService:
             )
             context["statisticalSummary"] = statisticalSummary
 
+            context["projectId"] = imageToInsights.projectId
+            if userId:
+                context["userId"] = userId
+            imgCallbacks = []
+            if userId:
+                imgCallbacks.append(CreditTrackingCallback(userId=userId, operationType="image_to_insights"))
             insights = self.imageToInsightsModule.getInsights(
                 b64String=imageToInsights.b64String,
                 context=context,
+                callbacks=imgCallbacks if imgCallbacks else None,
             )
 
             record = self._persistDashboardInsight(

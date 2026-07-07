@@ -12,6 +12,7 @@ from nubrix.components.metadataGenerator import MetadataGenerator
 from nubrix.components.insightGenerator import InsightGenerator
 from nubrix.components.reportGenerator import ReportGenerator
 from nubrix.components.domainKpiMapper import DomainKpiMapper
+from api.services.credits.creditTrackingCallback import CreditTrackingCallback
 from utils.llmOutputParser import parseModelJsonOutput
 from api.commons import updateProjectModifiedAt
 from utils.exceptionHandler import CustomException
@@ -468,7 +469,7 @@ class ManagementService:
         """Delegate to shared parser in utils.llmOutputParser."""
         return parseModelJsonOutput(rawOutput, stage)
         
-    def _generateMetadata(self, projectId: str) -> dict:
+    def _generateMetadata(self, projectId: str, userId: str | None = None) -> dict:
         """
         Generate metadata for all data files in a project.
 
@@ -489,9 +490,17 @@ class ManagementService:
                 results += self._attributeInfoFunc(projectId = projectId, dataframeName = dataframeName)
             from utils.llm import getLangfuseConfig
             metadataChain = self.metadataGenerator.getMetadataChain()
+            metadataConfig = getLangfuseConfig(
+                trace_name="MetadataGenerator", projectId=projectId, userId=userId,
+                tags=["management", "metadataGeneration"],
+            )
+            if userId:
+                metadataConfig.setdefault("callbacks", []).append(
+                    CreditTrackingCallback(userId=userId, operationType="metadata_generation")
+                )
             metadataRaw = metadataChain.invoke(
                 {"metadata": results},
-                config=getLangfuseConfig(trace_name="MetadataGenerator", projectId=projectId)
+                config=metadataConfig or None,
             )
             metadata = self._parseModelJsonOutput(
                 rawOutput=metadataRaw,
@@ -502,7 +511,7 @@ class ManagementService:
             logger.error(CustomException(e))
             raise CustomException(e)
         
-    def _generateRawInsights(self, projectId: str) -> list:
+    def _generateRawInsights(self, projectId: str, userId: str | None = None) -> list:
         """
         Run the LLM insight generation pipeline (domain KPI mapping + general insights)
         and return a flat list of {"query": str} dicts without id or isCharted fields.
@@ -516,9 +525,17 @@ class ManagementService:
             domainData = json.loads(urlopen(domainFileUrl).read())
             from utils.llm import getLangfuseConfig
             domainKpiMapperChain = self.domainKpiMapper.getDomainKpiMapperChain()
+            kpiConfig = getLangfuseConfig(
+                trace_name="DomainKpiMapper", projectId=projectId, userId=userId,
+                tags=["management", "kpiMapping"],
+            )
+            if userId:
+                kpiConfig.setdefault("callbacks", []).append(
+                    CreditTrackingCallback(userId=userId, operationType="kpi_mapping")
+                )
             domainKpiInsightsRaw = domainKpiMapperChain.invoke(
                 {"domainProfile": domainData, "metadata": metadata},
-                config=getLangfuseConfig(trace_name="DomainKpiMapper", projectId=projectId)
+                config=kpiConfig or None,
             )
             domainKpiInsights = self._parseModelJsonOutput(
                 rawOutput=domainKpiInsightsRaw,
@@ -530,9 +547,17 @@ class ManagementService:
 
         from utils.llm import getLangfuseConfig
         insightGeneratorChain = self.insightGenerator.getInsightGeneratorChain()
+        insightConfig = getLangfuseConfig(
+            trace_name="InsightGenerator", projectId=projectId, userId=userId,
+            tags=["management", "insightGeneration"],
+        )
+        if userId:
+            insightConfig.setdefault("callbacks", []).append(
+                CreditTrackingCallback(userId=userId, operationType="insight_generation")
+            )
         insightsRaw = insightGeneratorChain.invoke(
             {"metadata": metadata},
-            config=getLangfuseConfig(trace_name="InsightGenerator", projectId=projectId)
+            config=insightConfig or None,
         )
         insights = self._parseModelJsonOutput(
             rawOutput=insightsRaw,
@@ -548,7 +573,7 @@ class ManagementService:
                 raw.append({"query": str(insightText)})
         return raw
 
-    def generateInsightsForProject(self, projectId: str, preserveCharted: bool = False) -> dict:
+    def generateInsightsForProject(self, projectId: str, preserveCharted: bool = False, userId: str | None = None) -> dict:
         """
         Generate insights for the project from its metadata and also determine the most important KPIs that can be derived from it.
 
@@ -556,12 +581,13 @@ class ManagementService:
             projectId (str): The project identifier.
             preserveCharted (bool): When True, existing KPIs marked as charted are
                 retained and only non-charted KPIs are regenerated. Defaults to False.
+            userId (str | None): The user ID for credit/observability tracking.
 
         Returns:
             dict: A dictionary containing generated insights.
         """
         try:
-            rawInsights = self._generateRawInsights(projectId)
+            rawInsights = self._generateRawInsights(projectId, userId=userId)
 
             if preserveCharted:
                 try:
@@ -618,12 +644,13 @@ class ManagementService:
             logger.error(CustomException(e))
             raise CustomException(e)
 
-    def generateMetadata(self, projectId: str) -> dict:
+    def generateMetadata(self, projectId: str, userId: str | None = None) -> dict:
         """
         Generate or update metadata for a project, uploading it to storage, and generating insights.
 
         Args:
             projectId (str): The project identifier.
+            userId (str | None): The user ID for credit/observability tracking.
 
         Returns:
             dict: The updated metadata dictionary with important insights.
@@ -637,7 +664,7 @@ class ManagementService:
             if "metadata.json" in filenames:
                 fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
                 jsonData = json.loads(urlopen(fileUrl).read())
-                newMetadata = self._generateMetadata(projectId = projectId)
+                newMetadata = self._generateMetadata(projectId=projectId, userId=userId)
                 dataFiles = list()
                 for file in files:
                     if file["name"] == "metadata.json":
@@ -653,7 +680,7 @@ class ManagementService:
                 else:
                     pass
             else:
-                jsonData = self._generateMetadata(projectId = projectId)
+                jsonData = self._generateMetadata(projectId=projectId, userId=userId)
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(jsonData, indent=4).encode("utf-8"))
                 buffer.seek(0)

@@ -10,6 +10,7 @@ __all__ = ["dataLoadService"]
 
 
 from nubrix.components.pdfTableExtractor import PdfTableExtractor
+from api.services.credits.creditTrackingCallback import CreditTrackingCallback
 from api.commons import updateProjectModifiedAt
 from utils.exceptionHandler import CustomException
 from pymongo.mongo_client import MongoClient
@@ -186,7 +187,7 @@ class DataLoadService:
             logger.error(exception)
             raise exception
         
-    async def loadPdfData(self, projectId: Annotated[str, Form()], files: list[UploadFile]) -> None:
+    async def loadPdfData(self, projectId: Annotated[str, Form()], files: list[UploadFile], userId: str | None = None) -> None:
         """
         Load PDF files into project storage using a two-pass approach:
         Pass 1 rasterizes each page and extracts table fragments via a VLM.
@@ -216,7 +217,10 @@ class DataLoadService:
                     )
                 fileBytes = await file.read()
                 baseName = self._sanitizeFileName(file.filename)
-                extractor = PdfTableExtractor(projectId=projectId)
+                extractor = PdfTableExtractor(projectId=projectId, userId=userId)
+                pdfCallbacks = []
+                if userId:
+                    pdfCallbacks.append(CreditTrackingCallback(userId=userId, operationType="pdf_extraction_per_page"))
 
                 pageImages: list[tuple[int, str]] = []
                 with fitz.open(stream=fileBytes, filetype="pdf") as doc:
@@ -233,7 +237,7 @@ class DataLoadService:
                 gc.collect()
 
                 fragments = await extractor.extractPagesParallel(
-                    pageImages, totalPages
+                    pageImages, totalPages, callbacks=pdfCallbacks if pdfCallbacks else None
                 )
                 del pageImages
                 gc.collect()
@@ -245,7 +249,7 @@ class DataLoadService:
                         uiMessage="No extractable tables found in the PDF. Ensure the PDF contains tables."
                     )
 
-                mergePlan = extractor.planMerge(fragments)
+                mergePlan = extractor.planMerge(fragments, callbacks=pdfCallbacks if pdfCallbacks else None)
                 pendingTables: list[dict] = []
 
                 for group in mergePlan.groups:

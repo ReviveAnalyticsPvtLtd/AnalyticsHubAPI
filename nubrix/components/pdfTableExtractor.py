@@ -98,9 +98,10 @@ class PdfTableExtractor:
     prompt from prompts.yaml (key: pdfTableExtractionPrompt).
     """
 
-    def __init__(self, projectId: str = None):
+    def __init__(self, projectId: str = None, userId: str = None):
         logger.info("Initializing PdfTableExtractor.")
         self.projectId = projectId
+        self.userId = userId
         configPath = os.path.join(os.getcwd(), "config.ini")
         yamlPath = os.path.join(os.getcwd(), "prompts.yaml")
 
@@ -161,7 +162,7 @@ class PdfTableExtractor:
         content = getattr(response, "content", response)
         return cls._normalizeModelText(content)
 
-    def extractPage(self, b64Image: str) -> PageExtractionResult:
+    def extractPage(self, b64Image: str, callbacks: list | None = None) -> PageExtractionResult:
         """
         Send a page image to the VLM and return validated extraction results.
 
@@ -176,6 +177,9 @@ class PdfTableExtractor:
                     f"(model={self.model})."
                 )
                 from utils.llm import getLangfuseConfig
+                extractConfig = getLangfuseConfig(trace_name="PdfTableExtractor-ExtractPage", projectId=self.projectId, userId=self.userId)
+                if callbacks:
+                    extractConfig.setdefault("callbacks", []).extend(callbacks)
                 response = self.llm.invoke(
                     [
                         SystemMessage(content=self.prompt),
@@ -190,7 +194,7 @@ class PdfTableExtractor:
                             ]
                         ),
                     ],
-                    config=getLangfuseConfig(trace_name="PdfTableExtractor-ExtractPage", projectId=self.projectId)
+                    config=extractConfig or None,
                 )
                 raw = self._responseToText(response)
                 return self._parseAndValidate(raw)
@@ -221,7 +225,7 @@ class PdfTableExtractor:
             uiMessage="PDF table extraction failed after retries. Try again later.",
         )
 
-    async def extractPageAsync(self, b64Image: str) -> PageExtractionResult:
+    async def extractPageAsync(self, b64Image: str, callbacks: list | None = None) -> PageExtractionResult:
         """
         Async variant of extractPage. Sends a page image to the VLM and
         returns validated extraction results using ChatGoogleGenerativeAI.
@@ -237,6 +241,9 @@ class PdfTableExtractor:
                     f"(model={self.model})."
                 )
                 from utils.llm import getLangfuseConfig
+                extractConfig = getLangfuseConfig(trace_name="PdfTableExtractor-ExtractPageAsync", projectId=self.projectId, userId=self.userId)
+                if callbacks:
+                    extractConfig.setdefault("callbacks", []).extend(callbacks)
                 response = await self.llm.ainvoke(
                     [
                         SystemMessage(content=self.prompt),
@@ -251,7 +258,7 @@ class PdfTableExtractor:
                             ]
                         ),
                     ],
-                    config=getLangfuseConfig(trace_name="PdfTableExtractor-ExtractPageAsync", projectId=self.projectId)
+                    config=extractConfig or None,
                 )
                 raw = self._responseToText(response)
                 return self._parseAndValidate(raw)
@@ -283,7 +290,7 @@ class PdfTableExtractor:
         )
 
     async def extractPagesParallel(
-        self, pageImages: list[tuple[int, str]], totalPages: int
+        self, pageImages: list[tuple[int, str]], totalPages: int, callbacks: list | None = None
     ) -> list[dict]:
         """
         Extract tables from multiple page images concurrently.
@@ -291,6 +298,7 @@ class PdfTableExtractor:
         Args:
             pageImages: list of (pageNum, base64Image) tuples.
             totalPages: total page count (for logging).
+            callbacks: optional LangChain callbacks for observability/credit tracking.
 
         Returns:
             Sorted list of {"pageNum": int, "table": ExtractedTable} dicts,
@@ -300,7 +308,7 @@ class PdfTableExtractor:
 
         async def _processOne(pageNum: int, b64: str) -> list[dict]:
             async with semaphore:
-                result = await self.extractPageAsync(b64)
+                result = await self.extractPageAsync(b64, callbacks=callbacks)
                 logger.info(
                     f"Page {pageNum}/{totalPages}: "
                     f"{len(result.tables)} table(s) extracted"
@@ -321,7 +329,7 @@ class PdfTableExtractor:
         fragments.sort(key=lambda f: f["pageNum"])
         return fragments
 
-    def planMerge(self, fragments: list[dict]) -> MergePlan:
+    def planMerge(self, fragments: list[dict], callbacks: list | None = None) -> MergePlan:
         """
         Ask the LLM to group table fragments into logical tables.
 
@@ -367,12 +375,15 @@ class PdfTableExtractor:
                 max_tokens=self.maxTokens,
             )
             from utils.llm import getLangfuseConfig
+            mergeConfig = getLangfuseConfig(trace_name="PdfTableExtractor-MergePlan", projectId=self.projectId, userId=self.userId)
+            if callbacks:
+                mergeConfig.setdefault("callbacks", []).extend(callbacks)
             response = mergeLlm.invoke(
                 [
                     SystemMessage(content=self.mergePrompt),
                     HumanMessage(content=summaryText),
                 ],
-                config=getLangfuseConfig(trace_name="PdfTableExtractor-MergePlan", projectId=self.projectId)
+                config=mergeConfig or None,
             )
             raw = self._responseToText(response)
             text = raw.strip()
