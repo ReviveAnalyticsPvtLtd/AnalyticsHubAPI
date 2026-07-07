@@ -14,7 +14,7 @@ __all__ = ["MetadataGenerator"]
 
 
 from langchain_core.output_parsers import StrOutputParser
-from langchain_google_genai import ChatGoogleGenerativeAI
+from utils.llm import getGenaiLlm
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
 from utils.exceptionHandler import CustomException
@@ -67,7 +67,7 @@ class MetadataGenerator:
             self.config = getConfig(self.metadataGeneratorConfig.configPath)
             promptTemplate = readYaml(self.metadataGeneratorConfig.yamlPath).get("metadataGeneratorPrompt")
             prompt = ChatPromptTemplate.from_template(promptTemplate)
-            llm = ChatGoogleGenerativeAI(
+            llm = getGenaiLlm(
                 model=self.config.get("METADATAGENERATOR", "model"),
                 temperature=self.config.getfloat("METADATAGENERATOR", "temperature"),
                 max_tokens=self.config.getint("METADATAGENERATOR", "maxTokens", fallback=8192)

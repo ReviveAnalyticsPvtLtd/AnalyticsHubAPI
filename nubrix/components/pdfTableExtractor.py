@@ -21,7 +21,7 @@ __all__ = [
 
 from utils.exceptionHandler import CustomException
 from nubrix.utils import readYaml, getConfig
-from langchain_google_genai import ChatGoogleGenerativeAI
+from utils.llm import getGenaiLlm
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, field_validator
 from utils.logger import logger
@@ -115,7 +115,7 @@ class PdfTableExtractor:
         self.maxRetries = config.getint("PDFTABLE", "maxRetries", fallback=2)
         self.retryDelay = config.getfloat("PDFTABLE", "retryDelay", fallback=2.0)
         self.maxConcurrency = config.getint("PDFTABLE", "maxConcurrency", fallback=5)
-        self.llm = ChatGoogleGenerativeAI(
+        self.llm = getGenaiLlm(
             model=self.model,
             temperature=self.temperature,
             max_tokens=self.maxTokens,

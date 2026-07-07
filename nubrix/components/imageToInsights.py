@@ -11,7 +11,7 @@ __version__ = "1.0.0"
 __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["ImageToInsights"]
 
-from langchain_google_genai import ChatGoogleGenerativeAI
+from utils.llm import getGenaiLlm
 from langchain_core.messages import HumanMessage, SystemMessage
 from utils.llmOutputParser import parseModelJsonOutput
 from utils.exceptionHandler import CustomException
@@ -56,7 +56,7 @@ class ImageToInsights:
             raise ValueError("Missing or invalid 'imageToInsightGeneratorPrompt' in prompts.yaml.")
         self.prompt = prompt
         
-        self.llm = ChatGoogleGenerativeAI(
+        self.llm = getGenaiLlm(
             model=self.config.get("IMAGETOINSIGHTS", "model"),
             temperature=self.config.getfloat("IMAGETOINSIGHTS", "temperature"),
             max_tokens=self.config.getint("IMAGETOINSIGHTS", "maxTokens", fallback=4096)

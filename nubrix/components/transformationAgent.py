@@ -12,7 +12,7 @@ __all__ = ["TransformationAgent"]
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
-from langchain_google_genai import ChatGoogleGenerativeAI
+from utils.llm import getGenaiLlm
 from utils.exceptionHandler import CustomException
 from api.models import TransformationAgentResponse
 from nubrix.utils import getConfig, readYaml
@@ -46,7 +46,7 @@ class TransformationAgent:
         self.transformationAgentConfig = TransformationAgentConfig()
         self.config = getConfig(self.transformationAgentConfig.configPath)
         self.systemPrompt = readYaml(self.transformationAgentConfig.yamlPath).get("transformationAgentPrompt")
-        self.llm = ChatGoogleGenerativeAI(
+        self.llm = getGenaiLlm(
             model=self.config.get("TRANSFORMATIONAGENT", "model"),
             temperature=self.config.getfloat("TRANSFORMATIONAGENT", "temperature"),
             max_tokens=self.config.getint("TRANSFORMATIONAGENT", "maxTokens", fallback=8192),

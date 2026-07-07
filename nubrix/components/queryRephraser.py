@@ -10,7 +10,7 @@ __all__ = ["QueryRephaser", "ParallelQueryRephaser"]
 
 
 from langchain_core.output_parsers import JsonOutputParser
-from langchain_google_genai import ChatGoogleGenerativeAI
+from utils.llm import getGenaiLlm
 from langchain_core.runnables import RunnableLambda
 from utils.exceptionHandler import CustomException
 from nubrix.utils import readYaml, getConfig
@@ -134,7 +134,7 @@ class QueryRephaser:
                 input_variables = ["metadata", "query"],
                 partial_variables = {"format_instructions": queryRephraseParser.get_format_instructions()}
             )
-            llm = ChatGoogleGenerativeAI(
+            llm = getGenaiLlm(
                 model=self.config.get("QUERYREPHRASER", "model"),
                 temperature=self.config.getfloat("QUERYREPHRASER", "temperature"),
                 max_tokens=self.config.getint("QUERYREPHRASER", "maxTokens", fallback=8192)
@@ -185,7 +185,7 @@ class ParallelQueryRephaser(QueryRephaser):
                 input_variables = ["metadata", "query"],
                 partial_variables = {"format_instructions": queryRephraseParser.get_format_instructions()}
             )
-            llm = ChatGoogleGenerativeAI(
+            llm = getGenaiLlm(
                 model=self.config.get("QUERYREPHRASER", "model"),
                 temperature=self.config.getfloat("QUERYREPHRASER", "temperature"),
                 max_tokens=self.config.getint("QUERYREPHRASER", "maxTokens", fallback=8192)

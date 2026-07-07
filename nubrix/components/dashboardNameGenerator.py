@@ -13,7 +13,7 @@ __all__ = ["DashboardNameGenerator"]
 
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
-from langchain_google_genai import ChatGoogleGenerativeAI
+from utils.llm import getGenaiLlm
 from nubrix.utils import readYaml, getConfig
 from utils.exceptionHandler import CustomException
 from langchain_core.prompts import PromptTemplate
@@ -71,7 +71,7 @@ class DashboardNameGenerator:
             self.config = getConfig(self.dashboardNameGeneratorConfig.configPath)
             promptTemplate = readYaml(self.dashboardNameGeneratorConfig.yamlPath).get("dashboardNameGeneratorPrompt")
             dashboardNamePrompt = PromptTemplate.from_template(promptTemplate)
-            llm = ChatGoogleGenerativeAI(
+            llm = getGenaiLlm(
                 model=self.config.get("DASHBOARDNAMEGENERATOR", "model"),
                 temperature=self.config.getfloat("DASHBOARDNAMEGENERATOR", "temperature"),
                 max_tokens=self.config.getint("DASHBOARDNAMEGENERATOR", "maxTokens", fallback=8192)

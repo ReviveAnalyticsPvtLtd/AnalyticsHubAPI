@@ -11,7 +11,7 @@ __all__ = ["InsightGenerator"]
 
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
-from langchain_google_genai import ChatGoogleGenerativeAI
+from utils.llm import getGenaiLlm
 from nubrix.utils import readYaml, getConfig
 from utils.exceptionHandler import CustomException
 from langchain_core.prompts import PromptTemplate
@@ -69,7 +69,7 @@ class InsightGenerator:
             self.config = getConfig(self.insightGeneratorConfig.configPath)
             promptTemplate = readYaml(self.insightGeneratorConfig.yamlPath).get("insightGeneratorAgentPrompt")
             insightGeneratorPrompt = PromptTemplate.from_template(promptTemplate)
-            llm = ChatGoogleGenerativeAI(
+            llm = getGenaiLlm(
                 model=self.config.get("INSIGHTGENERATOR", "model"),
                 temperature=self.config.getfloat("INSIGHTGENERATOR", "temperature"),
                 max_tokens=self.config.getint("INSIGHTGENERATOR", "maxTokens", fallback=8192)

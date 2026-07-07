@@ -13,7 +13,7 @@ __all__ = ["DomainKpiMapperConfig"]
 
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
-from langchain_google_genai import ChatGoogleGenerativeAI
+from utils.llm import getGenaiLlm
 from nubrix.utils import readYaml, getConfig
 from utils.exceptionHandler import CustomException
 from langchain_core.prompts import PromptTemplate
@@ -71,7 +71,7 @@ class DomainKpiMapper:
             self.config = getConfig(self.domaonKpiMapperConfig.configPath)
             promptTemplate = readYaml(self.domaonKpiMapperConfig.yamlPath).get("domainAwareKpiMappingAgentPrompt")
             domainAwareKpiMappingAgentPrompt = PromptTemplate.from_template(promptTemplate)
-            llm = ChatGoogleGenerativeAI(
+            llm = getGenaiLlm(
                 model=self.config.get("DOMAINKPIMAPPER", "model"),
                 temperature=self.config.getfloat("DOMAINKPIMAPPER", "temperature"),
                 max_tokens=self.config.getint("DOMAINKPIMAPPER", "maxTokens", fallback=8192)

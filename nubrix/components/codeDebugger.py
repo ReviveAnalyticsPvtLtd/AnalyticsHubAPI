@@ -12,7 +12,7 @@ __all__ = ["CodeDebugger"]
 
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
-from langchain_google_genai import ChatGoogleGenerativeAI
+from utils.llm import getGenaiLlm
 from nubrix.utils import readYaml, getConfig
 from utils.exceptionHandler import CustomException
 from langchain_core.prompts import PromptTemplate
@@ -65,7 +65,7 @@ class CodeDebugger:
             self.config = getConfig(self.codeDebuggerConfig.configPath)
             promptTemplate = readYaml(self.codeDebuggerConfig.yamlPath).get("codeDebuggerAgentPrompt")
             codeGeneratorPrompt = PromptTemplate.from_template(promptTemplate)
-            llm = ChatGoogleGenerativeAI(
+            llm = getGenaiLlm(
                 model=self.config.get("CODEDEBUGGER", "model"),
                 temperature=self.config.getfloat("CODEDEBUGGER", "temperature"),
                 max_tokens=self.config.getint("CODEDEBUGGER", "maxTokens", fallback=8192)
