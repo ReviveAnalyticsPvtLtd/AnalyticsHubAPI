@@ -282,8 +282,8 @@ class TransformationAgent:
                 content = msg.get("content") or ""
                 if msg.get("python_code"):
                     content += f"\nGenerated Python Code:\n```python\n{msg.get('python_code')}\n```"
-                if msg.get("artifact", {}).get("code"):
-                    content += f"\nGenerated Flowchart:\n```mermaid\n{msg.get('artifact', {}).get('code')}\n```"
+                if msg.get("artifact") and msg.get("artifact").get("code"):
+                    content += f"\nGenerated Flowchart:\n```mermaid\n{msg.get('artifact').get('code')}\n```"
                 messages.append((role, content))
 
             # Instantiate the LangChain 1.x agent using create_agent
