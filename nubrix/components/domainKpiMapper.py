@@ -53,8 +53,8 @@ class DomainKpiMapper:
         Returns:
             AIMessage: A new AIMessage object with tags removed.
         """
-        inputStr = inputStr.content.replace("<think>", "").replace("</think>", "")
-        return AIMessage(inputStr)
+        from utils.llm import cleanThinkTokens
+        return cleanThinkTokens(inputStr)
 
     def getDomainKpiMapperChain(self):
         """

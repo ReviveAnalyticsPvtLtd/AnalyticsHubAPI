@@ -26,3 +26,34 @@ def getGenaiLlm(model: str, temperature: float, max_tokens: int = None) -> ChatG
         kwargs["max_tokens"] = max_tokens
         
     return ChatGoogleGenerativeAI(**kwargs)
+
+from langchain_core.messages import AIMessage
+
+def cleanThinkTokens(message: AIMessage) -> AIMessage:
+    """
+    Robustly removes <think> and </think> tokens from AIMessage content,
+    supporting both raw string content and multi-part list content structures.
+    """
+    content = message.content
+    if isinstance(content, str):
+        clean_content = content.replace("<think>", "").replace("</think>", "")
+    elif isinstance(content, list):
+        clean_list = []
+        for part in content:
+            if isinstance(part, dict) and "text" in part:
+                part_copy = dict(part)
+                part_copy["text"] = part_copy["text"].replace("<think>", "").replace("</think>", "")
+                clean_list.append(part_copy)
+            elif isinstance(part, str):
+                clean_list.append(part.replace("<think>", "").replace("</think>", ""))
+            else:
+                clean_list.append(part)
+        clean_content = clean_list
+    else:
+        clean_content = content
+    return AIMessage(
+        content=clean_content,
+        additional_kwargs=message.additional_kwargs,
+        response_metadata=message.response_metadata,
+        id=message.id
+    )

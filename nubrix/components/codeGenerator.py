@@ -51,8 +51,8 @@ class CodeGenerator:
         Returns:
             AIMessage: A new AIMessage with <think> tokens removed.
         """
-        inputStr = inputStr.content.replace("<think>", "").replace("</think>", "")
-        return AIMessage(inputStr)
+        from utils.llm import cleanThinkTokens
+        return cleanThinkTokens(inputStr)
 
     def getCodeGeneratorChain(self):
         """

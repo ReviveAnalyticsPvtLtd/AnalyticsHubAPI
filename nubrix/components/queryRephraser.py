@@ -79,6 +79,17 @@ class QueryRephaser:
         """
         import re
         content = inputStr.content
+        if isinstance(content, list):
+            text_parts = []
+            for part in content:
+                if isinstance(part, dict) and "text" in part:
+                    text_parts.append(part["text"])
+                elif isinstance(part, str):
+                    text_parts.append(part)
+            content = "".join(text_parts)
+        elif not isinstance(content, str):
+            content = str(content)
+            
         # Remove <think>...</think> completely (non-greedy)
         content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
         

@@ -46,8 +46,8 @@ class MetadataGenerator:
         Returns:
             AIMessage: An AIMessage with the thinking tokens removed from its content.
         """
-        inputStr = inputStr.content.replace("<think>", "").replace("</think>", "")
-        return AIMessage(inputStr)
+        from utils.llm import cleanThinkTokens
+        return cleanThinkTokens(inputStr)
 
     def getMetadataChain(self):
         """Constructs and returns a LangChain runnable for metadata generation.
