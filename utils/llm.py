@@ -57,3 +57,62 @@ def cleanThinkTokens(message: AIMessage) -> AIMessage:
         response_metadata=message.response_metadata,
         id=message.id
     )
+
+from langfuse.langchain import CallbackHandler
+
+_langfuse_handler = None
+
+def getLangfuseHandler() -> CallbackHandler | None:
+    """
+    Returns a cached instance of the Langfuse CallbackHandler for LangChain tracing.
+    """
+    global _langfuse_handler
+    if _langfuse_handler is None:
+        # Map user's LANGFUSE_BASE_URL to standard LANGFUSE_HOST if needed
+        if "LANGFUSE_BASE_URL" in os.environ and "LANGFUSE_HOST" not in os.environ:
+            os.environ["LANGFUSE_HOST"] = os.environ["LANGFUSE_BASE_URL"]
+            
+        public_key = os.environ.get("LANGFUSE_PUBLIC_KEY")
+        secret_key = os.environ.get("LANGFUSE_SECRET_KEY")
+        
+        if public_key and secret_key:
+            _langfuse_handler = CallbackHandler()
+    return _langfuse_handler
+
+def getLangfuseConfig(
+    trace_name: str,
+    projectId: str = None,
+    userId: str = None,
+    session_id: str = None,
+    tags: list[str] = None
+) -> dict:
+    """
+    Constructs the config dictionary to pass to LangChain chain executions
+    (e.g., config=getLangfuseConfig(...)) containing callbacks for Langfuse.
+    """
+    handler = getLangfuseHandler()
+    if not handler:
+        return {}
+        
+    metadata = {
+        "trace_name": trace_name,
+    }
+    
+    if projectId:
+        metadata["projectId"] = projectId
+        metadata["langfuse_session_id"] = projectId
+    if userId:
+        metadata["userId"] = userId
+        metadata["langfuse_user_id"] = userId
+    if session_id:
+        metadata["langfuse_session_id"] = session_id
+        
+    if tags:
+        metadata["langfuse_tags"] = tags
+    else:
+        metadata["langfuse_tags"] = [trace_name]
+        
+    return {
+        "callbacks": [handler],
+        "metadata": metadata
+    }

@@ -299,11 +299,12 @@ class ReportingService:
         """
         try:
             fileUrl = os.environ["FILE_URL"].format(projectId = chartDetails.projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            from utils.llm import getLangfuseConfig
             response = self.reportingToolWorkflow.invoke({
                 "metadata": json.loads(urlopen(fileUrl).read()),
                 "inputQuery": chartDetails.inputQuery,
                 "projectId": chartDetails.projectId
-            })
+            }, config=getLangfuseConfig(trace_name="ReportingWorkflow", projectId=chartDetails.projectId))
             updateProjectModifiedAt(chartDetails.projectId)
             return response
         except Exception as e:
@@ -325,12 +326,13 @@ class ReportingService:
             dict: The generated chart data.
         """
         try:
+            from utils.llm import getLangfuseConfig
             workflow = threadLocal.parallelWorkflow
             response = workflow.invoke({
                 "metadata": metadata,
                 "inputQuery": query,
                 "projectId": projectId
-            })
+            }, config=getLangfuseConfig(trace_name="ParallelReportingWorkflow", projectId=projectId))
             _ = response.pop("metadata", None)
             _ = response.pop("rephrasedQuery", None)
             _ = response.pop("codeOutput", None)
@@ -399,11 +401,11 @@ class ReportingService:
 
             if not pageId:
                 # Generate a dynamic dashboard name only if creating a new one
-                dashboardNameChain = DashboardNameGenerator().getDashboardNameGeneratorChain()
+                from utils.llm import getLangfuseConfig
                 dashboardName = dashboardNameChain.invoke({
                     "queries": "\n".join(uniqueQueries),
                     "metadata": json.dumps(metadata)
-                }).strip()
+                }, config=getLangfuseConfig(trace_name="DashboardNameGenerator", projectId=projectId)).strip()
 
                 # Create a new dashboard page
                 pageId = str(uuid.uuid4())

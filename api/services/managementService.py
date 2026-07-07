@@ -487,8 +487,12 @@ class ManagementService:
             for fileName in dataFiles:
                 dataframeName = fileName.replace(".parquet", "")
                 results += self._attributeInfoFunc(projectId = projectId, dataframeName = dataframeName)
+            from utils.llm import getLangfuseConfig
             metadataChain = self.metadataGenerator.getMetadataChain()
-            metadataRaw = metadataChain.invoke({"metadata": results})
+            metadataRaw = metadataChain.invoke(
+                {"metadata": results},
+                config=getLangfuseConfig(trace_name="MetadataGenerator", projectId=projectId)
+            )
             metadata = self._parseModelJsonOutput(
                 rawOutput=metadataRaw,
                 stage="Metadata generation"
@@ -510,9 +514,11 @@ class ManagementService:
         if domainFile in [x.get("name") for x in self.client.storage.from_("DomainSpecificKpis").list()]:
             domainFileUrl = os.environ["DOMAIN_FILE_URL"].format(fileName = domainFile) + f"?cb={int(time.time())}"
             domainData = json.loads(urlopen(domainFileUrl).read())
+            from utils.llm import getLangfuseConfig
             domainKpiMapperChain = self.domainKpiMapper.getDomainKpiMapperChain()
             domainKpiInsightsRaw = domainKpiMapperChain.invoke(
-                {"domainProfile": domainData, "metadata": metadata}
+                {"domainProfile": domainData, "metadata": metadata},
+                config=getLangfuseConfig(trace_name="DomainKpiMapper", projectId=projectId)
             )
             domainKpiInsights = self._parseModelJsonOutput(
                 rawOutput=domainKpiInsightsRaw,
@@ -522,8 +528,12 @@ class ManagementService:
         else:
             overlapKpis = list()
 
+        from utils.llm import getLangfuseConfig
         insightGeneratorChain = self.insightGenerator.getInsightGeneratorChain()
-        insightsRaw = insightGeneratorChain.invoke({"metadata": metadata})
+        insightsRaw = insightGeneratorChain.invoke(
+            {"metadata": metadata},
+            config=getLangfuseConfig(trace_name="InsightGenerator", projectId=projectId)
+        )
         insights = self._parseModelJsonOutput(
             rawOutput=insightsRaw,
             stage="Insight generation"

@@ -98,8 +98,9 @@ class PdfTableExtractor:
     prompt from prompts.yaml (key: pdfTableExtractionPrompt).
     """
 
-    def __init__(self):
+    def __init__(self, projectId: str = None):
         logger.info("Initializing PdfTableExtractor.")
+        self.projectId = projectId
         configPath = os.path.join(os.getcwd(), "config.ini")
         yamlPath = os.path.join(os.getcwd(), "prompts.yaml")
 
@@ -174,6 +175,7 @@ class PdfTableExtractor:
                     f"PdfTableExtractor: VLM call attempt {attempt} "
                     f"(model={self.model})."
                 )
+                from utils.llm import getLangfuseConfig
                 response = self.llm.invoke(
                     [
                         SystemMessage(content=self.prompt),
@@ -187,7 +189,8 @@ class PdfTableExtractor:
                                 }
                             ]
                         ),
-                    ]
+                    ],
+                    config=getLangfuseConfig(trace_name="PdfTableExtractor-ExtractPage", projectId=self.projectId)
                 )
                 raw = self._responseToText(response)
                 return self._parseAndValidate(raw)
@@ -233,6 +236,7 @@ class PdfTableExtractor:
                     f"PdfTableExtractor: async VLM call attempt {attempt} "
                     f"(model={self.model})."
                 )
+                from utils.llm import getLangfuseConfig
                 response = await self.llm.ainvoke(
                     [
                         SystemMessage(content=self.prompt),
@@ -246,7 +250,8 @@ class PdfTableExtractor:
                                 }
                             ]
                         ),
-                    ]
+                    ],
+                    config=getLangfuseConfig(trace_name="PdfTableExtractor-ExtractPageAsync", projectId=self.projectId)
                 )
                 raw = self._responseToText(response)
                 return self._parseAndValidate(raw)
@@ -361,11 +366,13 @@ class PdfTableExtractor:
                 temperature=0.0,
                 max_tokens=self.maxTokens,
             )
+            from utils.llm import getLangfuseConfig
             response = mergeLlm.invoke(
                 [
                     SystemMessage(content=self.mergePrompt),
                     HumanMessage(content=summaryText),
-                ]
+                ],
+                config=getLangfuseConfig(trace_name="PdfTableExtractor-MergePlan", projectId=self.projectId)
             )
             raw = self._responseToText(response)
             text = raw.strip()

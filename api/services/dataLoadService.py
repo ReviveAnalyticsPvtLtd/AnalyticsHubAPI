@@ -216,7 +216,7 @@ class DataLoadService:
                     )
                 fileBytes = await file.read()
                 baseName = self._sanitizeFileName(file.filename)
-                extractor = PdfTableExtractor()
+                extractor = PdfTableExtractor(projectId=projectId)
 
                 pageImages: list[tuple[int, str]] = []
                 with fitz.open(stream=fileBytes, filetype="pdf") as doc:

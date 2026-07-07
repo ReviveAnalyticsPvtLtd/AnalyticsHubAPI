@@ -140,10 +140,14 @@ class ImageToInsights:
 
             stopSequence = self.config.get("IMAGETOINSIGHTS", "stop", fallback="").strip()
             
+            from utils.llm import getLangfuseConfig
+            projectId = context.get("projectId") if isinstance(context, dict) else None
+            config = getLangfuseConfig(trace_name="ImageToInsights", projectId=projectId)
+            
             if stopSequence:
-                response = self.llm.bind(stop=[stopSequence]).invoke(messages)
+                response = self.llm.bind(stop=[stopSequence]).invoke(messages, config=config)
             else:
-                response = self.llm.invoke(messages)
+                response = self.llm.invoke(messages, config=config)
 
             rawOutput = response.content
 

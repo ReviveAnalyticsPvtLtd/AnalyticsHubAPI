@@ -96,7 +96,11 @@ class TransformationAgent:
             f"{textToSummarize}"
         )
         try:
-            summaryResponse = await self.llm.ainvoke(prompt)
+            from utils.llm import getLangfuseConfig
+            summaryResponse = await self.llm.ainvoke(
+                prompt,
+                config=getLangfuseConfig(trace_name="TransformationAgent-HistorySummary")
+            )
             summary = summaryResponse.content
             # LRU eviction: remove oldest entry if cache exceeds max size
             self._historySummaryCache[cacheKey] = summary
@@ -353,9 +357,10 @@ class TransformationAgent:
                 current_messages = list(messages) + [("user", current_input)]
 
                 # Invoke the agent graph
+                from utils.llm import getLangfuseConfig
                 res = await agent.ainvoke({
                     "messages": current_messages
-                })
+                }, config=getLangfuseConfig(trace_name="TransformationAgent", projectId=projectId))
 
                 response = res.get("structured_response")
                 if not response:
