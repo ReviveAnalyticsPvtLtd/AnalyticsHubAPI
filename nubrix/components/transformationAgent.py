@@ -72,7 +72,6 @@ class TransformationAgent:
                 parsed = json.loads(content)
                 if isinstance(parsed, dict) and "userFacingResponse" in parsed:
                     content = parsed["userFacingResponse"]
-                    # Include code context note in summary input so summaries retain transformation awareness
                     if parsed.get("pythonCode"):
                         content += " (Transformation code was generated)"
             except Exception:
@@ -99,9 +98,15 @@ class TransformationAgent:
         )
         try:
             from utils.llm import getLangfuseConfig
+            from api.services.credits.creditTrackingCallback import CreditTrackingCallback
+            summaryConfig = getLangfuseConfig(trace_name="TransformationAgent-HistorySummary", userId=userId)
+            if userId:
+                summaryConfig.setdefault("callbacks", []).append(
+                    CreditTrackingCallback(userId=userId, operationType="transformation_history_summary")
+                )
             summaryResponse = await self.llm.ainvoke(
                 prompt,
-                config=getLangfuseConfig(trace_name="TransformationAgent-HistorySummary")
+                config=summaryConfig or None,
             )
             summary = summaryResponse.content
             # LRU eviction: remove oldest entry if cache exceeds max size
@@ -117,7 +122,7 @@ class TransformationAgent:
         """Invalidate the cached summary for a transformation thread (e.g. after rollback)."""
         self._threadSummaryCache.pop(transformationId, None)
 
-    async def _getMessages(self, chatHistory: list[dict], formattedInput: str, transformationId: str) -> list[BaseMessage]:
+    async def _getMessages(self, chatHistory: list[dict], formattedInput: str, transformationId: str, userId: str | None = None) -> list[BaseMessage]:
         """Convert database chat history to LangChain messages, summarizing older history efficiently."""
         history = []
         for msg in chatHistory:
@@ -168,7 +173,7 @@ class TransformationAgent:
                 # Regenerate summary and cache it (only if there's enough old history to justify an LLM call)
                 logger.info(f"Regenerating conversation history summary for thread {transformationId}.")
                 cacheKey = ":".join(m.get("message_id", "") for m in oldChatHistory)
-                summaryText = await self._summarizeHistory(oldHistory, cacheKey)
+                summaryText = await self._summarizeHistory(oldHistory, cacheKey, userId=userId)
                 self._threadSummaryCache[transformationId] = (summaryText, len(oldHistory))
                 cached_summary = summaryText
                 unsummarized_msgs = []
@@ -212,6 +217,8 @@ class TransformationAgent:
         userMessage: str,
         metadata: dict,
         chatHistory: list[dict],
+        callbacks: list | None = None,
+        userId: str | None = None,
     ) -> TransformationAgentResponse:
         """
         Generate a structured transformation response, with self-healing retries and a ReAct agent loop.
@@ -406,6 +413,8 @@ class TransformationAgent:
         userMessage: str,
         metadata: dict,
         chatHistory: list[dict],
+        callbacks: list | None = None,
+        userId: str | None = None,
     ):
         """
         Stream transformation output events, yielding progress status updates.
@@ -418,6 +427,8 @@ class TransformationAgent:
             userMessage=userMessage,
             metadata=metadata,
             chatHistory=chatHistory,
+            callbacks=callbacks,
+            userId=userId,
         )
         summaryTokens = response.userFacingResponse.split(" ")
         for token in summaryTokens:

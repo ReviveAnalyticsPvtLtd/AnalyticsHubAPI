@@ -176,6 +176,29 @@ class AuthenticationService:
             "cancellation_reason": None,
         }).execute()
 
+    @staticmethod
+    def _getCreditSnapshot(userId: str) -> dict:
+        """
+        Return a safe credit-balance snapshot for embedding in login
+        responses.  Never raises — returns defaults on failure.
+        """
+        try:
+            from api.services.credits.creditService import creditService
+            return creditService.getBalanceSnapshot(userId)
+        except Exception as e:
+            logger.warning(f"Credit snapshot failed during login for {userId}: {e}")
+            return {
+                "planTier": "none",
+                "monthlyQuota": 0,
+                "usedCredits": 0,
+                "remainingCredits": 0,
+                "usagePercentage": 0.0,
+                "periodStart": None,
+                "periodEnd": None,
+                "lastResetAt": None,
+                "initialized": False,
+            }
+
     def _ensureSubscriptionSnapshot(self, userId: str) -> dict:
         """
         Ensure a canonical subscription row exists and return it.
@@ -401,6 +424,7 @@ class AuthenticationService:
                 "expiresAt": str(expiresAt)
             }).execute()
             profileImage = dataSlice.get("profileImage") or DEFAULT_PROFILE_IMAGE
+            credits = self._getCreditSnapshot(dataSlice["userId"])
             return {
                 "status": "SUCCESS",
                 "userId": dataSlice["userId"],
@@ -414,6 +438,7 @@ class AuthenticationService:
                 "subscriptionDaysLeft": subscriptionDaysLeft,
                 "subscriptionPlan": subscriptionPlan,
                 "profileImage": profileImage,
+                "credits": credits,
             }
         except CustomException:
             raise
@@ -535,6 +560,7 @@ class AuthenticationService:
             }).execute()
 
             profileImage = userData.get("profileImage") or DEFAULT_PROFILE_IMAGE
+            credits = self._getCreditSnapshot(userData["userId"])
             return {
                 "status": "SUCCESS",
                 "userId": userData["userId"],
@@ -548,6 +574,7 @@ class AuthenticationService:
                 "subscriptionDaysLeft": subscriptionDaysLeft,
                 "subscriptionPlan": subscriptionPlan,
                 "profileImage": profileImage,
+                "credits": credits,
             }
         except CustomException:
             raise

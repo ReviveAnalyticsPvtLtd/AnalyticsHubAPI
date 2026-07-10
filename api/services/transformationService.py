@@ -9,6 +9,7 @@ __author__ = "Platform Engineering"
 __all__ = ["TransformationService", "transformationService"]
 
 
+from api.services.credits.creditTrackingCallback import CreditTrackingCallback
 from utils.exceptionHandler import CustomException
 from api.models import TransformationAgentResponse
 from api.commons import client, updateProjectModifiedAt
@@ -264,7 +265,7 @@ class TransformationService:
             logger.error(exception)
             raise exception
 
-    async def sendMessageStream(self, projectId: str, transformationId: str, content: str):
+    async def sendMessageStream(self, projectId: str, transformationId: str, content: str, userId: str | None = None):
         """
         Persist a user message, stream the agent response, and persist the assistant artifact.
         """
@@ -289,12 +290,18 @@ class TransformationService:
             metadata = await self._get_metadata(projectId=projectId)
             structuredResponse = None
 
+            agentCallbacks = []
+            if userId:
+                agentCallbacks.append(CreditTrackingCallback(userId=userId, operationType="transformation_message"))
+
             async for event in self.agent.astream(
                 projectId=projectId,
                 transformationId=transformationId,
                 userMessage=content,
                 metadata=metadata,
                 chatHistory=messages[:-1],
+                callbacks=agentCallbacks if agentCallbacks else None,
+                userId=userId,
             ):
                 if event.get("type") == "status":
                     yield self._sse("status", {"message": event.get("message", "")})
@@ -417,6 +424,7 @@ class TransformationService:
         projectId: str,
         transformationId: str,
         messageId: str,
+        userId: str | None = None,
     ) -> dict:
         """Persist an approved transformation output and update metadata."""
         try:
@@ -479,7 +487,7 @@ class TransformationService:
             try:
                 from api.services.managementService import managementService
                 logger.info(f"Regenerating metadata for project {projectId} after applying transformation...")
-                managementService.generateMetadata(projectId=projectId)
+                managementService.generateMetadata(projectId=projectId, userId=userId)
             except Exception as e:
                 logger.warning(f"Failed to generate metadata for project {projectId} after apply: {e}")
 
@@ -500,6 +508,7 @@ class TransformationService:
         projectId: str,
         transformationId: str,
         messageId: str,
+        userId: str | None = None,
     ) -> dict:
         """Rollback workspace state and message history to a specific message ID (time-travel)."""
         try:
@@ -603,7 +612,7 @@ class TransformationService:
             # Regenerate metadata.json
             try:
                 from api.services.managementService import managementService
-                managementService.generateMetadata(projectId=projectId)
+                managementService.generateMetadata(projectId=projectId, userId=userId)
             except Exception as e:
                 logger.warning(f"Failed to generate metadata after rollback: {e}")
                 
@@ -674,7 +683,7 @@ class TransformationService:
             logger.error(exception)
             raise exception
 
-    async def deleteTransformation(self, projectId: str, transformationId: str) -> dict:
+    async def deleteTransformation(self, projectId: str, transformationId: str, userId: str | None = None) -> dict:
         """Delete a transformation workspace and its associated parquet file if it exists."""
         try:
             # 1. Fetch transformation to find the associated table name
@@ -701,7 +710,7 @@ class TransformationService:
             # 4. Regenerate project metadata so the deleted table is no longer registered in metadata.json
             try:
                 from api.services.managementService import managementService
-                managementService.generateMetadata(projectId=projectId)
+                managementService.generateMetadata(projectId=projectId, userId=userId)
             except Exception as e:
                 logger.warning(f"Failed to generate metadata after deleting transformation: {e}")
 

@@ -17,7 +17,7 @@ from api.services.transformationService import transformationService
 from utils.exceptionHandler import CustomException, raiseHttpException
 from fastapi.responses import ORJSONResponse, StreamingResponse
 from fastapi import APIRouter, Depends
-from api.commons import verifyToken, requireActiveSubscription, UserContext
+from api.commons import verifyToken, verifyUser, requireActiveSubscription, requireCredits, UserContext
 
 
 router = APIRouter()
@@ -82,7 +82,7 @@ async def sendTransformationMessage(
     transformation_id: str,
     projectId: str,
     request: SendMessageRequest,
-    user: UserContext = Depends(requireActiveSubscription),
+    user: UserContext = Depends(requireCredits("transformation_message")),
 ):
     """
     Send a user message and stream the assistant response over SSE.
@@ -92,6 +92,7 @@ async def sendTransformationMessage(
             projectId=projectId,
             transformationId=transformation_id,
             content=request.content,
+            userId=user.userId,
         ),
         media_type="text/event-stream",
     )
@@ -133,6 +134,7 @@ async def applyTransformationMessage(
             projectId=projectId,
             transformationId=transformation_id,
             messageId=message_id,
+            userId=user.userId,
         )
         return ORJSONResponse(status_code=200, content=result)
     except CustomException as e:
@@ -154,6 +156,7 @@ async def rollbackTransformation(
             projectId=projectId,
             transformationId=transformation_id,
             messageId=request.messageId,
+            userId=user.userId,
         )
         return ORJSONResponse(status_code=200, content=result)
     except CustomException as e:
@@ -185,7 +188,7 @@ async def renameTransformation(
 async def deleteTransformation(
     transformation_id: str,
     projectId: str,
-    token=Depends(verifyToken),
+    user: UserContext = Depends(verifyUser),
 ):
     """
     Delete a transformation workspace and its associated parquet file if it exists.
@@ -194,6 +197,7 @@ async def deleteTransformation(
         result = await transformationService.deleteTransformation(
             projectId=projectId,
             transformationId=transformation_id,
+            userId=user.userId,
         )
         return ORJSONResponse(status_code=200, content=result)
     except CustomException as e:

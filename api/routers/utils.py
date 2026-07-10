@@ -18,7 +18,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from api.services.utilityService import utilityService
 from nubrix.triggers.celery import celeryApp
 from fastapi.responses import ORJSONResponse
-from api.commons import verifyToken
+from api.commons import verifyToken, requireCredits, UserContext
 import asyncio
 
 router = APIRouter()
@@ -27,25 +27,25 @@ Router for utility-related endpoints.
 """
 
 @router.post("/getSpeechTranscript")
-async def getSpeechTranscript(speechToText: SpeechToTextModel, token = Depends(verifyToken)):
+async def getSpeechTranscript(speechToText: SpeechToTextModel, user: UserContext = Depends(requireCredits("speech_to_text"))):
     """
     Get the transcript of a speech audio file.
 
     Args:
         speechToText (SpeechToTextModel): The speech-to-text model input.
-        token: Authorization token dependency.
+        user: UserContext injected after credit validation.
 
     Returns:
         ORJSONResponse: Transcription text or error message.
     """
     try:
-        transcriptText = utilityService.getSpeechTranscript(speechToText = speechToText)
+        transcriptText = utilityService.getSpeechTranscript(speechToText=speechToText, userId=user.userId)
         return ORJSONResponse(status_code = 200, content = {"transcriptionText": transcriptText})
     except CustomException as e:
         raiseHttpException(e)
     
 @router.post("/getInsightsFromImage")
-async def getInsightsFromImage(imageToInsights: ImageToInsightsModel, token = Depends(verifyToken)):
+async def getInsightsFromImage(imageToInsights: ImageToInsightsModel, user: UserContext = Depends(requireCredits("image_to_insights"))):
     """
     Extract structured, evidence-backed business insights from a base64-encoded
     dashboard image using the hybrid data + statistics + domain + LLM pipeline.
@@ -53,14 +53,14 @@ async def getInsightsFromImage(imageToInsights: ImageToInsightsModel, token = De
     Args:
         imageToInsights (ImageToInsightsModel): Input model containing the base64 image,
             project context, and user objectives.
-        token: Authorization token dependency (for access control).
+        user: UserContext injected after credit validation.
 
     Returns:
         ORJSONResponse: Structured JSON with diagnostic_insights, prescriptive_actions,
             and missing_data.
     """
     try:
-        insights = utilityService.getInsightsFromImage(imageToInsights=imageToInsights)
+        insights = utilityService.getInsightsFromImage(imageToInsights=imageToInsights, userId=user.userId)
         return ORJSONResponse(status_code=200, content=insights)
     except CustomException as e:
         raiseHttpException(e)

@@ -22,7 +22,7 @@ from api.models import GenerateChartInput, PanelChartDetails, GenerateChartsInPa
 from api.services.reportingService import reportingService
 from fastapi.responses import ORJSONResponse
 from fastapi import APIRouter, Depends
-from api.commons import verifyToken
+from api.commons import verifyToken, requireCredits, UserContext
 
 router = APIRouter()
 """
@@ -30,13 +30,13 @@ Router for reporting-related endpoints.
 """
 
 @router.post("/generateChart")
-async def generateChart(chartDetails: GenerateChartInput, token = Depends(verifyToken)):
+async def generateChart(chartDetails: GenerateChartInput, user: UserContext = Depends(requireCredits("reporting_query"))):
     """
     Generate a chart based on the provided chart details.
 
     Args:
         chartDetails (GenerateChartInput): The details required to generate the chart, including data, chart type, and configuration.
-        token: Authorization token dependency, automatically injected by FastAPI for authentication.
+        user: UserContext injected after credit validation.
 
     Returns:
         ORJSONResponse: A response containing the generated chart data in JSON format, or an error message if generation fails.
@@ -45,13 +45,13 @@ async def generateChart(chartDetails: GenerateChartInput, token = Depends(verify
         HTTPException: If an error occurs during chart generation, returns a 500 status code with the error details.
     """
     try:
-        response = reportingService.generateChart(chartDetails = chartDetails)
+        response = reportingService.generateChart(chartDetails=chartDetails, userId=user.userId)
         return ORJSONResponse(status_code = 200, content = response)
     except CustomException as e:
         raiseHttpException(e)
     
 @router.post("/generatePanelChart")
-async def generatePanelChart(panelChartDetails: PanelChartDetails, token = Depends(verifyToken)):
+async def generatePanelChart(panelChartDetails: PanelChartDetails, token=Depends(verifyToken)):
     """
     Generate a panel chart (multiple charts in a single view) based on the provided panel chart details.
 
@@ -72,13 +72,13 @@ async def generatePanelChart(panelChartDetails: PanelChartDetails, token = Depen
         raiseHttpException(e)
     
 @router.post("/generateAndExportChartsInParallel")
-async def generateAndExportChartsInParallel(details: GenerateChartsInParallel, token = Depends(verifyToken)):
+async def generateAndExportChartsInParallel(details: GenerateChartsInParallel, user: UserContext = Depends(requireCredits("reporting_query"))):
     """
     Generate and export multiple charts in parallel based on the provided details.
 
     Args:
         details (GenerateChartsInParallel): The details for generating charts in parallel, including project ID and input queries.
-        token: Authorization token dependency, automatically injected by FastAPI for authentication.
+        user: UserContext injected after credit validation.
 
     Returns:
         ORJSONResponse: A response containing the generated chart data in JSON format, or an error message if generation fails.
@@ -87,7 +87,7 @@ async def generateAndExportChartsInParallel(details: GenerateChartsInParallel, t
         HTTPException: If an error occurs during chart generation, returns a 500 status code with the error details.
     """
     try:
-        response = reportingService.generateChartsInParallel(details = details)
+        response = reportingService.generateChartsInParallel(details=details, userId=user.userId)
         return ORJSONResponse(status_code = 200, content = {"message": "Charts generated successfully", "pageData": response})
     except CustomException as e:
         raiseHttpException(e)

@@ -13,6 +13,7 @@ from api.models import GenerateChartInput, PanelChartDetails, GenerateChartsInPa
 from nubrix.components.dashboardNameGenerator import DashboardNameGenerator
 from nubrix.workflows.reportingToolWorkflow import buildReportingWorkflow
 from nubrix.workflows.parallelReportingToolWorkflow import buildParallelReportingWorkflow
+from api.services.credits.creditTrackingCallback import CreditTrackingCallback
 from api.commons import updateProjectModifiedAt
 from utils.exceptionHandler import CustomException
 from concurrent.futures import ThreadPoolExecutor
@@ -284,12 +285,13 @@ class ReportingService:
             }
         return response
     
-    def generateChart(self, chartDetails: GenerateChartInput) -> dict:
+    def generateChart(self, chartDetails: GenerateChartInput, userId: str | None = None) -> dict:
         """
         Generates a chart based on the provided chart details using the reporting workflow.
 
         Args:
             chartDetails (GenerateChartInput): Input details for generating the chart, including query, project ID, and chart configuration.
+            userId (str | None): The user ID for credit/observability tracking.
 
         Returns:
             dict: The generated chart data as a dictionary.
@@ -298,13 +300,25 @@ class ReportingService:
             CustomException: If chart generation fails for any reason.
         """
         try:
-            fileUrl = os.environ["FILE_URL"].format(projectId = chartDetails.projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             from utils.llm import getLangfuseConfig
-            response = self.reportingToolWorkflow.invoke({
-                "metadata": json.loads(urlopen(fileUrl).read()),
-                "inputQuery": chartDetails.inputQuery,
-                "projectId": chartDetails.projectId
-            }, config=getLangfuseConfig(trace_name="ReportingWorkflow", projectId=chartDetails.projectId))
+            reportConfig = getLangfuseConfig(
+                trace_name="ReportingWorkflow", projectId=chartDetails.projectId, userId=userId,
+                tags=["reporting", "generateChart"],
+            )
+            if userId:
+                reportConfig.setdefault("callbacks", []).append(
+                    CreditTrackingCallback(userId=userId, operationType="reporting_query")
+                )
+
+            fileUrl = os.environ["FILE_URL"].format(projectId = chartDetails.projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            response = self.reportingToolWorkflow.invoke(
+                {
+                    "metadata": json.loads(urlopen(fileUrl).read()),
+                    "inputQuery": chartDetails.inputQuery,
+                    "projectId": chartDetails.projectId
+                },
+                config=reportConfig or None,
+            )
             updateProjectModifiedAt(chartDetails.projectId)
             return response
         except Exception as e:
@@ -313,7 +327,7 @@ class ReportingService:
             raise exception
 
     @staticmethod
-    def _generateSingleChartForParallel(metadata: dict, projectId: str, query: str) -> dict:
+    def _generateSingleChartForParallel(metadata: dict, projectId: str, query: str, userId: str | None = None) -> dict:
         """
         Helper function to generate a single chart in parallel.
 
@@ -321,6 +335,7 @@ class ReportingService:
             metadata: The metadata for the project.
             projectId: The project ID.
             query: The input query for the chart.
+            userId: The user ID for credit/observability tracking.
 
         Returns:
             dict: The generated chart data.
@@ -328,11 +343,19 @@ class ReportingService:
         try:
             from utils.llm import getLangfuseConfig
             workflow = threadLocal.parallelWorkflow
+            reportConfig = getLangfuseConfig(
+                trace_name="ParallelReportingWorkflow", projectId=projectId, userId=userId,
+                tags=["reporting", "parallelChart"],
+            )
+            if userId:
+                reportConfig.setdefault("callbacks", []).append(
+                    CreditTrackingCallback(userId=userId, operationType="reporting_query")
+                )
             response = workflow.invoke({
                 "metadata": metadata,
                 "inputQuery": query,
                 "projectId": projectId
-            }, config=getLangfuseConfig(trace_name="ParallelReportingWorkflow", projectId=projectId))
+            }, config=reportConfig or None)
             _ = response.pop("metadata", None)
             _ = response.pop("rephrasedQuery", None)
             _ = response.pop("codeOutput", None)
@@ -351,7 +374,7 @@ class ReportingService:
                 "generatedCode": f"# Failed to generate code for: {query}\n# Error: {e}"
             }
 
-    def generateChartsInParallel(self, details: GenerateChartsInParallel) -> dict:
+    def generateChartsInParallel(self, details: GenerateChartsInParallel, userId: str | None = None) -> dict:
         """
         Generates multiple charts in parallel based on the provided details and export them to an automatic dashboard page. 
 
@@ -376,7 +399,7 @@ class ReportingService:
 
             with ThreadPoolExecutor(max_workers=6, initializer=initParallelWorkflow) as executor:
                 futures = [
-                    executor.submit(self._generateSingleChartForParallel, metadata, details.projectId, query)
+                    executor.submit(self._generateSingleChartForParallel, metadata, details.projectId, query, userId)
                     for query in uniqueQueries
                 ]
                 responses = [f.result() for f in futures]
@@ -402,10 +425,22 @@ class ReportingService:
             if not pageId:
                 # Generate a dynamic dashboard name only if creating a new one
                 from utils.llm import getLangfuseConfig
-                dashboardName = dashboardNameChain.invoke({
-                    "queries": "\n".join(uniqueQueries),
-                    "metadata": json.dumps(metadata)
-                }, config=getLangfuseConfig(trace_name="DashboardNameGenerator", projectId=projectId)).strip()
+                dashboardNameChain = DashboardNameGenerator().getDashboardNameGeneratorChain()
+                nameConfig = getLangfuseConfig(
+                    trace_name="DashboardNameGenerator", projectId=details.projectId, userId=userId,
+                    tags=["reporting", "dashboardNaming"],
+                )
+                if userId:
+                    nameConfig.setdefault("callbacks", []).append(
+                        CreditTrackingCallback(userId=userId, operationType="dashboard_naming")
+                    )
+                dashboardName = dashboardNameChain.invoke(
+                    {
+                        "queries": "\n".join(uniqueQueries),
+                        "metadata": json.dumps(metadata)
+                    },
+                    config=nameConfig or None,
+                ).strip()
 
                 # Create a new dashboard page
                 pageId = str(uuid.uuid4())

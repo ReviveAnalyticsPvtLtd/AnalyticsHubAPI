@@ -401,6 +401,12 @@ class SubscriptionService:
             },
         )
 
+        try:
+            from api.services.credits.creditService import creditService
+            creditService.resetMonthlyCredits(userId)
+        except Exception as creditErr:
+            logger.warning(f"Credit reset failed for annual renewal userId={userId}: {creditErr}")
+
         logger.info(
             f"Annual renewal finalized from dashboard verify for user {userId}, "
             f"invoice {invoiceId}, new expiry {newExpiry}"
@@ -840,6 +846,11 @@ class SubscriptionService:
             name = records.data[0]["fullName"] if records.data else userEmail
             self._sendFreeTrialEmail(email=userEmail, name=name)
             self._auditLog(userId, "free_trial.activated", status="TRIAL")
+            try:
+                from api.services.credits.creditService import creditService
+                creditService.initializeCreditBalance(userId=userId, planTier="free")
+            except Exception as creditErr:
+                logger.warning(f"Credit initialization failed for trial user {userId}: {creditErr}")
             newToken = self._reissueTokenWithUpdatedClaims(token, "trial", "free")
             return {
                 "subscriptionPlan": "free",
@@ -1169,6 +1180,11 @@ class SubscriptionService:
                 }
             )
             planType = "pro" if billingMode == "monthly_recurring" else "annual"
+            try:
+                from api.services.credits.creditService import creditService
+                creditService.initializeCreditBalance(userId=userId, planTier=planType)
+            except Exception as creditErr:
+                logger.warning(f"Credit initialization failed for paid user {userId}: {creditErr}")
             newToken = self._reissueTokenWithUpdatedClaims(token, "active", planType)
             return {"accessToken": newToken}
         except PaymentValidationError as e:

@@ -1,0 +1,33 @@
+{
+  "version": "1.0.0",
+  "token_to_credit_ratio": 100,
+  "quotas": {
+    "free": {
+      "monthly_credits": 5000,
+      "description": "Free-tier and trial users (12-day trial period)"
+    },
+    "pro": {
+      "monthly_credits": 50000,
+      "description": "Pro monthly subscribers"
+    },
+    "annual": {
+      "monthly_credits": 50000,
+      "description": "Annual prepaid subscribers"
+    },
+    "none": {
+      "monthly_credits": 0,
+      "description": "No active plan"
+    }
+  },
+  "operation_minimums": {
+    "reporting_query": 5,
+    "transformation_message": 10,
+    "image_to_insights": 10,
+    "metadata_generation": 3,
+    "pdf_extraction_per_page": 5,
+    "kpi_mapping": 3,
+    "dashboard_naming": 1,
+    "insight_generation": 5,
+    "speech_to_text": 2
+  }
+}

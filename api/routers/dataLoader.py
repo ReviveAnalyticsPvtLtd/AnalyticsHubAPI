@@ -18,7 +18,7 @@ from utils.exceptionHandler import CustomException, raiseHttpException
 from fastapi import APIRouter, Depends, UploadFile, File, Form
 from api.services.dataLoadService import dataLoadService
 from fastapi.responses import ORJSONResponse
-from api.commons import verifyToken
+from api.commons import verifyToken, requireCredits, UserContext
 from typing import Annotated
 
 router = APIRouter()
@@ -65,7 +65,7 @@ async def loadExcelData(projectId: Annotated[str, Form()], files: list[UploadFil
         raiseHttpException(e)
 
 @router.post("/loadPdfData")
-async def loadPdfData(projectId: Annotated[str, Form()], files: list[UploadFile], token = Depends(verifyToken)):
+async def loadPdfData(projectId: Annotated[str, Form()], files: list[UploadFile], user: UserContext = Depends(requireCredits("pdf_extraction_per_page"))):
     """
     Load data from PDF files into the specified project.
     Extracts tables and text content from the PDF.
@@ -73,13 +73,13 @@ async def loadPdfData(projectId: Annotated[str, Form()], files: list[UploadFile]
     Args:
         projectId (str): The ID of the project to load data into.
         files (list[UploadFile]): The PDF files to upload.
-        token: Authorization token dependency.
+        user: UserContext injected after credit validation.
 
     Returns:
         ORJSONResponse: Success or error message.
     """
     try:
-        await dataLoadService.loadPdfData(projectId=projectId, files=files)
+        await dataLoadService.loadPdfData(projectId=projectId, files=files, userId=user.userId)
         return ORJSONResponse(status_code=200, content={"status": "SUCCESS"})
     except CustomException as e:
         raiseHttpException(e)

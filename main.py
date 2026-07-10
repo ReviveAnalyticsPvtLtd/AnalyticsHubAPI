@@ -11,7 +11,7 @@ __author__ = "Rauhan Ahmed Siddiqui"
 import ssl
 ssl._create_default_https_context = ssl._create_unverified_context
 
-from api.routers import authentication, manager, dataLoader, reporting, utils, blends, dashboard, subscriptions, webhooks, billingAdmin, transformations
+from api.routers import authentication, manager, dataLoader, reporting, utils, blends, dashboard, subscriptions, webhooks, billingAdmin, transformations, credits
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from utils.logger import logger
@@ -85,3 +85,4 @@ app.include_router(subscriptions.router, prefix = "/subscriptions", tags = ["Sub
 app.include_router(webhooks.router, prefix = "/webhooks", tags = ["Webhooks"])
 app.include_router(billingAdmin.router, prefix = "/billing-admin", tags = ["Billing Admin"])
 app.include_router(transformations.router, prefix = "/transformations", tags = ["Transformations"])
+app.include_router(credits.router, prefix = "/credits", tags = ["Credits"])
