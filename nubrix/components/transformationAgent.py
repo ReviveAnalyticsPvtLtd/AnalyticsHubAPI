@@ -385,12 +385,36 @@ class TransformationAgent:
                     chatHistory=chatHistory,
                     formattedInput=current_input,
                     transformationId=transformationId,
+                    userId=userId,
                 )
 
-                res = await agent.ainvoke(
-                    {"messages": messages_to_send},
-                    config=getLangfuseConfig(trace_name="TransformationAgent", projectId=projectId),
+                agentConfig = getLangfuseConfig(
+                    trace_name="TransformationAgent",
+                    projectId=projectId,
+                    userId=userId,
                 )
+                # Cap tool-call iterations: create_agent defaults to recursion_limit=9999
+                # which causes infinite loops with lighter models. 10 is more than enough.
+                agentConfig["recursion_limit"] = 10
+                if callbacks:
+                    agentConfig.setdefault("callbacks", []).extend(callbacks)
+
+                try:
+                    res = await agent.ainvoke(
+                        {"messages": messages_to_send},
+                        config=agentConfig,
+                    )
+                except Exception as agent_err:
+                    # GraphRecursionError or similar — agent hit the tool-call iteration cap
+                    err_name = type(agent_err).__name__
+                    logger.warning(f"Agent invocation failed on attempt {attempt + 1} ({err_name}): {agent_err}")
+                    error_feedback = (
+                        "You exceeded the maximum number of tool-call iterations. "
+                        "Stop calling inspect_dataset and produce your final JSON response directly "
+                        "with pythonCode, mermaidCode, and userFacingResponse."
+                    )
+                    response = None
+                    continue
 
                 response = res.get("structured_response")
                 if not response:

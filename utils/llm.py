@@ -6,6 +6,10 @@ def getGenaiLlm(model: str, temperature: float, max_tokens: int = None) -> ChatG
     Factory function to instantiate ChatGoogleGenerativeAI, enforcing the use of API keys
     and disabling GCE metadata check.
     """
+    # Suppress noisy warnings from langchain_google_genai / google-genai
+    import warnings
+    warnings.filterwarnings("ignore", message=".*non-text parts.*")
+
     # Enforce NO_GCE_CHECK to disable GCE metadata checks globally in google-auth
     os.environ["NO_GCE_CHECK"] = "true"
     # Force the use of Google AI Studio (API key) instead of Vertex AI (which requires GCP IAM credentials)
