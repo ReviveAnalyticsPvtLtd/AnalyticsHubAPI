@@ -56,8 +56,24 @@ class TransformationAgent:
         # Per-thread summary state (keyed by transformationId)
         self._threadSummaryCache: dict[str, tuple[str, int]] = {}
 
-    async def _summarizeHistory(self, oldMessages: list[BaseMessage], cacheKey: str) -> str:
-        """Summarize old chat history messages using the LLM, with LRU-bounded caching."""
+    async def _summarizeHistory(
+        self,
+        oldMessages: list[BaseMessage],
+        cacheKey: str,
+        userId: str | None = None,
+    ) -> str:
+        """Summarize old chat history messages using the LLM, with LRU-bounded caching.
+
+        Args:
+            oldMessages: LangChain messages to compress into a summary.
+            cacheKey: Stable key used to memoize the generated summary (LRU-bounded).
+            userId: Optional authenticated user id; used for Langfuse tracing and
+                credit tracking. Must be a non-empty string when provided.
+
+        Returns:
+            A summary string. On any internal failure, returns a safe fallback
+            string instead of raising, so the calling agent can continue.
+        """
         if not oldMessages:
             return ""
         if cacheKey in self._historySummaryCache:
@@ -96,19 +112,39 @@ class TransformationAgent:
             "DROP: greetings, apologies, generic phrases like 'I will help you', restatements of the user's request.\n\n"
             f"CONVERSATION:\n{textToSummarize}"
         )
+        # Normalize userId: only treat it as truthy if it is a non-empty string.
+        # The downstream tracing/credit helpers do not accept None, and Langfuse
+        # metadata keys would otherwise be polluted with literal "None" strings.
+        safeUserId = userId if isinstance(userId, str) and userId.strip() else None
+        summaryConfig: dict = {}
         try:
             from utils.llm import getLangfuseConfig
             from api.services.credits.creditTrackingCallback import CreditTrackingCallback
-            summaryConfig = getLangfuseConfig(trace_name="TransformationAgent-HistorySummary", userId=userId)
-            if userId:
-                summaryConfig.setdefault("callbacks", []).append(
-                    CreditTrackingCallback(userId=userId, operationType="transformation_history_summary")
-                )
-            summaryResponse = await self.llm.ainvoke(
-                prompt,
-                config=summaryConfig or None,
-            )
-            summary = summaryResponse.content
+
+            if safeUserId:
+                try:
+                    summaryConfig = getLangfuseConfig(
+                        trace_name="TransformationAgent-HistorySummary",
+                        userId=safeUserId,
+                    ) or {}
+                except Exception as cfgErr:
+                    logger.warning(f"Failed to build Langfuse config for history summary: {cfgErr}")
+                    summaryConfig = {}
+
+                try:
+                    summaryConfig.setdefault("callbacks", []).append(
+                        CreditTrackingCallback(
+                            userId=safeUserId,
+                            operationType="transformation_history_summary",
+                        )
+                    )
+                except Exception as cbErr:
+                    # Credit tracking is best-effort: never fail the summary for it.
+                    logger.warning(f"Failed to attach CreditTrackingCallback: {cbErr}")
+
+            summaryResponse = await self.llm.ainvoke(prompt, config=summaryConfig or None)
+            summary = getattr(summaryResponse, "content", None) or ""
+
             # LRU eviction: remove oldest entry if cache exceeds max size
             self._historySummaryCache[cacheKey] = summary
             if len(self._historySummaryCache) > self._MAX_SUMMARY_CACHE_SIZE:
@@ -173,7 +209,12 @@ class TransformationAgent:
                 # Regenerate summary and cache it (only if there's enough old history to justify an LLM call)
                 logger.info(f"Regenerating conversation history summary for thread {transformationId}.")
                 cacheKey = ":".join(m.get("message_id", "") for m in oldChatHistory)
-                summaryText = await self._summarizeHistory(oldHistory, cacheKey, userId=userId)
+                _safeUserId = userId if isinstance(userId, str) and userId.strip() else None
+                summaryText = await self._summarizeHistory(
+                    oldHistory,
+                    cacheKey,
+                    userId=_safeUserId,
+                )
                 self._threadSummaryCache[transformationId] = (summaryText, len(oldHistory))
                 cached_summary = summaryText
                 unsummarized_msgs = []
