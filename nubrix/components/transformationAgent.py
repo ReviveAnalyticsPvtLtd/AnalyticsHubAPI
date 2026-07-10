@@ -10,7 +10,7 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["TransformationAgent"]
 
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from utils.llm import getGenaiLlm
 from utils.exceptionHandler import CustomException
@@ -21,6 +21,21 @@ from utils.logger import logger
 from dataclasses import dataclass
 import json
 import os
+
+
+def getStringContent(content) -> str:
+    """Helper to convert LangChain message content (possibly list of dicts/strings) to a string."""
+    if isinstance(content, str):
+        return content
+    elif isinstance(content, list):
+        parts = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict) and "text" in part:
+                parts.append(part["text"])
+        return "".join(parts)
+    return ""
 
 
 @dataclass
@@ -56,24 +71,8 @@ class TransformationAgent:
         # Per-thread summary state (keyed by transformationId)
         self._threadSummaryCache: dict[str, tuple[str, int]] = {}
 
-    async def _summarizeHistory(
-        self,
-        oldMessages: list[BaseMessage],
-        cacheKey: str,
-        userId: str | None = None,
-    ) -> str:
-        """Summarize old chat history messages using the LLM, with LRU-bounded caching.
-
-        Args:
-            oldMessages: LangChain messages to compress into a summary.
-            cacheKey: Stable key used to memoize the generated summary (LRU-bounded).
-            userId: Optional authenticated user id; used for Langfuse tracing and
-                credit tracking. Must be a non-empty string when provided.
-
-        Returns:
-            A summary string. On any internal failure, returns a safe fallback
-            string instead of raising, so the calling agent can continue.
-        """
+    async def _summarizeHistory(self, oldMessages: list[BaseMessage], cacheKey: str, userId: str | None = None) -> str:
+        """Summarize old chat history messages using the LLM, with LRU-bounded caching."""
         if not oldMessages:
             return ""
         if cacheKey in self._historySummaryCache:
@@ -83,7 +82,7 @@ class TransformationAgent:
         formatted = []
         for msg in oldMessages:
             role = "User" if isinstance(msg, HumanMessage) else "Assistant"
-            content = msg.content
+            content = getStringContent(msg.content)
             try:
                 parsed = json.loads(content)
                 if isinstance(parsed, dict) and "userFacingResponse" in parsed:
@@ -112,39 +111,19 @@ class TransformationAgent:
             "DROP: greetings, apologies, generic phrases like 'I will help you', restatements of the user's request.\n\n"
             f"CONVERSATION:\n{textToSummarize}"
         )
-        # Normalize userId: only treat it as truthy if it is a non-empty string.
-        # The downstream tracing/credit helpers do not accept None, and Langfuse
-        # metadata keys would otherwise be polluted with literal "None" strings.
-        safeUserId = userId if isinstance(userId, str) and userId.strip() else None
-        summaryConfig: dict = {}
         try:
             from utils.llm import getLangfuseConfig
             from api.services.credits.creditTrackingCallback import CreditTrackingCallback
-
-            if safeUserId:
-                try:
-                    summaryConfig = getLangfuseConfig(
-                        trace_name="TransformationAgent-HistorySummary",
-                        userId=safeUserId,
-                    ) or {}
-                except Exception as cfgErr:
-                    logger.warning(f"Failed to build Langfuse config for history summary: {cfgErr}")
-                    summaryConfig = {}
-
-                try:
-                    summaryConfig.setdefault("callbacks", []).append(
-                        CreditTrackingCallback(
-                            userId=safeUserId,
-                            operationType="transformation_history_summary",
-                        )
-                    )
-                except Exception as cbErr:
-                    # Credit tracking is best-effort: never fail the summary for it.
-                    logger.warning(f"Failed to attach CreditTrackingCallback: {cbErr}")
-
-            summaryResponse = await self.llm.ainvoke(prompt, config=summaryConfig or None)
-            summary = getattr(summaryResponse, "content", None) or ""
-
+            summaryConfig = getLangfuseConfig(trace_name="TransformationAgent-HistorySummary", userId=userId)
+            if userId:
+                summaryConfig.setdefault("callbacks", []).append(
+                    CreditTrackingCallback(userId=userId, operationType="transformation_history_summary")
+                )
+            summaryResponse = await self.llm.ainvoke(
+                prompt,
+                config=summaryConfig or None,
+            )
+            summary = summaryResponse.content
             # LRU eviction: remove oldest entry if cache exceeds max size
             self._historySummaryCache[cacheKey] = summary
             if len(self._historySummaryCache) > self._MAX_SUMMARY_CACHE_SIZE:
@@ -209,12 +188,7 @@ class TransformationAgent:
                 # Regenerate summary and cache it (only if there's enough old history to justify an LLM call)
                 logger.info(f"Regenerating conversation history summary for thread {transformationId}.")
                 cacheKey = ":".join(m.get("message_id", "") for m in oldChatHistory)
-                _safeUserId = userId if isinstance(userId, str) and userId.strip() else None
-                summaryText = await self._summarizeHistory(
-                    oldHistory,
-                    cacheKey,
-                    userId=_safeUserId,
-                )
+                summaryText = await self._summarizeHistory(oldHistory, cacheKey, userId=userId)
                 self._threadSummaryCache[transformationId] = (summaryText, len(oldHistory))
                 cached_summary = summaryText
                 unsummarized_msgs = []
@@ -262,12 +236,9 @@ class TransformationAgent:
         userId: str | None = None,
     ) -> TransformationAgentResponse:
         """
-        Generate a structured transformation response, with self-healing retries and a ReAct agent loop.
-        History is summarized and windowed via _getMessages(); the last approved active code state is
-        always injected so the LLM builds cumulatively on prior steps.
+        Generate a structured transformation response using a clean tool-calling loop and self-healing retries.
         """
         from nubrix.components.transformationExecutor import TransformationExecutor
-        from langchain.agents import create_agent
 
         executor = TransformationExecutor()
 
@@ -299,52 +270,8 @@ class TransformationAgent:
 
             return executor.executeInspection(projectId, code_to_exec)
 
-        tools = [inspect_dataset]
-
-        # Custom parser helper in case structured_response is missing
-        def parse_agent_response(text: str) -> tuple[TransformationAgentResponse | None, str | None]:
-            text = text.strip()
-            # Clean enclosing markdown blocks if present
-            clean_text = text
-            if clean_text.startswith("```json"):
-                clean_text = clean_text[7:]
-            if clean_text.endswith("```"):
-                clean_text = clean_text[:-3]
-            clean_text = clean_text.strip()
-
-            try:
-                parsed = json.loads(clean_text)
-                resp = TransformationAgentResponse(
-                    pythonCode=parsed.get("pythonCode"),
-                    mermaidCode=parsed.get("mermaidCode"),
-                    userFacingResponse=parsed.get("userFacingResponse") or ""
-                )
-                return resp, None
-            except Exception:
-                start = text.find('{')
-                end = text.rfind('}')
-                if start != -1 and end != -1 and end > start:
-                    preamble = text[:start].strip()
-                    json_candidate = text[start:end+1]
-                    try:
-                        parsed = json.loads(json_candidate)
-                        user_resp = parsed.get("userFacingResponse") or ""
-                        if preamble:
-                            user_resp = f"{preamble}\n\n{user_resp}"
-                        resp = TransformationAgentResponse(
-                            pythonCode=parsed.get("pythonCode"),
-                            mermaidCode=parsed.get("mermaidCode"),
-                            userFacingResponse=user_resp
-                        )
-                        return resp, None
-                    except Exception as e:
-                        return None, f"JSON candidate block found but failed to parse/validate: {str(e)}"
-
-            return TransformationAgentResponse(
-                pythonCode=None,
-                mermaidCode=None,
-                userFacingResponse=text
-            ), None
+        # Bind both inspect_dataset and the final schema (TransformationAgentResponse) to the model
+        bound_llm = self.llm.bind_tools([inspect_dataset, TransformationAgentResponse])
 
         try:
             # Build system prompt with metadata injected (passed to the agent, not the user turn)
@@ -355,21 +282,23 @@ class TransformationAgent:
                 .replace("{user_request}", userMessage)
             )
 
-            # Instantiate the agent once; message list is rebuilt per retry
-            agent = create_agent(
-                model=self.llm,
-                tools=tools,
-                system_prompt=system_prompt,
-                response_format=TransformationAgentResponse
-            )
-
             base_input = f"Please perform the transformation: {userMessage}"
-            max_retries = 3
+            max_healing_attempts = 3
             error_feedback = ""
             response: TransformationAgentResponse | None = None
 
-            for attempt in range(max_retries):
-                # Inject retry error feedback into the user turn if a previous attempt failed
+            # Setup Langfuse config
+            from utils.llm import getLangfuseConfig
+            agentConfig = getLangfuseConfig(
+                trace_name="TransformationAgent",
+                projectId=projectId,
+                userId=userId,
+            )
+            if callbacks:
+                agentConfig.setdefault("callbacks", []).extend(callbacks)
+
+            # We loop over self-healing attempts
+            for attempt in range(max_healing_attempts):
                 current_input = base_input
                 if error_feedback:
                     current_input = (
@@ -379,8 +308,7 @@ class TransformationAgent:
                         "Please correct the formatting and code structure."
                     )
 
-                # Build full message list: summary + active-code injection + windowed history + current turn
-                from utils.llm import getLangfuseConfig
+                # Fetch fresh message history starting from chatHistory + current input
                 messages_to_send = await self._getMessages(
                     chatHistory=chatHistory,
                     formattedInput=current_input,
@@ -388,57 +316,80 @@ class TransformationAgent:
                     userId=userId,
                 )
 
-                agentConfig = getLangfuseConfig(
-                    trace_name="TransformationAgent",
-                    projectId=projectId,
-                    userId=userId,
-                )
-                # Cap tool-call iterations: create_agent defaults to recursion_limit=9999
-                # which causes infinite loops with lighter models. 10 is more than enough.
-                agentConfig["recursion_limit"] = 10
-                if callbacks:
-                    agentConfig.setdefault("callbacks", []).extend(callbacks)
+                # Prepend the system prompt at the beginning of the messages list
+                messages_list = [SystemMessage(content=system_prompt)] + messages_to_send
 
-                try:
-                    res = await agent.ainvoke(
-                        {"messages": messages_to_send},
-                        config=agentConfig,
-                    )
-                except Exception as agent_err:
-                    # GraphRecursionError or similar — agent hit the tool-call iteration cap
-                    err_name = type(agent_err).__name__
-                    logger.warning(f"Agent invocation failed on attempt {attempt + 1} ({err_name}): {agent_err}")
-                    error_feedback = (
-                        "You exceeded the maximum number of tool-call iterations. "
-                        "Stop calling inspect_dataset and produce your final JSON response directly "
-                        "with pythonCode, mermaidCode, and userFacingResponse."
-                    )
-                    response = None
+                # Run the internal tool-calling loop (up to 5 steps of tool call/response)
+                max_iterations = 5
+                response = None
+                
+                for iteration in range(max_iterations):
+                    res = await bound_llm.ainvoke(messages_list, config=agentConfig)
+                    
+                    if res.tool_calls:
+                        # Model called a tool or schema function
+                        tool_call = res.tool_calls[0]
+                        name = tool_call["name"]
+                        args = tool_call["args"]
+                        call_id = tool_call["id"]
+                        
+                        if name == "TransformationAgentResponse":
+                            # Model produced final answer
+                            try:
+                                response = TransformationAgentResponse(
+                                    pythonCode=args.get("pythonCode"),
+                                    mermaidCode=args.get("mermaidCode"),
+                                    userFacingResponse=args.get("userFacingResponse") or ""
+                                )
+                            except Exception as pe:
+                                logger.warning(f"Failed parsing response schema parameters: {pe}")
+                                response = None
+                            break
+                        elif name == "inspect_dataset":
+                            logger.info(f"Iteration {iteration + 1}: inspect_dataset called with args={args}")
+                            messages_list.append(res)
+                            try:
+                                tool_result = inspect_dataset.invoke(args)
+                            except Exception as tool_e:
+                                tool_result = f"Error executing inspection: {tool_e}"
+                            messages_list.append(ToolMessage(content=tool_result, tool_call_id=call_id))
+                        else:
+                            # Unknown tool
+                            messages_list.append(res)
+                            messages_list.append(ToolMessage(content="Unknown tool name.", tool_call_id=call_id))
+                    else:
+                        # Model returned pure text response (fallback parsing)
+                        text = getStringContent(res.content).strip()
+                        if text.startswith("```json"):
+                            text = text[7:]
+                        if text.endswith("```"):
+                            text = text[:-3]
+                        text = text.strip()
+                        try:
+                            parsed = json.loads(text)
+                            response = TransformationAgentResponse(
+                                pythonCode=parsed.get("pythonCode"),
+                                mermaidCode=parsed.get("mermaidCode"),
+                                userFacingResponse=parsed.get("userFacingResponse") or ""
+                            )
+                        except Exception:
+                            # Conversation fallback
+                            response = TransformationAgentResponse(
+                                pythonCode=None,
+                                mermaidCode=None,
+                                userFacingResponse=getStringContent(res.content)
+                            )
+                        break
+
+                if response is None:
+                    error_feedback = "Failed to output structured response matching the TransformationAgentResponse schema."
                     continue
 
-                response = res.get("structured_response")
-                if not response:
-                    last_msg = res["messages"][-1]
-                    response, parse_err = parse_agent_response(last_msg.content)
-                else:
-                    parse_err = None
-
-                if parse_err:
-                    logger.warning(f"Agent response parsing failed on attempt {attempt + 1}: {parse_err}")
-                    error_feedback = (
-                        f"Your output failed structure or schema validation with the following error:\n"
-                        f"{parse_err}\n"
-                        "Please correct the output format, ensure pythonCode and mermaidCode are aligned, "
-                        "and strictly conform to the expected JSON schema."
-                    )
-                    response = None
-                    continue
-
-                # No code means clarification / conversational reply — return immediately
+                # If no Python code is returned, return directly
                 if not response.pythonCode:
                     return response
 
-                # Test-execute the generated Python code; retry with error feedback on failure
+                # Test-execute the generated Python code; retry on failure
                 try:
                     executor._execute_code(projectId=projectId, pythonCode=response.pythonCode)
                     logger.info(f"Generated python code executed successfully on attempt {attempt + 1}.")
@@ -453,7 +404,6 @@ class TransformationAgent:
                         "and ensure the output is correct and executable."
                     )
 
-            # All retries exhausted — return whatever we have, or a safe fallback
             if response is None:
                 logger.error("TransformationAgent exhausted all retries with no parseable response.")
                 return TransformationAgentResponse(
