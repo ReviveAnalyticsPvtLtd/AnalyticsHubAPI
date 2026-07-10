@@ -25,11 +25,29 @@ import math
 import io
 import os
 import re
+import builtins
+
+# Module-level Redis connection pool for reuse
+_redis_pool: redis.ConnectionPool | None = None
+
+
+def _get_redis_pool() -> redis.ConnectionPool:
+    """Get or create a shared Redis connection pool."""
+    global _redis_pool
+    if _redis_pool is None:
+        _redis_pool = redis.ConnectionPool(
+            host=os.environ["REDIS_HOST"],
+            port=int(os.environ["REDIS_PORT"]),
+            password=os.environ["REDIS_PASSWORD"],
+            max_connections=10,
+            decode_responses=False,
+        )
+    return _redis_pool
 
 
 class TransformationExecutor:
     """
-    Execute pandas transformation code and persist approved outputs.
+    Execute pandas transformation code and persist approved transformed tables.
     """
     def __init__(self, timeoutSeconds: int = 30):
         """Initialize the executor."""
@@ -37,12 +55,8 @@ class TransformationExecutor:
         self.client = client
 
     def _redis_client(self) -> redis.Redis:
-        """Create a Redis client using environment credentials."""
-        return redis.Redis(
-            host=os.environ["REDIS_HOST"],
-            port=int(os.environ["REDIS_PORT"]),
-            password=os.environ["REDIS_PASSWORD"],
-        )
+        """Create a Redis client using shared connection pool."""
+        return redis.Redis(connection_pool=_get_redis_pool())
 
     def _validate_table_name(self, tableName: str) -> str:
         """Validate the output table name."""
@@ -136,7 +150,7 @@ class TransformationExecutor:
                     finalDf = future.result(timeout=self.timeoutSeconds)
                 except FuturesTimeoutError as e:
                     raise TimeoutError(f"Transformation execution exceeded {self.timeoutSeconds} seconds.") from e
-            previewRecords = finalDf.head(10).replace({np.nan: None}).to_dict(orient="records")
+            previewRecords = finalDf.head(100).replace({np.nan: None}).to_dict(orient="records")
             previewRows = json.loads(json.dumps(previewRecords, default=serializer))
             parquetBuffer = io.BytesIO()
             finalDf.to_parquet(parquetBuffer, compression="snappy")

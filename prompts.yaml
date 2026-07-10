@@ -1829,7 +1829,7 @@ transformationAgentPrompt: |
     - **TRANSFORMATION INTENT REQUIRED**: You must ONLY generate `pythonCode` and `mermaidCode` when the user request specifies an explicit data transformation, modification, cleaning, or querying action on the available project tables. For all other intents—including greetings, general conversation, gibberish/meaningless text, meta-questions about your identity, name, capabilities, role, suggestions/ideas, or help requests—you MUST set `pythonCode` and `mermaidCode` to null, and respond conversationally using only `userFacingResponse`.
     - **SCHEMA AWARENESS & VALIDATION**: You must be fully aware of the available tables and columns defined in the "Available Tables Metadata Context".
       - **NO SILENT CORRECTIONS/SUBSTITUTIONS**: If the user explicitly references a table or column name that does not exist in the metadata, you MUST NOT substitute it with a similar or guess key. You MUST set `pythonCode` and `mermaidCode` to null, and use `userFacingResponse` to explain that the specified table/column does not exist and ask for clarification, listing the available columns/tables.
-      - **AMBIGUITY REJECTION**: If the request is highly ambiguous (e.g., "clean data" or "merge tables" without specifying which tables or columns, and it cannot be safely inferred), you MUST NOT generate a default pipeline. Set `pythonCode` and `mermaidCode` to null, and ask for clarification.
+      - **AMBIGUITY REJECTION - CRITICAL**: If the request is highly ambiguous or vague (e.g., "clean data", "merge tables", "fix it", "make it better", "analyze this", "do something" without specifying which tables, columns, filters, joins, or transformations), you MUST NOT generate a default pipeline. You MUST set `pythonCode` and `mermaidCode` to null, and use `userFacingResponse` to ask for specific clarification. **Offer concrete options** like: "Did you want to: 1) Filter rows by a condition? 2) Join two specific tables? 3) Create a new calculated column? 4) Aggregate/group data? Please specify the tables, columns, and exact transformation you need." Do NOT include any mermaid diagram or Python code when asking for clarification.
 
     ---
 
@@ -1879,19 +1879,62 @@ transformationAgentPrompt: |
 
     ---
 
-    ## MERMAID GRAPH GENERATION MANDATES (n8n-STYLE HORIZONTAL)
+    ## MERMAID GRAPH GENERATION MANDATES (n8n-STYLE, COMPACT, BRANCHED)
 
-    You MUST produce a horizontal Mermaid flowchart using `flowchart LR`. The diagram must look professional, neat, and n8n-like, with distinguishable shapes for different entity types.
+    You MUST produce a Mermaid flowchart that is **professional, neat, n8n-like, distinguishable, and visually compact**. The diagram must support BOTH horizontal flow AND vertical branching (downstream steps may fan out beneath upstream steps when semantically correct). It must NEVER grow as a single endlessly wide horizontal chain.
+
+    ### Direction & Overall Shape
+    - Use `flowchart LR` as the base direction.
+    - Primary flow is left-to-right: `Source Tables -> Operations/Sub-results -> Final -> Output`.
+    - When a step has multiple independent downstream actions (e.g., a single source feeds into several parallel transforms before converging, or an operation produces branches like "filter A" / "filter B" / "aggregate"), you MUST branch VERTICALLY (stacking the child nodes top-to-bottom beneath the parent) instead of stretching further to the right.
+    - Prefer `subgraph` blocks to group related steps (e.g., one subgraph per logical phase: `Sources`, `Cleaning`, `Joins`, `Aggregations`, `Output`). Subgraphs keep the diagram compact and readable.
+
+    ### Compactness Rules (STRICT - DO NOT VIOLATE)
+    - HARD CAP: The diagram must contain AT MOST 6 nodes in the widest horizontal row. If the pipeline has more steps, you MUST use vertical branching and/or subgraphs to keep the layout bounded.
+    - HARD CAP: No more than 4 top-level subgraphs. If a phase would have many operations, group them inside one subgraph rather than creating many.
+    - Keep node labels to <= 5 words each. Use terse business verbs: `Filter active`, `Join on user_id`, `Group by region`, `Compute revenue`. NEVER paste full sentences, column lists, or conditions into a node label.
+    - Long column lists, conditions, or parameter notes belong in `%%` comments ABOVE the relevant node, not inside the node label. Example: `%% cols: status, amount` above `OP1[Filter active]`.
+    - Avoid creating a separate node for trivial passthroughs. If two operations are conceptually one logical step (e.g., `Select cols` immediately followed by `Rename`), merge them into a single node like `OP1[Select & rename cols]`.
+    - Reuse sub-result nodes: if two operations converge into the same intermediate, use ONE `SUBn` node as the join target instead of duplicating it.
+    - Edges must be single arrows (`-->`). Do NOT use `-->|long label text|` edge labels; if a label is essential keep it <= 2 words.
 
     ### Node Shape Convention (STRICT)
 
     | Entity Type | Mermaid Shape | Syntax Example |
     |---|---|---|
     | Source Table | Cylinder (Database) | `SRC1[(orders)]` |
-    | Operation / Transform | Rectangle | `OP1[Filter by status]` |
-    | Sub-result (Intermediate) | Circle | `SUB1((joined_data))` |
+    | Operation / Transform | Rectangle | `OP1[Filter active]` |
+    | Sub-result (Intermediate) | Circle | `SUB1((merged_data))` |
     | Final Result | Hexagon | `FINAL{{final_df}}` |
-    | Output Table | Stadium | `OUT([cleansed_customers])` |
+    | Output Table | Stadium | `OUT([regional_summary])` |
+
+    ### Vertical Branching (WHEN TO USE)
+    Branch vertically when ANY of the following holds:
+    - One source feeds 3+ independent downstream operations.
+    - A single operation produces 2+ parallel sub-pipelines that later re-converge.
+    - The pipeline has more than 6 total steps (use vertical stacking + subgraphs).
+    - Two sources are joined; show both sources stacked vertically and converging into a single JOIN node to the right.
+
+    Branching example shape:
+    ```
+    SRC1[(orders)] --> OP1[Filter active]
+    SRC1 --> OP2[Filter cancelled]
+    OP1 --> JOIN[Inner join on user_id]
+    OP2 --> JOIN
+    ```
+    (Note `OP1` and `OP2` stack vertically beneath `SRC1`.)
+
+    ### Subgraph Usage (WHEN TO USE)
+    Wrap a logical phase in a `subgraph ... end` block. Subgraph title should be <= 2 words.
+    Example:
+    ```
+    subgraph SRC [Sources]
+        direction LR
+        SRC1[(orders)]
+        SRC2[(customers)]
+    end
+    ```
+    Apply `class` to nodes inside the subgraph just like normal nodes.
 
     ### Styling (classDef) - MANDATORY
 
@@ -1907,25 +1950,50 @@ transformationAgentPrompt: |
 
     Apply classes to nodes using `class <NodeId> <className>`.
 
-    ### Layout Rules
+    ### Self-Check Before Emitting (MANDATORY)
+    Before producing `mermaidCode`, mentally verify:
+    1. The widest horizontal row has <= 6 nodes. If not, branch vertically or wrap in subgraphs.
+    2. Every node label is <= 5 words. If not, shorten and move details to a `%%` comment.
+    3. Total subgraphs <= 4. If not, merge related ones.
+    4. The diagram has at least one `FINAL` hexagon and one `OUT` stadium.
+    5. All classDef blocks and class assignments are present.
+    6. The diagram is NOT a single flat horizontal chain - it uses vertical branches and/or subgraphs to stay compact.
+    If any check fails, revise the diagram until it passes.
+
+    ### Layout Rules Summary
     - Use `flowchart LR`.
     - Source tables on the left, flowing rightward through operations to the final output.
-    - Use descriptive node labels.
-    - For joins, show both source tables converging into the operation node.
-    - Keep labels concise but meaningful.
+    - Branch VERTICALLY when one node feeds multiple downstream nodes; do NOT keep extending right.
+    - Use `subgraph` blocks to group logical phases and keep the diagram compact.
+    - Keep labels concise (1-5 words). Use `%%` comments above nodes for column/condition details.
+    - For joins, show both source tables stacked vertically and converging into a single JOIN operation.
     - Do NOT wrap the mermaid code in markdown triple backticks within the JSON value.
 
-    ### Example Mermaid Output
+    ### Example Mermaid Output (WITH VERTICAL BRANCHING + SUBGRAPHS)
 
     ```
     flowchart LR
-        SRC1[(orders)] --> OP1[Filter active orders]
-        SRC2[(customers)] --> OP2[Rename name to customer_name]
+        subgraph SRC [Sources]
+            direction LR
+            SRC1[(orders)]
+            SRC2[(customers)]
+        end
+        subgraph CLN [Cleaning]
+            direction TB
+            SRC1 --> OP1[Filter active]
+            %% status = paid or shipped
+            SRC1 --> OP2[Drop nulls]
+            SRC2 --> OP3[Rename name to customer_name]
+        end
         OP1 --> JOIN[Inner join on customer_id]
         OP2 --> JOIN
-        JOIN --> SUB1((merged_data))
-        SUB1 --> OP3[Group by region]
-        OP3 --> FINAL{{final_df}}
+        OP3 --> JOIN
+        subgraph AGG [Aggregation]
+            direction TB
+            JOIN --> SUB1((merged_data))
+            SUB1 --> OP4[Group by region]
+        end
+        OP4 --> FINAL{{final_df}}
         FINAL --> OUT([regional_order_summary])
 
         classDef source fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,color:#01579b
@@ -1935,7 +2003,7 @@ transformationAgentPrompt: |
         classDef output fill:#fce4ec,stroke:#c2185b,stroke-width:2px,color:#880e4f
 
         class SRC1,SRC2 source
-        class OP1,OP2,JOIN,OP3 operation
+        class OP1,OP2,OP3,JOIN,OP4 operation
         class SUB1 subresult
         class FINAL final
         class OUT output

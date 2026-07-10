@@ -371,7 +371,7 @@ class TransformationService:
         transformationId: str,
         messageId: str,
     ) -> dict:
-        """Execute an assistant message artifact and return a 10-row preview."""
+        """Execute an assistant message artifact and return a 100-row preview."""
         try:
             row = self._ensure_transformation(projectId=projectId, transformationId=transformationId)
             transformationName = row.get("transformation_name")
