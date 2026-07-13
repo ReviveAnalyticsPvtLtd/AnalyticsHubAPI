@@ -31,7 +31,7 @@ from api.services.subscriptions.subscriptionFieldUtils import (
     subscriptionRecurringFailures,
     subscriptionTokenId,
 )
-from supabase import create_client
+from api.commons import client
 from utils.logger import logger
 from dateutil.relativedelta import relativedelta
 from dateutil import parser
@@ -44,14 +44,6 @@ import json
 import os
 
 
-def _getSupabaseClient():
-    """
-    Create and return a Supabase client using environment variables.
-
-    Returns:
-        Client: A Supabase client instance.
-    """
-    return create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
 
 
 class DailyBillingTask:
@@ -73,7 +65,7 @@ class DailyBillingTask:
     _TOKEN_USABLE_STATUSES = {"confirmed", "activated", "active"}
 
     def __init__(self):
-        self.client = _getSupabaseClient()
+        self.client = client
         self.razorpayClient = razorpay.Client(
             auth=(
                 os.environ.get("RAZORPAY_KEY_ID", ""),

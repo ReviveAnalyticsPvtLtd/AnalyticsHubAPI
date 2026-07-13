@@ -1,26 +1,35 @@
 import os
 from langchain_google_genai import ChatGoogleGenerativeAI
 
+# Singleton cache: (model, temperature, max_tokens) -> ChatGoogleGenerativeAI.
+# A reporting-workflow build constructs 3 LLM clients (rephraser/codegen/debugger);
+# caching them avoids repeated HTTP-client + credential setup per request.
+# ChatGoogleGenerativeAI is stateless and thread-safe for invocation.
+_LLM_CACHE: dict = {}
+
+
 def getGenaiLlm(model: str, temperature: float, max_tokens: int = None) -> ChatGoogleGenerativeAI:
     """
-    Factory function to instantiate ChatGoogleGenerativeAI, enforcing the use of API keys
-    and disabling GCE metadata check.
+    Factory that returns a cached ChatGoogleGenerativeAI instance, enforcing the
+    use of API keys and disabling GCE metadata check.
     """
-    # Suppress noisy warnings from langchain_google_genai / google-genai
     import warnings
     warnings.filterwarnings("ignore", message=".*non-text parts.*")
 
-    # Enforce NO_GCE_CHECK to disable GCE metadata checks globally in google-auth
     os.environ["NO_GCE_CHECK"] = "true"
-    # Force the use of Google AI Studio (API key) instead of Vertex AI (which requires GCP IAM credentials)
     os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "false"
-    
+
+    cache_key = (model, temperature, max_tokens)
+    cached = _LLM_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
     api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not api_key:
         raise ValueError(
             "Google GenAI API Key is missing. Please set GEMINI_API_KEY or GOOGLE_API_KEY in your environment."
         )
-        
+
     kwargs = {
         "model": model,
         "temperature": temperature,
@@ -28,8 +37,10 @@ def getGenaiLlm(model: str, temperature: float, max_tokens: int = None) -> ChatG
     }
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
-        
-    return ChatGoogleGenerativeAI(**kwargs)
+
+    llm = ChatGoogleGenerativeAI(**kwargs)
+    _LLM_CACHE[cache_key] = llm
+    return llm
 
 from langchain_core.messages import AIMessage
 

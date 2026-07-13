@@ -14,13 +14,11 @@ from api.services.subscriptions.subscriptionFieldUtils import (
     subscriptionExperts,
     subscriptionPendingRemovals,
 )
-from supabase import create_client
+from api.commons import client
 from utils.logger import logger
 import os
 
 
-def _getSupabaseClient():
-    return create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
 
 
 class EntitlementBoundaryTask:
@@ -30,7 +28,7 @@ class EntitlementBoundaryTask:
     """
 
     def __init__(self, client=None, now=None):
-        self.client = client or _getSupabaseClient()
+        self.client = client
         self._now = now or utcNow
 
     def execute(self) -> dict:

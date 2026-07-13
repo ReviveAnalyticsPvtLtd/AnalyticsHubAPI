@@ -10,7 +10,7 @@ __all__ = ["reportingService"]
 
 
 from api.models import GenerateChartInput, PanelChartDetails, GenerateChartsInParallel, SaveQuery, DeleteQuery
-from nubrix.components.dashboardNameGenerator import DashboardNameGenerator
+from nubrix.components.llmChainFactory import buildLlmChain
 from nubrix.workflows.reportingToolWorkflow import buildReportingWorkflow
 from nubrix.workflows.parallelReportingToolWorkflow import buildParallelReportingWorkflow
 from api.services.credits.creditTrackingCallback import CreditTrackingCallback
@@ -19,10 +19,12 @@ from utils.exceptionHandler import CustomException
 from concurrent.futures import ThreadPoolExecutor
 from utils.initMethods import fetch_data
 from nubrix.utils import readYaml
-from urllib.request import urlopen
 from utils.logger import logger
 from api.commons import client
+import httpx
+import redis
 import pandas as pd
+import asyncio
 import string
 import orjson
 import random
@@ -33,21 +35,39 @@ import time
 import os
 import io
 
+_REPORTING_REDIS_POOL: redis.ConnectionPool | None = None
+
+
+def _reporting_redis_pool() -> redis.ConnectionPool:
+    global _REPORTING_REDIS_POOL
+    if _REPORTING_REDIS_POOL is None:
+        _REPORTING_REDIS_POOL = redis.ConnectionPool(
+            host=os.environ["REDIS_HOST"],
+            port=int(os.environ["REDIS_PORT"]),
+            password=os.environ["REDIS_PASSWORD"],
+            max_connections=16,
+            decode_responses=False,
+            socket_connect_timeout=5,
+            socket_timeout=10,
+        )
+    return _REPORTING_REDIS_POOL
+
+
 threadLocal = threading.local()
 
 def initWorkflow():
-    logger.disable("") 
+    logger.disable("")
     try:
         threadLocal.workflow = buildReportingWorkflow()
     finally:
-        logger.enable("") 
+        logger.enable("")
 
 def initParallelWorkflow():
-    logger.disable("") 
+    logger.disable("")
     try:
         threadLocal.parallelWorkflow = buildParallelReportingWorkflow()
     finally:
-        logger.enable("") 
+        logger.enable("")
 
 class ReportingService:
     """
@@ -65,6 +85,75 @@ class ReportingService:
         self.codeTemplates = readYaml(os.path.join(os.getcwd(), "codeTemplates.yaml"))
         self.reportingToolWorkflow = buildReportingWorkflow()
         self.client = client
+        self._httpClient = httpx.AsyncClient(timeout=20)
+        self._metadataCache: dict[str, tuple[float, dict]] = {}
+        self._metadataCacheTtl = 30.0
+        self._redis = redis.Redis(connection_pool=_reporting_redis_pool())
+
+    async def _fetchJson(self, url: str) -> dict | list:
+        """Async fetch with a short in-memory cache to avoid re-fetching metadata within a session."""
+        response = await self._httpClient.get(url)
+        response.raise_for_status()
+        return response.json()
+
+    def _projectMetadataUrl(self, projectId: str, fileName: str = "metadata.json") -> str:
+        """Build a cache-busting public URL for a project file."""
+        return (
+            os.environ["FILE_URL"]
+            .format(projectId=projectId, fileName=fileName)
+            .replace(".parquet", "")
+            + f"?cb={int(time.time())}"
+        )
+
+    @staticmethod
+    def _augment_with_size_hints(metadata: dict, projectId: str) -> dict:
+        """Annotate each table entry in metadata with a deterministic size_class.
+
+        The metadata shape is ``{<tableName>: {"shape": [rows, cols], "columns": [...]}}``.
+        The hint steers the LLM away from guessing memory cost and toward lazy
+        Polars for large tables.
+        """
+        from utils.initMethods import classify_table_size
+        size_by_table = (metadata or {}).get(...) if isinstance(metadata, dict) else None
+        if size_by_table is None:
+            size_by_table = {}
+        for table_name, entry in (metadata or {}).items():
+            if not isinstance(entry, dict) or table_name.startswith("_"):
+                continue
+            cls = classify_table_size(projectId, table_name)
+            entry["size_class"] = cls.get("size_class", "unknown")
+            entry["size_hint"] = cls.get("hint", "")
+            existing_rows = cls.get("rows_estimate")
+            if existing_rows is not None and "shape" in entry and isinstance(entry["shape"], list):
+                entry["_size_check"] = (existing_rows == entry["shape"][0])
+            # Pre-warm the in-process Arrow cache so the post-processor can route
+            # by row count synchronously without an extra parquet read.
+        return metadata
+
+    async def _getProjectMetadata(self, projectId: str) -> dict:
+        """Fetch project metadata with a two-layer cache + per-table size hint annotation."""
+        cached = self._metadataCache.get(projectId)
+        if cached and (time.time() - cached[0]) < self._metadataCacheTtl:
+            return cached[1]
+        redis_key = f"{projectId}::metadata"
+        try:
+            hit = self._redis.get(redis_key)
+            if hit is not None:
+                metadata = orjson.loads(hit)
+                self._augment_with_size_hints(metadata, projectId)
+                self._metadataCache[projectId] = (time.time(), metadata)
+                return metadata
+        except Exception as e:
+            logger.warning(f"Metadata Redis cache read failed for {projectId}: {e}")
+        url = self._projectMetadataUrl(projectId, "metadata.json")
+        metadata = await self._fetchJson(url)
+        self._augment_with_size_hints(metadata, projectId)
+        self._metadataCache[projectId] = (time.time(), metadata)
+        try:
+            self._redis.set(redis_key, orjson.dumps(metadata), ex=120)
+        except Exception as e:
+            logger.warning(f"Metadata Redis cache write failed for {projectId}: {e}")
+        return metadata
 
     @staticmethod
     def _generatePanelChart(projectId: str, chartType: str, xAxis: str, yAxis: str, aggregationMetric: str | None, dataSourceName: str, tablesUsed: list[str] | str, joinTypes: list[str] | None = None, blendOn: list[str] | None = None, **kwargs) -> dict:
@@ -285,19 +374,12 @@ class ReportingService:
             }
         return response
     
-    def generateChart(self, chartDetails: GenerateChartInput, userId: str | None = None) -> dict:
+    async def generateChart(self, chartDetails: GenerateChartInput, userId: str | None = None) -> dict:
         """
         Generates a chart based on the provided chart details using the reporting workflow.
 
-        Args:
-            chartDetails (GenerateChartInput): Input details for generating the chart, including query, project ID, and chart configuration.
-            userId (str | None): The user ID for credit/observability tracking.
-
-        Returns:
-            dict: The generated chart data as a dictionary.
-
-        Raises:
-            CustomException: If chart generation fails for any reason.
+        The LangGraph workflow is sync, so it runs in a thread executor to avoid blocking
+        the FastAPI event loop. Metadata is fetched asynchronously via httpx with a cache.
         """
         try:
             from utils.llm import getLangfuseConfig
@@ -310,19 +392,23 @@ class ReportingService:
                     CreditTrackingCallback(userId=userId, operationType="reporting_query")
                 )
 
-            fileUrl = os.environ["FILE_URL"].format(projectId = chartDetails.projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
-            response = self.reportingToolWorkflow.invoke(
-                {
-                    "metadata": json.loads(urlopen(fileUrl).read()),
-                    "inputQuery": chartDetails.inputQuery,
-                    "projectId": chartDetails.projectId
-                },
-                config=reportConfig or None,
+            metadata = await self._getProjectMetadata(chartDetails.projectId)
+            loop = asyncio.get_running_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: self.reportingToolWorkflow.invoke(
+                    {
+                        "metadata": metadata,
+                        "inputQuery": chartDetails.inputQuery,
+                        "projectId": chartDetails.projectId,
+                    },
+                    config=reportConfig or None,
+                ),
             )
             updateProjectModifiedAt(chartDetails.projectId)
             return response
         except Exception as e:
-            exception  = CustomException(e)
+            exception = CustomException(e)
             logger.error(exception)
             raise exception
 
@@ -374,30 +460,34 @@ class ReportingService:
                 "generatedCode": f"# Failed to generate code for: {query}\n# Error: {e}"
             }
 
-    def generateChartsInParallel(self, details: GenerateChartsInParallel, userId: str | None = None) -> dict:
+    async def generateChartsInParallel(self, details: GenerateChartsInParallel, userId: str | None = None) -> dict:
         """
-        Generates multiple charts in parallel based on the provided details and export them to an automatic dashboard page. 
+        Generates multiple charts in parallel and exports them to an automatic dashboard page.
 
-        Args:
-            details (GenerateChartsInParallel): The details for generating charts in parallel, including project ID and input queries.
-
-        Returns:
-            dict: A dictionary containing the generated chart data.
-
-        Raises:
-            CustomException: If chart generation fails for any reason.
+        Concurrency model:
+          - Worker count scales with the box (default = cpu_count, capped at 16 so very
+            large query batches don't oversubscribe the LLM API rate limit).
+          - The warm code-exec process pool (size = cpu_count/2) is the CPU bottleneck;
+            the thread pool here covers the I/O-bound LLM steps, so a higher thread count
+            than process workers is intentional and safe.
         """
         try:
-            # Generating charts in parallel
-            metadataUrl = os.environ["FILE_URL"].format(projectId=details.projectId, fileName="metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
-            insightsUrl = os.environ["FILE_URL"].format(projectId=details.projectId, fileName="insights.json").replace(".parquet", "") + f"?cb={int(time.time())}"
-            metadata = json.loads(urlopen(metadataUrl).read())
-            insights = json.loads(urlopen(insightsUrl).read())
-            
+            metadata = await self._getProjectMetadata(details.projectId)
+            insightsUrl = self._projectMetadataUrl(details.projectId, "insights.json")
+            try:
+                insights = await self._fetchJson(insightsUrl)
+            except Exception as e:
+                logger.warning(f"Could not fetch insights.json for project {details.projectId}: {e}")
+                insights = {"insights": []}
+
             # Remove any potential duplicate queries while preserving order
             uniqueQueries = list(dict.fromkeys(details.inputQueries))
 
-            with ThreadPoolExecutor(max_workers=6, initializer=initParallelWorkflow) as executor:
+            loop = asyncio.get_running_loop()
+            # Scale workers with the box; cap to avoid LLM rate-limit thrash on huge batches.
+            from utils.sizing import parallel_chart_workers
+            max_workers = parallel_chart_workers()
+            with ThreadPoolExecutor(max_workers=max_workers, initializer=initParallelWorkflow) as executor:
                 futures = [
                     executor.submit(self._generateSingleChartForParallel, metadata, details.projectId, query, userId)
                     for query in uniqueQueries
@@ -408,8 +498,7 @@ class ReportingService:
             file_exists = "dashboardConfig.json" in [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = details.projectId)]
             dashboardConfig = {}
             if file_exists:
-                fileUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "dashboardConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
-                dashboardConfig = json.loads(urlopen(fileUrl).read())
+                dashboardConfig = await self._fetchJson(self._projectMetadataUrl(details.projectId, "dashboardConfig.json"))
 
             # Find the existing automatic page
             pageId = None
@@ -425,7 +514,7 @@ class ReportingService:
             if not pageId:
                 # Generate a dynamic dashboard name only if creating a new one
                 from utils.llm import getLangfuseConfig
-                dashboardNameChain = DashboardNameGenerator().getDashboardNameGeneratorChain()
+                dashboardNameChain = buildLlmChain("DASHBOARDNAMEGENERATOR", "dashboardNameGeneratorPrompt", fallbackTokens=64)
                 nameConfig = getLangfuseConfig(
                     trace_name="DashboardNameGenerator", projectId=details.projectId, userId=userId,
                     tags=["reporting", "dashboardNaming"],
@@ -434,13 +523,16 @@ class ReportingService:
                     nameConfig.setdefault("callbacks", []).append(
                         CreditTrackingCallback(userId=userId, operationType="dashboard_naming")
                     )
-                dashboardName = dashboardNameChain.invoke(
-                    {
-                        "queries": "\n".join(uniqueQueries),
-                        "metadata": json.dumps(metadata)
-                    },
-                    config=nameConfig or None,
-                ).strip()
+                dashboardName = await loop.run_in_executor(
+                    None,
+                    lambda: dashboardNameChain.invoke(
+                        {
+                            "queries": "\n".join(uniqueQueries),
+                            "metadata": json.dumps(metadata)
+                        },
+                        config=nameConfig or None,
+                    ).strip(),
+                )
 
                 # Create a new dashboard page
                 pageId = str(uuid.uuid4())
@@ -544,20 +636,11 @@ class ReportingService:
             logger.error(exception)
             raise exception
 
-    def generatePanelChart(self, panelChartDetails: PanelChartDetails) -> dict:
+    async def generatePanelChart(self, panelChartDetails: PanelChartDetails) -> dict:
         """
         Generates a panel chart, optionally using blend configuration if available.
 
         This method checks for the presence of a data source or blend configuration, prepares the data, and generates the panel chart. It also generates the code used for chart creation using code templates.
-
-        Args:
-            panelChartDetails (PanelChartDetails): Input details for generating the panel chart, including project ID, chart type, axes, aggregation, and blend info.
-
-        Returns:
-            dict: The generated panel chart data, including the generated code snippet.
-
-        Raises:
-            CustomException: If panel chart generation fails for any reason.
         """
         try:
             allFiles = [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = panelChartDetails.projectId)]
@@ -598,20 +681,19 @@ class ReportingService:
                     geoCodeColumn='"{}"'.format(panelChartDetails.zipCodeColumn) if panelChartDetails.zipCodeColumn else "None"
                 )
             elif "blendConfig.json" in allFiles:
-                blendConfigUrl = os.environ["FILE_URL"].format(projectId = panelChartDetails.projectId, fileName = "blendConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
-                blendConfig = orjson.loads(urlopen(blendConfigUrl).read())
+                blendConfig = await self._fetchJson(self._projectMetadataUrl(panelChartDetails.projectId, "blendConfig.json"))
                 tablesUsed = blendConfig[panelChartDetails.dataSource].get("tables")
                 joinTypes = blendConfig[panelChartDetails.dataSource].get("joinTypes")
                 blendOn = blendConfig[panelChartDetails.dataSource].get("blendOn")
                 response = self._generatePanelChart(
-                    projectId=panelChartDetails.projectId, 
-                    chartType=panelChartDetails.chartType, 
-                    xAxis=panelChartDetails.xAxis, 
-                    yAxis=panelChartDetails.yAxis, 
-                    aggregationMetric=panelChartDetails.aggregationMetric, 
+                    projectId=panelChartDetails.projectId,
+                    chartType=panelChartDetails.chartType,
+                    xAxis=panelChartDetails.xAxis,
+                    yAxis=panelChartDetails.yAxis,
+                    aggregationMetric=panelChartDetails.aggregationMetric,
                     dataSourceName=panelChartDetails.dataSource,
-                    tablesUsed=tablesUsed, 
-                    joinTypes=joinTypes, 
+                    tablesUsed=tablesUsed,
+                    joinTypes=joinTypes,
                     blendOn=blendOn,
                     index=panelChartDetails.index,
                     columns=panelChartDetails.columns,
@@ -643,36 +725,28 @@ class ReportingService:
                     geoCodeColumn='"{}"'.format(panelChartDetails.zipCodeColumn) if panelChartDetails.zipCodeColumn else "None"
                 )
             else:
-                pass
+                raise CustomException(ValueError("No data source or blend configuration found for this project."), statusCode=400, uiMessage="No data source or blend configuration found.")
             response.update({"generatedCode": generatedCode})
             updateProjectModifiedAt(panelChartDetails.projectId)
             return response
+        except CustomException:
+            raise
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
             raise exception
 
-    def saveQuery(self, details: SaveQuery) -> str:
+    async def saveQuery(self, details: SaveQuery) -> str:
         """
         Save a user-marked favourite query to a queryConfig.json file in the project's Supabase storage folder.
-
-        Generates a unique ID for the query. If a queryConfig.json file already exists for the project, the new query is appended to it. Otherwise, a new queryConfig.json file is created.
-
-        Args:
-            details (SaveQuery): The details containing the project ID and the favourite query string.
-
-        Returns:
-            str: The unique query ID assigned to the saved query.
-
-        Raises:
-            CustomException: If saving the query configuration fails for any reason.
         """
         try:
             queryId = str(uuid.uuid4())
             allFiles = [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = details.projectId)]
             if "queryConfig.json" in allFiles:
-                fileUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "queryConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
-                queryConfig = json.loads(urlopen(fileUrl).read())
+                queryConfig = await self._fetchJson(self._projectMetadataUrl(details.projectId, "queryConfig.json"))
+                if not isinstance(queryConfig, dict):
+                    queryConfig = {}
                 queryConfig[queryId] = details.query
             else:
                 queryConfig = {queryId: details.query}
@@ -687,45 +761,31 @@ class ReportingService:
             logger.error(exception)
             raise exception
 
-    def getQueries(self, projectId: str) -> dict:
+    async def getQueries(self, projectId: str) -> dict:
         """
         Retrieve all saved favourite queries for a project from the queryConfig.json file.
-
-        Args:
-            projectId (str): The project identifier.
-
-        Returns:
-            dict: A dictionary of saved queries (query IDs as keys, query strings as values). Returns an empty dict if no queries have been saved.
-
-        Raises:
-            CustomException: If retrieval fails for any reason.
         """
         try:
             if "queryConfig.json" in [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = projectId)]:
-                fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "queryConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
-                queryConfig = json.loads(urlopen(fileUrl).read())
-            else:
-                queryConfig = dict()
-            return queryConfig
+                queryConfig = await self._fetchJson(self._projectMetadataUrl(projectId, "queryConfig.json"))
+                if not isinstance(queryConfig, dict):
+                    return {}
+                return queryConfig
+            return {}
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
             raise exception
 
-    def deleteQuery(self, details: DeleteQuery) -> None:
+    async def deleteQuery(self, details: DeleteQuery) -> None:
         """
         Delete a saved favourite query from the queryConfig.json file by its query ID.
-
-        Args:
-            details (DeleteQuery): The details containing the project ID and the query ID to delete.
-
-        Raises:
-            CustomException: If deletion fails for any reason.
         """
         try:
-            fileUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "queryConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
-            queryConfig = json.loads(urlopen(fileUrl).read())
-            queryConfig.pop(details.queryId)
+            queryConfig = await self._fetchJson(self._projectMetadataUrl(details.projectId, "queryConfig.json"))
+            if not isinstance(queryConfig, dict):
+                queryConfig = {}
+            queryConfig.pop(details.queryId, None)
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(queryConfig, indent=4).encode("utf-8"))
                 buffer.seek(0)
@@ -735,5 +795,5 @@ class ReportingService:
             exception = CustomException(e)
             logger.error(exception)
             raise exception
-    
+
 reportingService = ReportingService()

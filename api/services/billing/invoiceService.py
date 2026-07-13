@@ -32,10 +32,11 @@ from api.services.subscriptions.subscriptionFieldUtils import (
     subscriptionRenewalDomainCount,
 )
 from api.services.subscriptions.paymentValidationService import normalizeChurnedSubscription
-from supabase import create_client
+from api.commons import client
 from utils.logger import logger
 from dateutil.relativedelta import relativedelta
 import datetime
+from api.services.billing.billingClient import getBillingRedisClient
 import redis
 import os
 
@@ -43,29 +44,8 @@ import os
 _RECONCILIATION_BUFFER_MINUTES = 60
 
 
-def _getSupabaseClient():
-    """
-    Create and return a Supabase client.
-
-    Returns:
-        Client: A Supabase client instance.
-    """
-    return create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
 
 
-def _getRedisClient() -> redis.Redis:
-    """
-    Create a connected Redis client.
-
-    Returns:
-        redis.Redis: Redis client instance.
-    """
-    return redis.Redis(
-        host=os.environ.get("REDIS_HOST", "localhost"),
-        port=int(os.environ.get("REDIS_PORT", 6379)),
-        password=os.environ.get("REDIS_PASSWORD", None),
-        decode_responses=True,
-    )
 
 
 def _acquireAdvisoryLock(redisClient: redis.Redis, lockKey: str,
@@ -102,8 +82,7 @@ def createUpcomingRenewalInvoice(subscription: dict, user: dict) -> dict | None:
     Returns:
         dict | None: The invoice row if created/found, None on error.
     """
-    client = _getSupabaseClient()
-    redisClient = _getRedisClient()
+    redisClient = getBillingRedisClient()
     subscriptionId = subscription["id"]
     userId = subscription["user_id"]
     periodEnd = subscription["current_period_end"]
@@ -252,8 +231,7 @@ def prepareDashboardRenewalInvoice(invoice: dict) -> dict | None:
         dict | None: Updated invoice row prepared for dashboard payment, or
         None on error.
     """
-    client = _getSupabaseClient()
-    redisClient = _getRedisClient()
+    redisClient = getBillingRedisClient()
     invoiceId = invoice["id"]
 
     lockKey = f"invoice:dashboard-renewal:{invoiceId}"
@@ -350,7 +328,6 @@ def transitionToPastDue(subscription: dict, invoice: dict) -> bool:
     Returns:
         bool: True if transition occurred, False if skipped/blocked.
     """
-    client = _getSupabaseClient()
     invoiceId = invoice["id"]
     subscriptionId = subscription["id"]
 
@@ -400,7 +377,6 @@ def transitionToSuspended(subscription: dict, invoice: dict) -> bool:
     Returns:
         bool: True if suspension occurred, False if skipped/blocked.
     """
-    client = _getSupabaseClient()
     invoiceId = invoice["id"]
     subscriptionId = subscription["id"]
 

@@ -17,7 +17,7 @@ __version__ = "1.0.0"
 __author__ = "Rohit Mishra"
 __all__ = ["ReconciliationTask"]
 
-from supabase import create_client
+from api.commons import client
 from utils.logger import logger
 import razorpay
 import datetime
@@ -28,14 +28,6 @@ _STALE_THRESHOLD_MINUTES = 30
 _BATCH_LIMIT = 50
 
 
-def _getSupabaseClient():
-    """
-    Create and return a Supabase client using environment variables.
-
-    Returns:
-        Client: A Supabase client instance.
-    """
-    return create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
 
 
 class ReconciliationTask:
@@ -45,7 +37,7 @@ class ReconciliationTask:
     """
 
     def __init__(self):
-        self.client = _getSupabaseClient()
+        self.client = client
         self.razorpayClient = razorpay.Client(
             auth=(
                 os.environ.get("RAZORPAY_KEY_ID", ""),

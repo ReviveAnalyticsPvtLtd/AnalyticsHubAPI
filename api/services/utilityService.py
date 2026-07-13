@@ -1,16 +1,7 @@
 """
 UtilityService module provides utility functions such as speech-to-text transcription,
-hybrid image-to-insights generation, insight persistence, sending forecasts,
-and sample data manipulations for NubrixAI.
-
-Author: Rauhan Ahmed Siddiqui
-Version: 1.0.0
+hybrid image-to-insights generation, insight persistence, and sending forecasts for NubrixAI.
 """
-
-__version__ = "1.0.0"
-__author__ = "Rauhan Ahmed Siddiqui"
-__all__ = ["utilityService"]
-
 
 from nubrix.components.insightContextBuilder import InsightContextBuilder
 from nubrix.components.imageToInsights import ImageToInsights
@@ -20,12 +11,10 @@ from api.services.credits.creditTrackingCallback import CreditTrackingCallback
 from api.models import SpeechToTextModel, ImageToInsightsModel
 from utils.exceptionHandler import CustomException
 from nubrix.triggers.celery import celeryApp
-from urllib.request import urlopen
 from celery.result import AsyncResult
 from utils.logger import logger
 from api.commons import client
 from datetime import datetime, timezone
-import seaborn as sns
 import pandas as pd
 import json
 import uuid
@@ -38,14 +27,11 @@ VALID_INSIGHT_STATUSES = {"new", "accepted", "rejected", "implemented"}
 class UtilityService:
     """
     Service class providing utility operations such as speech transcription, hybrid insight
-    generation with persistence, sending forecasts, and sample data manipulations.
+    generation with persistence, and sending forecasts.
     """
     def __init__(self) -> None:
-        """
-        Initializes the UtilityService, loads a sample dataset, and sets up required modules.
-        """
+        """Initializes the UtilityService and sets up required modules."""
         logger.info("Initializing Utility Service.")
-        self.sampleDataset = sns.load_dataset("tips")
         self.imageToInsightsModule = ImageToInsights()
         self.insightContextBuilder = InsightContextBuilder()
         self.signalEngine = SignalEngine()
@@ -328,35 +314,6 @@ class UtilityService:
         except Exception as e:
             exception  = CustomException(e)
             logger.error(exception)
-            raise exception     
-        
-    def tempFunc(self, num: int) -> str:
-        """
-        Returns different representations or aggregations of the sample dataset based on the input parameter.
-
-        Args:
-            num (int): Determines the type of data transformation to perform.
-                1: Returns the dataset as a list of records.
-                2: Returns a pivot table by day and sex.
-                3: Returns a pivot table by day, sex, and time.
-                Other: Returns a pivot table by day, sex, time, and includes tip.
-        Returns:
-            str: The resulting data as a JSON string or list of records.
-        Raises:
-            CustomException: If data processing fails.
-        """
-        try:
-            if num == 1:
-                result = self.sampleDataset.to_dict(orient = "records")
-            elif num == 2:
-                result = pd.pivot_table(self.sampleDataset, index="day", columns=["sex"], aggfunc="count", values=["total_bill"]).to_json()
-            elif num == 3:
-                result = pd.pivot_table(self.sampleDataset, index="day", columns=["sex", "time"], aggfunc="count", values=["total_bill"]).to_json()
-            else:
-                result = pd.pivot_table(self.sampleDataset, index="day", columns=["sex", "time"], aggfunc="count", values=["total_bill", "tip"]).to_json()
-        except Exception as e:      
-            exception  = CustomException(e)
-            logger.error(exception)
             raise exception
-        
+
 utilityService = UtilityService()

@@ -246,9 +246,10 @@ class TransformationAgent:
         @tool
         def inspect_dataset(pythonCode: str) -> str:
             """
-            Run pandas inspection code in a safe Python sandbox on the project's data.
+            Run read-only inspection code in a safe Python sandbox on the project's data.
             Use this tool to inspect table shapes, column names, duplicate counts, unique values, and sample data.
-            Your code MUST fetch data using fetch_data(projectId, '<table_name>'), perform inspection operations, and print the results.
+            Your code MUST fetch data using fetch_data_pl(projectId, '<table_name>') (Polars, preferred) or fetch_data(projectId, '<table_name>') (pandas), perform inspection operations, and print the results.
+            For Polars: use .schema, .columns, .height, .head(), .unique(). For pandas: .shape, .columns, .dtypes, .head().
             The printed output will be returned to you. Limit pythonCode to read-only inspection operations.
             """
             code_to_exec = pythonCode.strip()
@@ -397,11 +398,13 @@ class TransformationAgent:
                 except Exception as e:
                     error_msg = str(e)
                     logger.warning(f"Transformation code execution failed on attempt {attempt + 1}: {error_msg}")
+                    code_snippet = response.pythonCode[:1500] if response.pythonCode else ""
                     error_feedback = (
                         f"The Python code you generated failed to execute with the following error:\n"
-                        f"{error_msg}\n"
-                        "Please analyze the error, rewrite the Python code and Mermaid diagram to resolve it, "
-                        "and ensure the output is correct and executable."
+                        f"{error_msg}\n\n"
+                        f"Failing code (first 1500 chars):\n```python\n{code_snippet}\n```\n"
+                        "Analyze the error, rewrite the Python code and Mermaid diagram to resolve it, "
+                        "and ensure the output is correct and executable. Do NOT repeat the same mistake."
                     )
 
             if response is None:
@@ -414,7 +417,16 @@ class TransformationAgent:
                         "Please try rephrasing your request with more specific table and column details."
                     ),
                 )
-            return response
+            # Exhausted retries on execution failures; return the last response with a caveat.
+            return TransformationAgentResponse(
+                pythonCode=response.pythonCode,
+                mermaidCode=response.mermaidCode,
+                userFacingResponse=(
+                    f"{response.userFacingResponse}\n\n"
+                    "Note: the generated code could not be validated in the sandbox after multiple attempts. "
+                    "Review the pipeline before applying."
+                ) if response.pythonCode else response.userFacingResponse,
+            )
 
         except Exception as e:
             exception = CustomException(e)
@@ -432,10 +444,11 @@ class TransformationAgent:
         userId: str | None = None,
     ):
         """
-        Stream transformation output events, yielding progress status updates.
+        Stream transformation output events, yielding progress status updates
+        and a word-by-word replay of the user-facing summary.
         """
-        yield {"type": "status", "message": "Analyzing request..."}
-        yield {"type": "status", "message": "Thinking and generating transformation..."}
+        yield {"type": "status", "message": "Analyzing your request against the project schema..."}
+        yield {"type": "status", "message": "Reasoning and constructing the transformation pipeline..."}
         response = await self.invoke(
             projectId=projectId,
             transformationId=transformationId,
@@ -445,7 +458,13 @@ class TransformationAgent:
             callbacks=callbacks,
             userId=userId,
         )
-        summaryTokens = response.userFacingResponse.split(" ")
-        for token in summaryTokens:
-            yield {"type": "token", "delta": f"{token} "}
+        if response.pythonCode:
+            yield {"type": "status", "message": "Validating the generated code in a sandbox..."}
+        summary = response.userFacingResponse or ""
+        # Preserve original whitespace; emit word tokens with their trailing spaces.
+        tokens = summary.split(" ")
+        for i, token in enumerate(tokens):
+            delta = token + (" " if i < len(tokens) - 1 else "")
+            if delta:
+                yield {"type": "token", "delta": delta}
         yield {"type": "done", "structured": response}

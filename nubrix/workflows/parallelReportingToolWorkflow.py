@@ -11,13 +11,13 @@ __all__ = ["buildParallelReportingWorkflow"]
 
 
 from nubrix.components.queryRephraser import ParallelQueryRephaser
-from nubrix.components.codeGenerator import CodeGenerator
-from nubrix.components.codeDebugger import CodeDebugger
+from nubrix.components.llmChainFactory import buildLlmChain
 from langgraph.graph import StateGraph, START, END
-from utils.codeExecutor import REPLManager
+from utils.codeExecutor import REPLManager, _remove_code_fences
 from typing_extensions import TypedDict
 from utils.logger import logger
 import json
+import os
 
 class State(TypedDict):
     """
@@ -30,17 +30,20 @@ class State(TypedDict):
     generatedCode: str
     codeOutput: str
     finalOutput: dict
+    debugAttempts: int
 
 class ParallelReportingToolWorkflow:
     """
     ParallelReportingToolWorkflow manages parallel query generation without doubt interruptions.
     """
+    MAX_DEBUG_ATTEMPTS = 2
+
     def __init__(self):
         """Initializes the ParallelReportingToolWorkflow with its own chain instances."""
         logger.info("Initializing parallel agentic reporting workflow.")
         self.queryRephraseChain = ParallelQueryRephaser().getQueryRephraserChain()
-        self.codeGeneratorChain = CodeGenerator().getCodeGeneratorChain()
-        self.codeDebuggerChain = CodeDebugger().getCodeDebuggerChain()
+        self.codeGeneratorChain = buildLlmChain("CODEGENERATOR", "codeGeneratorAgentPrompt")
+        self.codeDebuggerChain = buildLlmChain("CODEDEBUGGER", "codeDebuggerAgentPrompt")
         self.replManager = REPLManager(timeoutSeconds=7)
 
     def _rephraseQuery(self, state: State):
@@ -53,7 +56,6 @@ class ParallelReportingToolWorkflow:
                 "query": state["inputQuery"],
                 "metadata": state["metadata"]
             })
-            # Ensure rephrasedOutput is populated
             if not response.get("rephrasedOutput"):
                 response["rephrasedOutput"] = state["inputQuery"]
         except Exception as e:
@@ -64,32 +66,55 @@ class ParallelReportingToolWorkflow:
         return {
             "rephrasedQuery": response
         }
-    
+
     def _generateCode(self, state: State):
-        """
-        Generates code for the rephrased query.
-        """
+        """Generates code for the rephrased query, injecting projectId into all fetch calls."""
         response = self.codeGeneratorChain.invoke({
             "query": state["rephrasedQuery"],
             "metadata": state["metadata"]
         })
+        pid = state["projectId"]
+        for fn in ("fetch_data_pl", "scan_data", "fetch_data"):
+            response = f'{fn}("{pid}", '.join(response.split(f"{fn}("))
+        # Deterministic routing: per-table size class drives fetch_data_pl
+        # -> scan_data for massive tables so we always get lazy pushdown.
+        response = self._route_large_tables_to_scan(response, pid)
         return {
-            "generatedCode": f'fetch_data("{state["projectId"]}", '.join(response.split("fetch_data(")).replace('indent=4', 'default=serializer')
+            "generatedCode": response.replace('indent=4', 'default=serializer')
         }
-    
+
+    @staticmethod
+    def _route_large_tables_to_scan(code: str, projectId: str) -> str:
+        """Rewrite eager ``fetch_data_pl("<pid>", "<table>")`` -> lazy ``scan_data(...)``.
+        See ReportingToolWorkflow for full docstring.
+        """
+        import re
+        from utils.initMethods import classify_table_size
+        try:
+            threshold = int(os.getenv("LAZY_FETCH_ROW_THRESHOLD", "100000"))
+        except Exception:
+            threshold = 100000
+        if threshold <= 0:
+            return code
+        def _maybe_swap(match: re.Match) -> str:
+            table = match.group(1)
+            size = classify_table_size(projectId, table)
+            rows = size.get("rows_estimate")
+            if isinstance(rows, int) and rows >= threshold:
+                return f'scan_data("{projectId}", "{table}"'
+            return match.group(0)
+        return re.sub(r'fetch_data_pl\("' + re.escape(projectId) + r'",\s*"([^"]+)"', _maybe_swap, code)
+
     def _runInPythonSandbox(self, state: State):
         """
         Executes the generated code in Python sandbox.
         """
-        if "```" in state["generatedCode"]:
-            code = "\n".join(state["generatedCode"].split("```")[-2].split("\n")[1:])
-        else:
-            code = state["generatedCode"].split("</think>")[-1]
+        code = _remove_code_fences(state["generatedCode"])
         response = self.replManager.run(code)
         return {
             "codeOutput": response
         }
-    
+
     def _outputEvaluationRouter(self, state: State):
         """
         Determines if the code output is valid JSON.
@@ -97,9 +122,9 @@ class ParallelReportingToolWorkflow:
         try:
             _ = json.loads(state["codeOutput"])
             return "pass"
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, TypeError):
             return "fail"
-        
+
     def _codeDebugger(self, state: State):
         """
         Invokes the code debugger chain.
@@ -111,9 +136,21 @@ class ParallelReportingToolWorkflow:
             "error_message": state["codeOutput"]
         })
         return {
-            "generatedCode": response
+            "generatedCode": response,
+            "debugAttempts": state.get("debugAttempts", 0) + 1,
         }
-    
+
+    def _debugRouter(self, state: State):
+        """After a debug attempt, route to format if output is valid JSON, else retry up to budget."""
+        try:
+            json.loads(state.get("codeOutput", ""))
+            return "formatJsonResponse"
+        except (json.JSONDecodeError, TypeError):
+            pass
+        if state.get("debugAttempts", 0) >= self.MAX_DEBUG_ATTEMPTS:
+            return "formatJsonResponse"
+        return "debugger"
+
     def _formatJsonResponse(self, state: State):
         """
         Formats the final output as a JSON response.
@@ -138,16 +175,16 @@ class ParallelReportingToolWorkflow:
         workflow.add_node("debugger", self._codeDebugger)
         workflow.add_node("debuggerPythonSandbox", self._runInPythonSandbox)
         workflow.add_node("formatJsonResponse", self._formatJsonResponse)
-        
+
         # Connect directly to generateCode (no conditional routing/interrupt on doubt)
         workflow.add_edge(START, "rephraseQuery")
         workflow.add_edge("rephraseQuery", "generateCode")
         workflow.add_edge("generateCode", "runInPythonSandbox")
         workflow.add_conditional_edges("runInPythonSandbox", self._outputEvaluationRouter, {"pass": "formatJsonResponse", "fail": "debugger"})
         workflow.add_edge("debugger", "debuggerPythonSandbox")
-        workflow.add_edge("debuggerPythonSandbox", "formatJsonResponse")
+        workflow.add_conditional_edges("debuggerPythonSandbox", self._debugRouter, {"debugger": "debugger", "formatJsonResponse": "formatJsonResponse"})
         workflow.add_edge("formatJsonResponse", END)
-        
+
         workflow = workflow.compile()
         logger.info("Parallel reporting workflow compilation successful.")
         return workflow

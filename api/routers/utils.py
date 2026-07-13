@@ -118,28 +118,10 @@ async def sendForecasts(token = Depends(verifyToken)):
     """
     try:
         r = utilityService.sendForecasts()
-        return ORJSONResponse(status_code = 200, content = {"taskId": r.task_id, "triggerName": "forecast", "taskStatus": r.status}) 
+        return ORJSONResponse(status_code = 200, content = {"taskId": r.task_id, "triggerName": "forecast", "taskStatus": r.status})
     except CustomException as e:
         raiseHttpException(e)
 
-@router.get("/temp/{num}")
-async def tempFunc(num: int, token = Depends(verifyToken)):
-    """
-    Temporary function for testing or utility purposes.
-
-    Args:
-        num (int): A number parameter for the temporary function.
-        token: Authorization token dependency.
-
-    Returns:
-        ORJSONResponse: Result or error message.
-    """
-    try:
-        result = utilityService.tempFunc(num = num)
-        return ORJSONResponse(status_code = 200, content = result)
-    except CustomException as e:
-        raiseHttpException(e)
-    
 @router.websocket("/ws/getTaskStatus")
 async def getTaskStatus(websocket: WebSocket):
     """

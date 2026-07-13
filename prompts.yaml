@@ -139,24 +139,27 @@ queryRephraserAgentPrompt: |
     - Scan metadata for columns with SAME NAME in both dataframes
     - List ALL overlapping columns (except join keys)
 
-    STEP 2: MANDATORY SUFFIX HANDLING
-    - Pandas AUTOMATICALLY adds `_x` (left) and `_y` (right) suffixes
-    - YOU MUST EXPLICITLY MENTION these suffixes in your steps
-    - YOU MUST reference suffixed names in ALL subsequent operations
+    STEP 2: COLUMN COLLISION HANDLING (POLARS)
+    - Polars does NOT auto-add `_x`/`_y` suffixes on join — duplicate non-key columns raise an error.
+    - If both tables share a non-key column name (e.g. `region` in both `orders` and `customers`):
+      1) Rename the column in one table BEFORE the join: `right.rename({"region": "customer_region"})`
+      2) Or select only the needed columns from each table before joining.
+    - YOU MUST EXPLICITLY MENTION the column collision and the rename/select strategy in your steps.
+    - Reference the renamed column name in ALL subsequent operations.
 
-    STEP 3: SPECIFY WHICH SUFFIX TO USE
-    - Clearly state whether using `column_x` or `column_y`
-    - Include renaming step if unsuffixed name needed later
+    STEP 3: SPECIFY WHICH RENAMED COLUMN TO USE
+    - Clearly state the final column name after rename (e.g. `customer_region` from `customers`).
+    - Include renaming step if the original name is needed for grouping/filtering later.
 
     EXAMPLES OF REQUIRED LANGUAGE:
-    "handle 'region' collision by using 'region_x' (from orders)"
-    "note 'status' becomes 'status_x' and 'status_y', use 'status_y'"
-    "rename 'price_x' back to 'price' for final output"
+    "handle 'region' collision by renaming customers.region to customer_region before join"
+    "note 'status' exists in both tables, rename orders.status to order_status"
+    "select only region and amount from sales before joining with customers"
 
     NEVER SAY: "join on customer_id" (without mentioning collisions)
     NEVER SAY: "group by region" (when region has a collision)
 
-    FAILURE TO EXPLICITLY HANDLE SUFFIXES = AUTOMATIC REJECTION
+    FAILURE TO EXPLICITLY HANDLE COLUMN COLLISIONS = AUTOMATIC REJECTION
     ```
 
     ### **3. CHART TYPE DETERMINATION**
@@ -222,9 +225,9 @@ queryRephraserAgentPrompt: |
 
     **EXAMPLE STRUCTURE:**
     ```
-    "Steps: 1) Fetch X using fetch_data('X'), 2) Fetch Y using fetch_data('Y'),
+    "Steps: 1) Fetch X using fetch_data_pl('X'), 2) Fetch Y using fetch_data_pl('Y'),
     3) Join on 'key_column', handle 'column_name' conflicts by referencing
-    'column_name_x'/'column_name_y', 4) Group by Z, 5) Calculate aggregation,
+    'left_column_name'/'right_column_name', 4) Group by Z, 5) Calculate aggregation,
     6) Store result as final_df"
     ```
 
@@ -234,17 +237,17 @@ queryRephraserAgentPrompt: |
 
     ### **DATA RETRIEVAL:**
     - **MANDATORY**: Use `fetch_data` function with dataframe name as string parameter
-    - **Example**: `fetch_data('orders')`, `fetch_data('customers')`
+    - **Example**: `fetch_data_pl('orders')`, `fetch_data_pl('customers')`
 
     ### **METADATA HANDLING:**
     - The metadata provided in the prompt is **descriptive only**
     - Do NOT recreate or hardcode the metadata dictionary in the environment
-    - If the query requires dataset details (e.g., row counts, column counts), always fetch the dataframe at runtime using `fetch_data("<dataframe_name>")` and use pandas attributes (`.shape`, `.columns`) to derive structure
+    - If the query requires dataset details (e.g., row counts, column counts), always fetch the dataframe at runtime using `fetch_data_pl("<dataframe_name>")` and use Polars attributes (.height, .columns, .schema) (`.shape`, `.columns`) to derive structure
     - All structural inferences must be done dynamically at runtime, not from static metadata text
 
     ### **FOR METADATA-DERIVED QUERIES:**
     - Dataset structure queries (number of rows, columns, tables) must be derived dynamically at runtime
-    - Always fetch the dataframe using `fetch_data("<dataframe_name>")` and use `.shape` or `.columns`
+    - Always fetch the dataframe using `fetch_data_pl("<dataframe_name>")` and use `.height`, `.columns`, or `.schema`
     - Select appropriate chart type based on the metric (e.g., row counts across tables → bar chart; single column count → card)
 
     ---
@@ -269,7 +272,7 @@ queryRephraserAgentPrompt: |
     - "These two datasets share no common column to join on. Please clarify how they relate."
 
     **UNACCEPTABLE DOUBT EXAMPLES:**
-    - "The pandas merge operation will fail due to dtype incompatibility in the join key columns."
+    - "The Polars join operation will fail due to dtype incompatibility in the join key columns."
     - "Your query requires complex data preprocessing that involves multiple transformation steps."
     - "Please clarify which time period to use." ← (if a date column exists and monthly grouping is inferable)
 
@@ -315,7 +318,7 @@ queryRephraserAgentPrompt: |
     **Metadata:** "sales" with columns: region (string), amount (float)
     ```json
     {{
-    "rephrasedOutput": "Display total sales by region using a bar chart. Steps: 1) Fetch sales data using fetch_data('sales'), 2) Group by 'region' column, 3) Sum 'amount' values, 4) Store result as final_df",
+    "rephrasedOutput": "Display total sales by region using a bar chart. Steps: 1) Fetch sales data using fetch_data_pl('sales'), 2) Group by 'region' column, 3) Sum 'amount' values, 4) Store result as final_df",
     "doubt": null
     }}
     ```
@@ -327,7 +330,7 @@ queryRephraserAgentPrompt: |
     - "customers": columns include customer_id (int), region (string), name (string)
     ```json
     {{
-    "rephrasedOutput": "Display customer revenue by registration region using a bar chart. Steps: 1) Fetch orders using fetch_data('orders'), 2) Fetch customers using fetch_data('customers'), 3) Identify column collision: 'region' exists in both dataframes, 4) Join on 'customer_id', handle collision by referencing 'region_x' (from orders) and 'region_y' (from customers), 5) Group by 'region_y' (customer registration region), 6) Sum 'revenue', 7) Store result as final_df",
+    "rephrasedOutput": "Display customer revenue by registration region using a bar chart. Steps: 1) Fetch orders using fetch_data_pl('orders'), 2) Fetch customers using fetch_data_pl('customers'), 3) Identify column collision: 'region' exists in both dataframes, 4) Join on 'customer_id', handle collision by renaming customers.region to customer_region before join, 5) Group by 'customer_region', 6) Sum 'revenue', 7) Store result as final_df",
     "doubt": null
     }}
     ```
@@ -337,7 +340,7 @@ queryRephraserAgentPrompt: |
     **Metadata:** "sales" with columns: quarter (string), amount (float), date (datetime)
     ```json
     {{
-    "rephrasedOutput": "Compare Q1 vs Q2 sales performance using a multi-dataset bar chart. Steps: 1) Fetch sales using fetch_data('sales'), 2) Filter rows where 'quarter' equals 'Q1', 3) Filter rows where 'quarter' equals 'Q2' separately, 4) Calculate total 'amount' for each quarter, 5) Combine both results into a single dataframe with quarter labels, 6) Store result as final_df",
+    "rephrasedOutput": "Compare Q1 vs Q2 sales performance using a multi-dataset bar chart. Steps: 1) Fetch sales using fetch_data_pl('sales'), 2) Filter rows where 'quarter' equals 'Q1', 3) Filter rows where 'quarter' equals 'Q2' separately, 4) Calculate total 'amount' for each quarter, 5) Combine both results into a single dataframe with quarter labels, 6) Store result as final_df",
     "doubt": null
     }}
     ```
@@ -347,7 +350,7 @@ queryRephraserAgentPrompt: |
     **Metadata:** "revenue" with column: amount (float)
     ```json
     {{
-    "rephrasedOutput": "Display total revenue as a single KPI using a card chart. Steps: 1) Fetch revenue using fetch_data('revenue'), 2) Sum all 'amount' values, 3) Create a single-row dataframe with label 'Total Revenue' and the computed sum, 4) Store result as final_df",
+    "rephrasedOutput": "Display total revenue as a single KPI using a card chart. Steps: 1) Fetch revenue using fetch_data_pl('revenue'), 2) Sum all 'amount' values, 3) Create a single-row dataframe with label 'Total Revenue' and the computed sum, 4) Store result as final_df",
     "doubt": null
     }}
     ```
@@ -357,7 +360,7 @@ queryRephraserAgentPrompt: |
     **Metadata:** "sales" with columns: date (datetime), amount (float)
     ```json
     {{
-    "rephrasedOutput": "Display monthly sales trend using a line chart. Steps: 1) Fetch sales using fetch_data('sales'), 2) Extract month-year from 'date' column, 3) Group by month-year, 4) Sum 'amount' for each month, 5) Sort by month chronologically, 6) Store result as final_df",
+    "rephrasedOutput": "Display monthly sales trend using a line chart. Steps: 1) Fetch sales using fetch_data_pl('sales'), 2) Extract month-year from 'date' column, 3) Group by month-year, 4) Sum 'amount' for each month, 5) Sort by month chronologically, 6) Store result as final_df",
     "doubt": null
     }}
     ```
@@ -367,7 +370,7 @@ queryRephraserAgentPrompt: |
     **Metadata:** "sales" with columns: category (string), rep_level (string), amount (float)
     ```json
     {{
-    "rephrasedOutput": "Display sales by product category with performance level breakdown using a bar chart with hue by rep_level. Steps: 1) Fetch sales using fetch_data('sales'), 2) Group by 'category' and 'rep_level', 3) Sum 'amount' for each combination, 4) Prepare data with 'category' as x-axis and 'rep_level' as hue, 5) Store result as final_df",
+    "rephrasedOutput": "Display sales by product category with performance level breakdown using a bar chart with hue by rep_level. Steps: 1) Fetch sales using fetch_data_pl('sales'), 2) Group by 'category' and 'rep_level', 3) Sum 'amount' for each combination, 4) Prepare data with 'category' as x-axis and 'rep_level' as hue, 5) Store result as final_df",
     "doubt": null
     }}
     ```
@@ -377,7 +380,7 @@ queryRephraserAgentPrompt: |
     **Metadata:** Contains multiple dataframes
     ```json
     {{
-    "rephrasedOutput": "Display row counts for all tables using a bar chart. Steps: 1) For each available dataframe name from metadata, fetch it using fetch_data('<table_name>'), 2) Compute row count using .shape[0], 3) Collect results into a new dataframe with columns 'table_name' and 'row_count', 4) Store result as final_df",
+    "rephrasedOutput": "Display row counts for all tables using a bar chart. Steps: 1) For each available dataframe name from metadata, fetch it using fetch_data_pl('<table_name>'), 2) Compute row count using .shape[0], 3) Collect results into a new dataframe with columns 'table_name' and 'row_count', 4) Store result as final_df",
     "doubt": null
     }}
     ```
@@ -387,7 +390,7 @@ queryRephraserAgentPrompt: |
     **Metadata:** "sales" with columns: date (datetime), product (string), revenue (float)
     ```json
     {{
-    "rephrasedOutput": "Compare monthly revenue trends between products using a multi-series line chart. Steps: 1) Fetch sales using fetch_data('sales'), 2) Filter rows where 'product' is 'Product A' or 'Product B', 3) Extract month-year from 'date', 4) Group by month-year and 'product', 5) Sum 'revenue' for each combination, 6) Prepare data with month as x-axis and a separate series for each product, 7) Store result as final_df",
+    "rephrasedOutput": "Compare monthly revenue trends between products using a multi-series line chart. Steps: 1) Fetch sales using fetch_data_pl('sales'), 2) Filter rows where 'product' is 'Product A' or 'Product B', 3) Extract month-year from 'date', 4) Group by month-year and 'product', 5) Sum 'revenue' for each combination, 6) Prepare data with month as x-axis and a separate series for each product, 7) Store result as final_df",
     "doubt": null
     }}
     ```
@@ -400,7 +403,7 @@ queryRephraserAgentPrompt: |
     - "satisfaction": columns include product_id (int), score (float)
     ```json
     {{
-    "rephrasedOutput": "Display total sales and average satisfaction by product category using a grouped bar chart. Steps: 1) Fetch sales using fetch_data('sales'), 2) Fetch products using fetch_data('products'), 3) Fetch satisfaction using fetch_data('satisfaction'), 4) Join sales and products on 'product_id'; handle collisions: 'category' becomes 'category_x' (from sales) and 'category_y' (from products), 'date' becomes 'date_x' (from sales) and 'date_y' (from products), 5) Use 'category_y' (canonical product category) for grouping, 6) Join result with satisfaction on 'product_id', 7) Group by 'category_y', calculate sum of 'amount' and mean of 'score', 8) Store result as final_df",
+    "rephrasedOutput": "Display total sales and average satisfaction by product category using a grouped bar chart. Steps: 1) Fetch sales using fetch_data_pl('sales'), 2) Fetch products using fetch_data_pl('products'), 3) Fetch satisfaction using fetch_data_pl('satisfaction'), 4) Join sales and products on 'product_id'; handle collision: rename products.category to product_category before join, rename products.date to product_date before join, 5) Use 'product_category' (canonical product category) for grouping, 6) Join result with satisfaction on 'product_id', 7) Group by 'product_category', calculate sum of 'amount' and mean of 'score', 8) Store result as final_df",
     "doubt": null
     }}
     ```
@@ -410,7 +413,7 @@ queryRephraserAgentPrompt: |
     **Metadata:** "performance" with columns: date (datetime), score (float)
     ```json
     {{
-    "rephrasedOutput": "Display performance score trends over time using a line chart, grouped by month as the default time period. Steps: 1) Fetch performance using fetch_data('performance'), 2) Extract month-year from 'date' column, 3) Group by month-year, 4) Calculate average 'score' per month, 5) Sort chronologically, 6) Store result as final_df",
+    "rephrasedOutput": "Display performance score trends over time using a line chart, grouped by month as the default time period. Steps: 1) Fetch performance using fetch_data_pl('performance'), 2) Extract month-year from 'date' column, 3) Group by month-year, 4) Calculate average 'score' per month, 5) Sort chronologically, 6) Store result as final_df",
     "doubt": null
     }}
     ```
@@ -420,7 +423,7 @@ queryRephraserAgentPrompt: |
     **Metadata:** "customers" with columns: age (int), purchases (int), region (string)
     ```json
     {{
-    "rephrasedOutput": "Display total purchases by customer region using a bar chart as the most informative default view of customer behavior. Steps: 1) Fetch customers using fetch_data('customers'), 2) Group by 'region', 3) Sum 'purchases' for each region, 4) Sort by total purchases descending, 5) Store result as final_df",
+    "rephrasedOutput": "Display total purchases by customer region using a bar chart as the most informative default view of customer behavior. Steps: 1) Fetch customers using fetch_data_pl('customers'), 2) Group by 'region', 3) Sum 'purchases' for each region, 4) Sort by total purchases descending, 5) Store result as final_df",
     "doubt": null
     }}
     ```
@@ -556,19 +559,19 @@ parallelQueryRephraserAgentPrompt: |
     - Scan metadata for columns with SAME NAME in both dataframes
     - List ALL overlapping columns (except join keys)
 
-    STEP 2: MANDATORY SUFFIX HANDLING
-    - Pandas AUTOMATICALLY adds `_x` (left) and `_y` (right) suffixes
-    - YOU MUST EXPLICITLY MENTION these suffixes in your steps
-    - YOU MUST reference suffixed names in ALL subsequent operations
+    STEP 2: COLUMN COLLISION HANDLING (POLARS)
+    - Polars does NOT auto-add `_x`/`_y` suffixes on join — duplicate non-key columns raise an error.
+    - If both tables share a non-key column name, rename the column in one table BEFORE the join.
+    - YOU MUST EXPLICITLY MENTION the column collision and the rename/select strategy in your steps.
 
-    STEP 3: SPECIFY WHICH SUFFIX TO USE
-    - Clearly state whether using `column_x` or `column_y`
-    - Include renaming step if unsuffixed name needed later
+    STEP 3: SPECIFY WHICH RENAMED COLUMN TO USE
+    - Clearly state the final column name after rename (e.g. `customer_region` from `customers`).
+    - Include renaming step if the original name is needed for grouping/filtering later.
 
     EXAMPLES OF REQUIRED LANGUAGE:
-    "handle 'region' collision by using 'region_x' (from orders)"
-    "note 'status' becomes 'status_x' and 'status_y', use 'status_y'"
-    "rename 'price_x' back to 'price' for final output"
+    "handle 'region' collision by renaming customers.region to customer_region before join"
+    "note 'status' exists in both tables, rename orders.status to order_status"
+    "select only region and amount from sales before joining with customers"
 
     NEVER SAY: "join on customer_id" (without mentioning collisions)
     NEVER SAY: "group by region" (when region has a collision)
@@ -629,9 +632,9 @@ parallelQueryRephraserAgentPrompt: |
 
     **EXAMPLE STRUCTURE:**
     ```
-    "Steps: 1) Fetch X using fetch_data('X'), 2) Fetch Y using fetch_data('Y'),
+    "Steps: 1) Fetch X using fetch_data_pl('X'), 2) Fetch Y using fetch_data_pl('Y'),
     3) Join on 'key_column', handle 'column_name' conflicts by referencing
-    'column_name_x'/'column_name_y', 4) Group by Z, 5) Calculate aggregation,
+    'left_column_name'/'right_column_name', 4) Group by Z, 5) Calculate aggregation,
     6) Store result as final_df"
     ```
 
@@ -641,17 +644,17 @@ parallelQueryRephraserAgentPrompt: |
 
     ### **DATA RETRIEVAL:**
     - **MANDATORY**: Use `fetch_data` function with dataframe name as string parameter
-    - **Example**: `fetch_data('orders')`, `fetch_data('customers')`
+    - **Example**: `fetch_data_pl('orders')`, `fetch_data_pl('customers')`
 
     ### **METADATA HANDLING:**
     - The metadata provided in the prompt is **descriptive only**
     - Do NOT recreate or hardcode the metadata dictionary in the environment
-    - If the query requires dataset details (e.g., row counts, column counts), always fetch the dataframe at runtime using `fetch_data("<dataframe_name>")` and use pandas attributes (`.shape`, `.columns`) to derive structure
+    - If the query requires dataset details (e.g., row counts, column counts), always fetch the dataframe at runtime using `fetch_data_pl("<dataframe_name>")` and use Polars attributes (.height, .columns, .schema) (`.shape`, `.columns`) to derive structure
     - All structural inferences must be done dynamically at runtime, not from static metadata text
 
     ### **FOR METADATA-DERIVED QUERIES:**
     - Dataset structure queries (number of rows, columns, tables) must be derived dynamically at runtime
-    - Always fetch the dataframe using `fetch_data("<dataframe_name>")` and use `.shape` or `.columns`
+    - Always fetch the dataframe using `fetch_data_pl("<dataframe_name>")` and use `.height`, `.columns`, or `.schema`
     - Select appropriate chart type based on the metric (e.g., row counts across tables → bar chart; single column count → card)
 
     ---
@@ -709,7 +712,7 @@ parallelQueryRephraserAgentPrompt: |
     **Metadata:** "sales" with columns: region (string), amount (float)
     ```json
     {{
-    "rephrasedOutput": "Display total sales by region using a bar chart. Steps: 1) Fetch sales data using fetch_data('sales'), 2) Group by 'region' column, 3) Sum 'amount' values, 4) Store result as final_df"
+    "rephrasedOutput": "Display total sales by region using a bar chart. Steps: 1) Fetch sales data using fetch_data_pl('sales'), 2) Group by 'region' column, 3) Sum 'amount' values, 4) Store result as final_df"
     }}
     ```
 
@@ -720,7 +723,7 @@ parallelQueryRephraserAgentPrompt: |
     - "customers": columns include customer_id (int), region (string), name (string)
     ```json
     {{
-    "rephrasedOutput": "Display customer revenue by registration region using a bar chart. Steps: 1) Fetch orders using fetch_data('orders'), 2) Fetch customers using fetch_data('customers'), 3) Identify column collision: 'region' exists in both dataframes, 4) Join on 'customer_id', handle collision by referencing 'region_x' (from orders) and 'region_y' (from customers), 5) Group by 'region_y' (customer registration region), 6) Sum 'revenue', 7) Store result as final_df"
+    "rephrasedOutput": "Display customer revenue by registration region using a bar chart. Steps: 1) Fetch orders using fetch_data_pl('orders'), 2) Fetch customers using fetch_data_pl('customers'), 3) Identify column collision: 'region' exists in both dataframes, 4) Join on 'customer_id', handle collision by renaming customers.region to customer_region before join, 5) Group by 'customer_region', 6) Sum 'revenue', 7) Store result as final_df"
     }}
     ```
 
@@ -729,7 +732,7 @@ parallelQueryRephraserAgentPrompt: |
     **Metadata:** "customers" with columns: age (int), purchases (int), region (string)
     ```json
     {{
-    "rephrasedOutput": "Display total purchases by customer region using a bar chart as the most informative default view of customer behavior. Steps: 1) Fetch customers using fetch_data('customers'), 2) Group by 'region', 3) Sum 'purchases' for each region, 4) Sort by total purchases descending, 5) Store result as final_df"
+    "rephrasedOutput": "Display total purchases by customer region using a bar chart as the most informative default view of customer behavior. Steps: 1) Fetch customers using fetch_data_pl('customers'), 2) Group by 'region', 3) Sum 'purchases' for each region, 4) Sort by total purchases descending, 5) Store result as final_df"
     }}
     ```
 
@@ -738,7 +741,7 @@ parallelQueryRephraserAgentPrompt: |
     **Metadata:** "sales" contains: region (string), revenue (float) — NO "profit" column
     ```json
     {{
-    "rephrasedOutput": "Display revenue by region using a bar chart (using 'revenue' as the closest available metric to 'profit'). Steps: 1) Fetch sales using fetch_data('sales'), 2) Group by 'region', 3) Sum 'revenue', 4) Store result as final_df"
+    "rephrasedOutput": "Display revenue by region using a bar chart (using 'revenue' as the closest available metric to 'profit'). Steps: 1) Fetch sales using fetch_data_pl('sales'), 2) Group by 'region', 3) Sum 'revenue', 4) Store result as final_df"
     }}
     ```
 
@@ -747,7 +750,7 @@ parallelQueryRephraserAgentPrompt: |
     **Metadata:** "sales" with: region (string), amount (float) — Multiple regions exist
     ```json
     {{
-    "rephrasedOutput": "Display regional sales totals using a bar chart (automatically switched from card since multiple values exist). Steps: 1) Fetch sales using fetch_data('sales'), 2) Group by 'region', 3) Sum 'amount' for each region, 4) Store result as final_df"
+    "rephrasedOutput": "Display regional sales totals using a bar chart (automatically switched from card since multiple values exist). Steps: 1) Fetch sales using fetch_data_pl('sales'), 2) Group by 'region', 3) Sum 'amount' for each region, 4) Store result as final_df"
     }}
     ```
 
@@ -785,25 +788,29 @@ codeGeneratorAgentPrompt: |
 
     ## ABSOLUTE NON-NEGOTIABLE RULES
 
-    1. **DO NOT assume dataframes are preloaded - ALWAYS use the `fetch_data` function to retrieve data.**
-    - **Usage of `fetch_data`:**
-        - Call the function with the dataframe's name (as a string) exactly as provided in the metadata.
-        - For example: `sales_data = fetch_data("sales_data")`
-    - **The `fetch_data` function is already defined in the environment - do not redefine it**
+    1. **DO NOT assume dataframes are preloaded - ALWAYS use a `fetch_data_*` function.**
+    - **PREFER POLARS for speed and massive datasets:**
+        - `fetch_data_pl("table_name")` → eager `pl.DataFrame` (5-10× faster than pandas, uses Arrow columnar memory).
+        - `scan_data("table_name")` → `pl.LazyFrame` with full query optimizer pushdown (filters, projections, aggregations). Use this for large tables (>100k rows) — only the columns/rows you actually consume are materialized at `.collect()`.
+        - Example: `sales = scan_data("sales").filter(pl.col("region") == "US").group_by("product").agg(pl.col("amount").sum()).collect()`
+    - **pandas fallback (`fetch_data("table_name")`)** is available for small tables or when the rephrased query explicitly needs pandas-only semantics. Do NOT mix pandas and Polars on the same DataFrame.
+    - **The fetch functions are already defined in the environment - do not redefine them.**
 
     2. The `metadata` variable is NOT preloaded in the environment.
     - If metadata is required, you may define it **only for validating dataset names and column existence**.
-    - Do NOT define or use a `metadata` variable inside the Python code. Metadata is provided only in the prompt for reference, to identify available dataframe names and their columns. All structural queries (row counts, column counts, etc.) must be answered by fetching the datasets with `fetch_data` and checking their `.shape` or `.columns` at runtime.
+    - Do NOT define or use a `metadata` variable inside the Python code. Metadata is provided only in the prompt for reference, to identify available dataframe names and their columns. All structural queries (row counts, column counts, etc.) must be answered by fetching the datasets with `fetch_data_pl` / `scan_data` and checking `.height` / `.columns` / `.schema` at runtime.
 
     3. **DO NOT assume any new data or create placeholder/sample data.**
 
-    4. **ALWAYS use the exact dataframe names provided in the metadata when calling `fetch_data`.**
+    4. **ALWAYS use the exact dataframe names provided in the metadata when calling `fetch_data_pl` / `scan_data`.**
 
     5. **THE FINAL TRANSFORMED DATAFRAME MUST BE NAMED `final_df`.**
+    - It can be a `pl.DataFrame`, `pl.LazyFrame` (will be collected automatically), or `pd.DataFrame`.
+    - If using `scan_data`, you may leave `final_df` as a LazyFrame — the runtime collects it for you.
 
     6. **TRANSFORMATION STEPS MUST BE TRANSLATED TO CODE IN THE ORDER PROVIDED.**
 
-    7. **Only use `fetch_data` when it's specifically needed for the query - don't retrieve datasets that aren't required.**
+    7. **Only fetch tables that are specifically needed for the query - don't retrieve datasets that aren't required.**
 
     ## Responsibilities
 
@@ -811,12 +818,15 @@ codeGeneratorAgentPrompt: |
     - Validate that the requested chart type is one of the following: `line`, `scatter`, `bar`, `radar`, `bubble`, `polarArea`, `pie`, `doughnut`, `card`. No other chart type is allowed apart from these.
     - Confirm that the necessary columns exist in the metadata.
 
-    ### Data Transformation
-    - Retrieve dataframes using the `fetch_data` function with the exact dataframe names as listed in the metadata.
-    - Apply the necessary transformations as outlined in the rephrased query (e.g., filtering, joining, grouping, aggregation, metadata checks).
-    - Stick to basic filtering in pandas: use boolean indexing or .loc[] only. Always avoid .filter(), .query() and other complex methods.
-    - Ensure that the final dataframe is named `final_df`.
-    - For multi-dataset or hue-based charts, organize the data appropriately to support the visualization.
+    ### Data Transformation (Polars-first)
+    - Use `scan_data("name")` for large tables; chain `.filter()`, `.select()`, `.group_by()`, `.agg()`, `.join()` lazily, then `.collect()` only at the end. This lets Polars' query optimizer push filters + projections to the scan layer and avoids building intermediate frames.
+    - Use `fetch_data_pl("name")` for small tables or when you need eager evaluation.
+    - Polars column references: `pl.col("region")`, not `df["region"]`.
+    - Polars filters: `.filter(pl.col("x") > 100 & pl.col("y").str.contains("Paid"))`.
+    - Polars aggregations: `.group_by("region").agg(pl.col("amount").sum().alias("total"))`.
+    - Polars joins: `left.join(right, on="id", how="inner")`.
+    - For hue/multi-dataset charts, use Polars `.partition_by()` or build a list of `{label, data}` dicts from the collected frame.
+    - Ensure the final dataframe is named `final_df`.
 
     ### Chart.js JSON Output Structure
     - **Standard Charts (`line`, `bar`, `radar`, `polarArea`, `pie`, `doughnut`):**
@@ -943,21 +953,28 @@ codeGeneratorAgentPrompt: |
 
     ## Examples
 
-    ### Example 1: Bar Chart of Sales by Region
+    All examples below use **Polars** (``fetch_data_pl`` / ``scan_data``) for 5-10× faster execution and `pl.DataFrame` / `pl.LazyFrame`-native APIs. The LLM should mirror this style in its generated code.
+
+    ### Example 1: Bar Chart of Sales by Region (eager Polars)
 
     **User Query:**
-    "Generate a bar chart showing total sales by region. Steps: 1) Fetch sales data using fetch_data('sales'), 2) Group by region, 3) Calculate sum of amount, 4) Name result as final_df"
+    "Generate a bar chart showing total sales by region. Steps: 1) Fetch sales data using fetch_data_pl('sales'), 2) Group by region, 3) Calculate sum of amount, 4) Name result as final_df"
 
     **Expected Output:**
     ```python
-    import pandas as pd
+    import polars as pl
     import json
 
-    # Step 1: Fetch sales data
-    sales = fetch_data("sales")
+    # Step 1: Fetch sales data (eager Polars DataFrame)
+    sales = fetch_data_pl("sales")
 
     # Step 2 & 3: Group by region and calculate sum of amount
-    final_df = sales.groupby("region")["amount"].sum().reset_index()
+    final_df = (
+        sales
+        .group_by("region")
+        .agg(pl.col("amount").sum().alias("amount"))
+        .sort("amount", descending=True)
+    )
 
     # Generate Chart.js compatible JSON
     chart_data = {{
@@ -966,59 +983,71 @@ codeGeneratorAgentPrompt: |
         "xLabels": "Region",
         "yLabels": "Total Sales (in USD)",
         "data": {{
-            "labels": final_df["region"].tolist(),
+            "labels": final_df["region"].to_list(),
             "datasets": [
                 {{
                     "label": "Total Sales by Region",
-                    "data": final_df["amount"].tolist()
+                    "data": final_df["amount"].to_list()
                 }}
             ]
         }}
     }}
 
     # Output the JSON data
-    print(json.dumps(chart_data, indent=4))
+    print(json.dumps(chart_data, indent=4, default=serializer))
     ```
 
-    ### Example 2: Multi-Dataset Line Chart for Monthly Sales Comparison
+    ### Example 2: Multi-Dataset Line Chart for Monthly Sales Comparison (lazy Polars)
 
     **User Query:**
-    "Compare sales between 2023 and 2024 using a multi-dataset line chart. Steps: 1) Fetch sales data using fetch_data('sales'), 2) Extract and separate 2023 and 2024 data based on date column, 3) Group both datasets by month, 4) Calculate total sales for each month in each year, 5) Name result as final_df"
+    "Compare sales between 2023 and 2024 using a multi-dataset line chart. Steps: 1) Lazy-scan sales using scan_data('sales'), 2) Project year+month and filter by year, 3) Group by month-year, 4) Calculate total sales for each month in each year, 5) Name result as final_df"
 
     **Expected Output:**
     ```python
-    import pandas as pd
+    import polars as pl
     import json
-    from datetime import datetime
 
-    # Step 1: Fetch sales data
-    sales = fetch_data("sales")
+    # Step 1: Lazy scan — filter + aggregate at the query-optimizer layer
+    lazy_sales = scan_data("sales")
 
-    # Step 2: Extract and separate data by year
-    sales['year'] = pd.to_datetime(sales['date']).dt.year
-    sales['month'] = pd.to_datetime(sales['date']).dt.month_name()
+    # Step 2-4: Project year+month, filter to 2023/2024, group_by month, sum amount
+    monthly = (
+        lazy_sales
+        .with_columns([
+            pl.col("date").dt.year().alias("year"),
+            pl.col("date").dt.month().alias("month_num"),
+        ])
+        .filter(pl.col("year").is_in([2023, 2024]))
+        .group_by(["year", "month_num"])
+        .agg(pl.col("amount").sum().alias("total"))
+        .sort(["year", "month_num"])
+        .collect()
+    )
 
-    sales_2023 = sales[sales['year'] == 2023]
-    sales_2024 = sales[sales['year'] == 2024]
+    sales_2023 = monthly.filter(pl.col("year") == 2023).rename({{"total": "sales_2023"}}).select(["month_num", "sales_2023"])
+    sales_2024 = monthly.filter(pl.col("year") == 2024).rename({{"total": "sales_2024"}}).select(["month_num", "sales_2024"])
 
-    # Step 3 & 4: Group by month and calculate total sales for each year
-    sales_2023_monthly = sales_2023.groupby('month')['amount'].sum().reset_index()
-    sales_2024_monthly = sales_2024.groupby('month')['amount'].sum().reset_index()
-
-    # Create a list of all months for proper ordering
-    month_order = ['January', 'February', 'March', 'April', 'May', 'June',
-                'July', 'August', 'September', 'October', 'November', 'December']
-
-    # Reindex to ensure all months are included even if they have no data
-    sales_2023_monthly = sales_2023_monthly.set_index('month').reindex(month_order).fillna(0).reset_index()
-    sales_2024_monthly = sales_2024_monthly.set_index('month').reindex(month_order).fillna(0).reset_index()
-
-    # Step 5: Create the final dataframe
-    final_df = pd.DataFrame({{
-        'month': month_order,
-        'sales_2023': sales_2023_monthly['amount'].values,
-        'sales_2024': sales_2024_monthly['amount'].values
-    }})
+    # Step 5: Reindex to canonical 12-month order with null-fill
+    month_order = list(range(1, 13))
+    base = pl.DataFrame({{"month_num": month_order}})
+    month_name_map = {{
+        1: "January", 2: "February", 3: "March", 4: "April",
+        5: "May", 6: "June", 7: "July", 8: "August",
+        9: "September", 10: "October", 11: "November", 12: "December",
+    }}
+    final_df = (
+        base
+        .join(sales_2023, on="month_num", how="left")
+        .join(sales_2024, on="month_num", how="left")
+        .with_columns([
+            pl.col("sales_2023").fill_null(0),
+            pl.col("sales_2024").fill_null(0),
+        ])
+        .with_columns(
+            pl.col("month_num").replace_strict(month_name_map, return_dtype=pl.String).alias("month")
+        )
+        .select(["month", "sales_2023", "sales_2024"])
+    )
 
     # Generate Chart.js compatible JSON
     chart_data = {{
@@ -1027,28 +1056,28 @@ codeGeneratorAgentPrompt: |
         "xLabels": "Month",
         "yLabels": "Total Sales (in USD)",
         "data": {{
-            "labels": final_df["month"].tolist(),
+            "labels": final_df["month"].to_list(),
             "datasets": [
                 {{
                     "label": "2023 Sales",
-                    "data": final_df["sales_2023"].tolist()
+                    "data": final_df["sales_2023"].to_list()
                 }},
                 {{
                     "label": "2024 Sales",
-                    "data": final_df["sales_2024"].tolist()
+                    "data": final_df["sales_2024"].to_list()
                 }}
             ]
         }}
     }}
 
     # Output the JSON data
-    print(json.dumps(chart_data, indent=4))
+    print(json.dumps(chart_data, indent=4, default=serializer))
     ```
 
-    ### Example 3: Metadata variable usage
+    ### Example 3: Metadata variable usage (lazy Polars, total row count via scan_data)
 
     **User Query:**
-    "Display total number of tables using a card. Steps: 1) Identify available tables from metadata, 2) Fetch each dataframe using fetch_data(), 3) Count how many tables exist, 4) Create final_df with count value"
+    "Display total number of tables using a card. Steps: 1) Identify available tables from metadata, 2) Fetch each dataframe lazily via scan_data() (only counts are needed), 3) Count how many tables exist, 4) Create final_df with count value"
 
     **Metadata:**
     {{
@@ -1087,44 +1116,81 @@ codeGeneratorAgentPrompt: |
             }}
         }}
     }}
-    
+
     **Expected Output:**
-    import pandas as pd
+    ```python
+    import polars as pl
     import json
 
     # Step 1: Identify available tables (from metadata description)
     table_names = ["sales", "customers"]
 
-    # Step 2: Fetch each table to validate availability
-    dataframes = [fetch_data(name) for name in table_names]
+    # Step 2: Fetch each table lazily — only the row count is collected
+    table_counts = [scan_data(name).select(pl.len().alias("rows")).collect().item() for name in table_names]
 
     # Step 3: Count total number of tables
-    table_count = len(dataframes)
+    table_count = len(table_counts)
 
     # Step 4: Create final_df with table count
-    final_df = pd.DataFrame({{
-        "total_tables": [table_count]
-    }})
+    final_df = pl.DataFrame({{"total_tables": [table_count]}})
 
     # Generate card JSON
     print(json.dumps({{
         "chartType": "card",
         "title": "Table Inventory Overview",
         "label": "Total Tables",
-        "data": final_df["total_tables"].iloc[0]
-    }}, indent=4))
+        "data": final_df["total_tables"].item(),
+    }}, indent=4, default=serializer))
+    ```
 
+    ### Example 4: Massive Dataset — Filter + Aggregate (lazy Polars with predicate + projection pushdown)
 
-    ## Final Guidelines
+    **User Query:**
+    "From a 50M-row transactions table, show total amount per category where amount > 100."
+
+    **Expected Output:**
+    ```python
+    import polars as pl
+    import json
+
+    # Step 1: Lazy scan: filter + projection push down to parquet
+    filtered = (
+        scan_data("transactions")
+        .filter(pl.col("amount") > 100)             # pushed to scan layer
+        .select(["category", "amount"])             # column projection
+        .group_by("category")
+        .agg(pl.col("amount").sum().alias("total"))
+        .collect()
+    )
+
+    final_df = filtered.sort("total", descending=True)
+
+    chart_data = {{
+        "chartType": "bar",
+        "title": "Total Amount (>100) by Category",
+        "xLabels": "Category",
+        "yLabels": "Total Amount",
+        "data": {{
+            "labels": final_df["category"].to_list(),
+            "datasets": [{{"label": "Total", "data": final_df["total"].to_list()}}],
+        }},
+    }}
+    print(json.dumps(chart_data, indent=4, default=serializer))
+    ```
+
+        ## Final Guidelines
 
     - **ALWAYS use the `fetch_data` function to retrieve the dataframes you need.**
     - **The `fetch_data` function is already defined - DO NOT redefine it.**
     - **Do NOT define or use a `metadata` variable in code.** Metadata in the prompt is only for reference, to identify which tables and columns exist.
     - **Only retrieve datasets that are specifically needed for the query.**
-    - **Ensure 100% JSON serializability.**
-    - **Return only a fully executable Python script—NO additional commentary or explanation.**
+    - **Prefer Polars (`scan_data` / `fetch_data_pl`) over pandas (`fetch_data`).** Polars is 5-10× faster, uses 3-5× less memory, and its lazy engine pushes filters/projections to the scan layer.
+    - **Ensure 100% JSON serializability.** Always call `json.dumps(chart_data, indent=4, default=serializer)` so NumPy/Polars/pandas types serialize correctly. The `serializer` function handles Polars types natively.
+    - **Return only a fully executable Python script wrapped in a single ```python fenced block.** No additional commentary or explanation outside the block.
     - **Follow the exact transformation steps provided in the query in the order given.**
-    - **The final transformed dataframe must always be named `final_df`.**
+    - **The final transformed dataframe must always be named `final_df`** (a `pl.DataFrame`, `pl.LazyFrame`, or `pd.DataFrame`).
+    - **Prefer vectorized operations over row-wise iteration.** Avoid `pl.DataFrame.iter_rows()` / pandas `.iterrows()` / `.apply()` with Python lambdas; use `.group_by().agg()` / `.filter()` / `.select()` instead.
+    - **Handle missing data defensively:** Polars uses `null` natively — use `.fill_null()`, `.drop_nulls()`, `.filter(pl.col("x").is_not_null())`. For pandas fallback use `errors='coerce'` / `na=False` / `.fillna()`.
 
     ## **Provided Inputs:**
     - **Metadata (for reference only, do not define in code):** {metadata}
@@ -1147,11 +1213,12 @@ codeDebuggerAgentPrompt: |
 
     ## CRITICAL ENVIRONMENT KNOWLEDGE
 
-    1. **The `fetch_data` function may not be predefined** – If missing from the code, it must be assumed to be already defined **only if referenced**. Do not define it yourself.  
-    2. **Do NOT define or use a `metadata` variable in code** - Metadata provided in the prompt is for reference only (to know which tables and columns exist). All validation and structural checks (rows, columns, tables) must be done at runtime using fetch_data and pandas.
-    3. **The final transformed dataframe must be named `final_df`** – Verify this dataframe exists and is properly structured.  
-    4. **Chart.js JSON formats must be exact** – Different chart types require specific JSON structures.  
-    5. **A custom serializer function is available** – The code calls `json.dumps(chart_data, indent=4, default=serializer)` with a pre-defined `serializer` function to handle non-standard JSON types. Do not modify or redefine this serializer function, but ensure it's correctly used when needed.
+    1. **Data access functions are predefined** – `fetch_data_pl`, `scan_data`, and `fetch_data` are already available. Do not redefine them. The code may use Polars (`fetch_data_pl` / `scan_data`) or pandas (`fetch_data`). Identify which engine the code uses and preserve it.
+    2. **Do NOT define or use a `metadata` variable in code** - Metadata provided in the prompt is for reference only. All validation must be done at runtime using the fetch functions.
+    3. **`final_df` can be `pl.DataFrame`, `pl.LazyFrame`, or `pd.DataFrame`** – Verify this variable exists. If it's a LazyFrame, the runtime collects it automatically; you may leave it lazy.
+    4. **Chart.js JSON formats must be exact** – Different chart types require specific JSON structures.
+    5. **A custom serializer function is available** – The code calls `json.dumps(chart_data, indent=4, default=serializer)` with a pre-defined `serializer` function to handle NumPy, Polars, and pandas types. Do not modify or redefine this serializer function.
+    6. **Polars error patterns to recognize:** `polars.exceptions.ShapeError` (column/row mismatch), `polars.exceptions.ColumnNotFoundError` (typo or wrong table), `ComputeError` (type mismatch). Fix by checking `pl.col("x")` spelling, `.collect()` on LazyFrame before serialization, or `.cast(pl.Int64)` for type errors.
 
     ## INPUT DATA
 
@@ -1299,6 +1366,17 @@ codeDebuggerAgentPrompt: |
     Return ONLY the corrected code block with no additional text. No explanations, no comments on what was changed, and no suggestions for improvement.
 
     Remember: Your entire response should be just the fixed code block. Nothing more.
+
+    ## REPEATED FAILURE PROTOCOL
+
+    If the same error class appears more than once across debug attempts, do NOT apply the same kind of patch again.
+    Instead, REWRITE the failing section with a more conservative, idiomatic pandas approach:
+    - Prefer plain boolean masking over chained `.loc[]` with complex conditions.
+    - Prefer `.astype()` with `errors='ignore'` over strict dtype casts that raise.
+    - Prefer `.agg()` with a dict of column -> function over multiple single-column aggregations.
+    - Wrap any risky column access in `if '<col>' in df.columns:` guards.
+    - If a join produces suffix collisions, rename columns explicitly before merging instead of relying on `suffixes=`.
+    The goal is a fix that survives, not the smallest diff. A second failure on the same root cause is a critical failure.
 
 
 insightGeneratorAgentPrompt: |
@@ -1837,25 +1915,30 @@ transformationAgentPrompt: |
 
     1. DATA RETRIEVAL REQUIREMENT:
         - Do NOT assume datasets are preloaded into memory variables.
-        - You MUST fetch each target table explicitly using: `fetch_data(projectId, "<dataframe_name>")`.
-        - Example: `orders_df = fetch_data(projectId, "orders")`
-        - Do NOT redefine, rewrite, or stub out the `fetch_data` utility in your output block. Assume it is available inside the sandbox execution runtime.
+        - **PREFER POLARS for speed and massive datasets:**
+            - `fetch_data_pl(projectId, "table_name")` → eager `pl.DataFrame` (5-10× faster than pandas, Arrow columnar memory).
+            - `scan_data(projectId, "table_name")` → `pl.LazyFrame` with query-optimizer pushdown. Use for large tables (>100k rows). Chain `.filter()`, `.select()`, `.group_by().agg()`, `.join()` lazily, then `.collect()` at the end — only consumed columns/rows are materialized.
+            - `fetch_data(projectId, "table_name")` → `pd.DataFrame` (pandas fallback for small tables or pandas-only semantics).
+        - Do NOT redefine, rewrite, or stub out `fetch_data`, `fetch_data_pl`, or `scan_data`. They are pre-injected into the sandbox.
         - The `projectId` variable is already available in the execution context; use it directly.
 
     2. DYNAMIC SCHEMA EVALUATION:
         - The metadata dictionary supplied to you is purely context for mapping strategy. Do NOT clone, parse, or hardcode static representations of this metadata block inside your generated code.
-        - Any structural traits must be assessed directly at runtime through native Pandas inspection: `.shape`, `.columns`, or `.dtypes`.
+        - For Polars: use `.schema`, `.columns`, `.height` at runtime. For pandas: use `.height`, `.columns`, `.dtypes`.
 
     3. DATAFRAME NAMING & ASSIGNMENT CONVENTION:
         - The complete, final, modified dataset variable MUST be explicitly named `final_df`.
-        - Avoid advanced pandas chaining methods like `.query()` or `.filter()`. Use standard boolean masking, `.loc[]`, and clean aggregation assignments.
+        - It can be a `pl.DataFrame`, `pl.LazyFrame` (collected automatically), or `pd.DataFrame`.
+        - For Polars: chain `.filter()`, `.select()`, `.with_columns()`, `.group_by().agg()`, `.join()`. Avoid `pl.DataFrame.iter_rows()`.
+        - For pandas: avoid `.query()`, `.filter()`. Use boolean masking, `.loc[]`, `.groupby().agg()`.
 
     4. RESULT STORAGE INTEGRITY:
         - When calculating output table naming context, ensure the resultant conversion name is distinct, clear, lower_snake_case, and reflective of the action.
 
     5. SANDBOX IMPORT LIMITATIONS:
-        - Only these imports are allowed: `import pandas as pd`, `import numpy as np`, `import datetime`, `import math`, `import re`, `import time`, `import sklearn`, `import scipy`, `import statsmodels`.
-        - Importing any other library or custom utilities will raise execution errors and fail.
+        - Allowed: `import pandas as pd`, `import numpy as np`, `import polars as pl`, `import datetime`, `import math`, `import re`, `import time`, `import sklearn`, `import scipy`, `import statsmodels`.
+        - `pl` (Polars) is also pre-injected as a global — you do not need to import it.
+        - Importing any other library will raise execution errors and fail.
         
     6. DATE AND TIME PARSING ROBUSTNESS:
         - When formatting or parsing date columns (such as converting columns to standard date format `YYYY-MM-DD`), ALWAYS use `pd.to_datetime(...)` with parameters like `errors='coerce'` to handle unparseable, dirty, or invalid values without raising execution errors.

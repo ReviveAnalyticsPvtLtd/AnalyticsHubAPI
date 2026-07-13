@@ -1,24 +1,15 @@
 """
 langfuseClient.py
 
-Initializes the Langfuse singleton client and provides a factory for creating
-LangChain CallbackHandler instances.  Used by the credit system for usage
+Initializes the Langfuse singleton client used by the credit system for usage
 analytics (Metrics API) and by the STT path for manual generation logging.
 
-Targets the Langfuse v3/v4 SDK (``langfuse>=3.0.0``).  Per-request LLM tracing
-with user/session/tag scoping is handled by ``utils.llm.getLangfuseConfig``
-(which attaches ``langfuse_user_id`` / ``langfuse_tags`` via run-config
-metadata); this module owns the durable client used for out-of-band logging
-and metrics queries.
+Per-request LLM tracing with user/session/tag scoping is handled by
+``utils.llm.getLangfuseConfig``; this module owns the durable client used for
+out-of-band logging and metrics queries.
 """
 
-__version__ = "2.0.0"
-__author__ = "Rohit Mishra"
-__all__ = ["langfuseClient", "getLangfuseHandler", "logManualGeneration"]
-
-
 from langfuse import Langfuse
-from langfuse.langchain import CallbackHandler
 from utils.logger import logger
 import os
 
@@ -65,35 +56,6 @@ def _initLangfuseClient() -> Langfuse | None:
 
 
 langfuseClient: Langfuse | None = _initLangfuseClient()
-
-
-def getLangfuseHandler(
-    userId: str | None = None,
-    sessionId: str | None = None,
-    tags: list[str] | None = None,
-    metadata: dict | None = None,
-) -> CallbackHandler | None:
-    """
-    Factory that returns a Langfuse LangChain CallbackHandler.
-
-    Note (v3/v4): the handler itself is no longer scoped to a user/session at
-    construction time. User/session/tag scoping is applied per invocation via
-    run-config metadata — see ``utils.llm.getLangfuseConfig``, which is the
-    preferred entry point for tracing chain/agent/workflow calls.  The
-    ``userId``/``sessionId``/``tags``/``metadata`` arguments are retained for
-    backward compatibility and are ignored by the underlying handler.
-
-    Returns None when Langfuse is not configured so callers can safely filter
-    it out of their callback lists.
-    """
-    if langfuseClient is None:
-        return None
-
-    try:
-        return CallbackHandler()
-    except Exception as e:
-        logger.warning(f"Failed to create Langfuse callback handler: {e}")
-        return None
 
 
 def logManualGeneration(

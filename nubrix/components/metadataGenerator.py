@@ -1,25 +1,16 @@
 """
 metadataGenerator.py
 
-This module provides components for generating metadata using a large language model.
-
-It includes the MetadataGenerator class, which encapsulates the logic for creating
-a LangChain runnable for metadata generation. The generator is configured via
-external YAML and INI files for prompts and model parameters, respectively.
+MetadataGenerator: builds a LangChain chain for project-metadata generation
+from prompts.yaml + config.ini.
 """
 
-__version__ = "1.0.0"
-__author__ = "Rauhan Ahmed Siddiqui"
-__all__ = ["MetadataGenerator"]        
-
-
 from langchain_core.output_parsers import StrOutputParser
-from utils.llm import getGenaiLlm
+from utils.llm import getGenaiLlm, cleanThinkTokens
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
 from utils.exceptionHandler import CustomException
 from nubrix.utils import readYaml, getConfig
-from langchain_core.messages import AIMessage
 from dataclasses import dataclass
 from utils.logger import logger
 import os
@@ -37,31 +28,8 @@ class MetadataGenerator:
         logger.info("Initializing MetadataGenerator.")
         self.metadataGeneratorConfig = MetadataGeneratorConfig()
 
-    def _removeThinkTokens(self, inputStr: AIMessage) -> AIMessage:
-        """Removes <think> and </think> tokens from the AI message content.
-
-        Args:
-            inputStr (AIMessage): The input AI message.
-
-        Returns:
-            AIMessage: An AIMessage with the thinking tokens removed from its content.
-        """
-        from utils.llm import cleanThinkTokens
-        return cleanThinkTokens(inputStr)
-
     def getMetadataChain(self):
-        """Constructs and returns a LangChain runnable for metadata generation.
-
-        This method reads the configuration and prompt template, then builds a chain
-        consisting of a prompt, a ChatCerebras model, and an output parser.
-        The chain is designed to take a metadata dictionary as input.
-
-        Returns:
-            Runnable: A LangChain runnable sequence for generating metadata.
-
-        Raises:
-            CustomException: If any error occurs during chain construction.
-        """
+        """Constructs and returns a LangChain runnable for metadata generation."""
         try:
             logger.info("Constructing metadata generation chain.")
             self.config = getConfig(self.metadataGeneratorConfig.configPath)
@@ -75,7 +43,7 @@ class MetadataGenerator:
             outputParser = StrOutputParser()
             chain = {
                 "metadata": RunnableLambda(lambda x: x.get("metadata"))
-            } | prompt | llm | RunnableLambda(self._removeThinkTokens) | outputParser
+            } | prompt | llm | RunnableLambda(cleanThinkTokens) | outputParser
             logger.info("Metadata generation chain constructed successfully.")
             return chain
         except Exception as e:

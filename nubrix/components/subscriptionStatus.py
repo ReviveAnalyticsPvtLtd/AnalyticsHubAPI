@@ -9,26 +9,17 @@ CANCELLED (terminated via provider), PENDING_CANCELLATION, PAUSED, EXPIRED (ende
 from __future__ import annotations
 
 import math
+import pandas as pd
 from datetime import datetime, timezone
 from dateutil import parser
 from typing import Any
 
-__version__ = "1.0.0"
-__author__ = "Rohit Mishra"
 __all__ = ["parse_expiry_utc", "resolve_subscription_status", "coerce_subscription_expiry"]
 
 
 def coerce_subscription_expiry(expiry: Any) -> str | None:
     """Normalize DB or pandas expiry values to a string suitable for parse_expiry_utc."""
     return _coerce_expiry_any(expiry)
-
-
-def _pandas_is_na(val: Any) -> bool:
-    try:
-        import pandas as pd
-        return bool(pd.isna(val))
-    except ImportError:
-        return False
 
 
 def parse_expiry_utc(expiry_str: str | None) -> datetime | None:
@@ -52,7 +43,7 @@ def parse_expiry_utc(expiry_str: str | None) -> datetime | None:
 
 
 def _coerce_expiry_any(expiry: Any) -> str | None:
-    if expiry is None or _pandas_is_na(expiry):
+    if expiry is None or pd.isna(expiry):
         return None
     if isinstance(expiry, float) and math.isnan(expiry):
         return None
@@ -63,14 +54,7 @@ def _coerce_expiry_any(expiry: Any) -> str | None:
 
 
 def _normalize_stored(stored: Any) -> str | None:
-    if stored is None or _pandas_is_na(stored):
-        return None
-    if isinstance(stored, float) and math.isnan(stored):
-        return None
-    s = str(stored).strip()
-    if not s or s.lower() in ("none", "null"):
-        return None
-    return s
+    return _coerce_expiry_any(stored)
 
 
 def resolve_subscription_status(

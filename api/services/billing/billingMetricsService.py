@@ -20,8 +20,8 @@ __author__ = "Rohit Mishra"
 __all__ = ["BillingMetricsService"]
 
 
-from supabase import create_client
 from api.services.billing.billingEventService import BillingEventService
+from api.commons import client
 from utils.logger import logger
 import datetime
 import os
@@ -41,14 +41,6 @@ _METRICS_WINDOW_HOURS = int(
 )
 
 
-def _getSupabaseClient():
-    """
-    Create and return a Supabase client.
-
-    Returns:
-        Client: A Supabase client instance.
-    """
-    return create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
 
 
 class BillingMetricsService:
@@ -61,7 +53,7 @@ class BillingMetricsService:
     """
 
     def __init__(self):
-        self.client = _getSupabaseClient()
+        self.client = client
 
     def collectMetrics(self) -> dict:
         """

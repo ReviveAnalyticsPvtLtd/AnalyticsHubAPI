@@ -19,6 +19,7 @@ __all__ = ["computeInvoiceSnapshot"]
 
 
 from api.services.billing.billingConfig import RAZORPAY_ANNUAL_PLAN_ID
+from api.services.billing.billingClient import getBillingRedisClient
 from api.services.billing.taxEngine import computeTax, TaxBreakdown
 from utils.logger import logger
 from dataclasses import dataclass, asdict
@@ -49,19 +50,6 @@ def _getRazorpayClient() -> razorpay.Client:
     )
 
 
-def _getRedisClient() -> redis.Redis:
-    """
-    Create a Redis client using environment credentials.
-
-    Returns:
-        redis.Redis: Connected Redis client.
-    """
-    return redis.Redis(
-        host=os.environ.get("REDIS_HOST", "localhost"),
-        port=int(os.environ.get("REDIS_PORT", 6379)),
-        password=os.environ.get("REDIS_PASSWORD", None),
-        decode_responses=True,
-    )
 
 
 @dataclass(frozen=True)
@@ -130,7 +118,7 @@ def _fetchPlanAmount(planId: str, cacheKey: str) -> dict:
         RuntimeError: If the API fails and no cached value exists.
     """
     razorpayClient = _getRazorpayClient()
-    redisClient = _getRedisClient()
+    redisClient = getBillingRedisClient()
     lastError = None
 
     for attempt in range(1, _PRICE_FETCH_RETRIES + 1):

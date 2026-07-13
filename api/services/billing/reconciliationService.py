@@ -17,7 +17,7 @@ __all__ = ["ReconciliationService"]
 
 
 from api.services.billing.billingEventService import BillingEventService
-from supabase import create_client
+from api.commons import client
 from utils.logger import logger
 import datetime
 import os
@@ -29,14 +29,6 @@ _PENDING_ATTEMPT_THRESHOLD_MINUTES = int(
 _REPORT_BATCH_LIMIT = 100
 
 
-def _getSupabaseClient():
-    """
-    Create and return a Supabase client.
-
-    Returns:
-        Client: A Supabase client instance.
-    """
-    return create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
 
 
 class ReconciliationService:
@@ -46,7 +38,7 @@ class ReconciliationService:
     """
 
     def __init__(self):
-        self.client = _getSupabaseClient()
+        self.client = client
 
     def generateReport(self) -> dict:
         """

@@ -9,9 +9,8 @@ __all__ = ["managementService"]
 
 
 from nubrix.components.metadataGenerator import MetadataGenerator
-from nubrix.components.insightGenerator import InsightGenerator
+from nubrix.components.llmChainFactory import buildLlmChain
 from nubrix.components.reportGenerator import ReportGenerator
-from nubrix.components.domainKpiMapper import DomainKpiMapper
 from api.services.credits.creditTrackingCallback import CreditTrackingCallback
 from utils.llmOutputParser import parseModelJsonOutput
 from api.commons import updateProjectModifiedAt
@@ -60,9 +59,7 @@ class ManagementService:
         """
         logger.info("Initializing Authentication Service.")
         self.metadataGenerator = MetadataGenerator()
-        self.insightGenerator = InsightGenerator()
         self.reportGenerator = ReportGenerator()
-        self.domainKpiMapper = DomainKpiMapper()
         self.client = client
 
     def createProject(self, projectDetails: CreateProject, token: str) -> str:
@@ -524,7 +521,7 @@ class ManagementService:
             domainFileUrl = os.environ["DOMAIN_FILE_URL"].format(fileName = domainFile) + f"?cb={int(time.time())}"
             domainData = json.loads(urlopen(domainFileUrl).read())
             from utils.llm import getLangfuseConfig
-            domainKpiMapperChain = self.domainKpiMapper.getDomainKpiMapperChain()
+            domainKpiMapperChain = buildLlmChain("DOMAINKPIMAPPER", "domainAwareKpiMappingAgentPrompt")
             kpiConfig = getLangfuseConfig(
                 trace_name="DomainKpiMapper", projectId=projectId, userId=userId,
                 tags=["management", "kpiMapping"],
@@ -546,7 +543,7 @@ class ManagementService:
             overlapKpis = list()
 
         from utils.llm import getLangfuseConfig
-        insightGeneratorChain = self.insightGenerator.getInsightGeneratorChain()
+        insightGeneratorChain = buildLlmChain("INSIGHTGENERATOR", "insightGeneratorAgentPrompt")
         insightConfig = getLangfuseConfig(
             trace_name="InsightGenerator", projectId=projectId, userId=userId,
             tags=["management", "insightGeneration"],

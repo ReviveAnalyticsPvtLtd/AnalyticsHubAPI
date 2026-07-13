@@ -12,7 +12,7 @@ __all__ = ["dashboardService"]
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from api.commons import updateProjectModifiedAt
 from utils.exceptionHandler import CustomException
-from utils.codeExecutor import replManager
+from utils.codeExecutor import replManager, _remove_code_fences
 from sqlalchemy import create_engine
 from urllib.request import urlopen
 from utils.logger import logger
@@ -59,36 +59,18 @@ class DashboardService:
         self.client = client
 
     @staticmethod
-    def _removeCodeFences(code: str):
-        """
-        Remove code fences from a string.
-        """
-        return "\n".join(code.split("```")[-2].split("\n")[1:])
-
-    @staticmethod
     def _addCodeFences(code: str):
-        """
-        Add code fences to a string.
-        """
+        """Add code fences to a string."""
         return "```python\n" + code.strip() + "\n```"
 
     @staticmethod
     def _applyFilterToAWidget(widget: dict, filters: list, codeExecutor: callable) -> dict:
         """
         Apply filters to a widget's generated code and update its data accordingly.
-
-        Args:
-            widget (dict): The widget dictionary containing generated code and metadata.
-            filters (list): List of filters to apply.
-            codeExecutor (callable): Function to execute the code and retrieve results.
-
-        Returns:
-            dict: The updated widget dictionary with filtered data.
         """
         widget = widget.copy()
         code = widget.get("generatedCode")
-        if "```" in code: code = DashboardService._removeCodeFences(code)
-        else: pass
+        if "```" in code: code = _remove_code_fences(code)
         tree = ast.parse(code)
         transformer = _FetchDataFilterTransformer(filters)
         tree = transformer.visit(tree)

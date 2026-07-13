@@ -45,7 +45,7 @@ async def generateChart(chartDetails: GenerateChartInput, user: UserContext = De
         HTTPException: If an error occurs during chart generation, returns a 500 status code with the error details.
     """
     try:
-        response = reportingService.generateChart(chartDetails=chartDetails, userId=user.userId)
+        response = await reportingService.generateChart(chartDetails=chartDetails, userId=user.userId)
         return ORJSONResponse(status_code = 200, content = response)
     except CustomException as e:
         raiseHttpException(e)
@@ -66,7 +66,7 @@ async def generatePanelChart(panelChartDetails: PanelChartDetails, token=Depends
         HTTPException: If an error occurs during panel chart generation, returns a 500 status code with the error details.
     """
     try:
-        response = reportingService.generatePanelChart(panelChartDetails = panelChartDetails)
+        response = await reportingService.generatePanelChart(panelChartDetails = panelChartDetails)
         return ORJSONResponse(status_code = 200, content = response)
     except CustomException as e:
         raiseHttpException(e)
@@ -87,7 +87,7 @@ async def generateAndExportChartsInParallel(details: GenerateChartsInParallel, u
         HTTPException: If an error occurs during chart generation, returns a 500 status code with the error details.
     """
     try:
-        response = reportingService.generateChartsInParallel(details=details, userId=user.userId)
+        response = await reportingService.generateChartsInParallel(details=details, userId=user.userId)
         return ORJSONResponse(status_code = 200, content = {"message": "Charts generated successfully", "pageData": response})
     except CustomException as e:
         raiseHttpException(e)
@@ -108,7 +108,7 @@ async def saveQuery(details: SaveQuery, token = Depends(verifyToken)):
         HTTPException: If an error occurs during query saving, returns a 500 status code with the error details.
     """
     try:
-        queryId = reportingService.saveQuery(details = details)
+        queryId = await reportingService.saveQuery(details = details)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Query saved successfully.", "queryId": queryId})
     except CustomException as e:
         raiseHttpException(e)
@@ -129,7 +129,7 @@ async def getQueries(projectId: str, token = Depends(verifyToken)):
         HTTPException: If an error occurs during retrieval, returns a 500 status code with the error details.
     """
     try:
-        queries = reportingService.getQueries(projectId = projectId)
+        queries = await reportingService.getQueries(projectId = projectId)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "queries": queries})
     except CustomException as e:
         raiseHttpException(e)
@@ -150,7 +150,7 @@ async def deleteQuery(details: DeleteQuery, token = Depends(verifyToken)):
         HTTPException: If an error occurs during deletion, returns a 500 status code with the error details.
     """
     try:
-        reportingService.deleteQuery(details = details)
+        await reportingService.deleteQuery(details = details)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Query deleted successfully."})
     except CustomException as e:
         raiseHttpException(e)

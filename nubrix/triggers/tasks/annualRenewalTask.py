@@ -33,7 +33,7 @@ from api.services.subscriptions.subscriptionFieldUtils import (
     CANONICAL_SUBSCRIPTION_SELECT,
     subscriptionRenewalDomainCount,
 )
-from supabase import create_client
+from api.commons import client
 from utils.logger import logger
 import datetime
 import requests
@@ -44,14 +44,6 @@ _EMAIL_LOCK_TTL_SECONDS = 120
 _MAX_EMAIL_SEND_ATTEMPTS = int(os.environ.get("RENEWAL_EMAIL_MAX_SEND_ATTEMPTS", "3"))
 
 
-def _getSupabaseClient():
-    """
-    Create and return a Supabase client.
-
-    Returns:
-        Client: A Supabase client instance.
-    """
-    return create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
 
 
 class AnnualRenewalTask:
@@ -64,7 +56,7 @@ class AnnualRenewalTask:
     """
 
     def __init__(self):
-        self.client = _getSupabaseClient()
+        self.client = client
         import redis
         self.redisClient = redis.Redis(
             host=os.environ.get("REDIS_HOST", "localhost"),

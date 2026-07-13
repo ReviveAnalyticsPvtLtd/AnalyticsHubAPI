@@ -14,8 +14,8 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["recalculateSubscriptionDays"]
 
 
-from supabase import create_client
 from datetime import datetime, timezone
+from supabase import create_client
 from utils.logger import logger
 from api.services.billing.billingEventService import BillingEventService
 from api.services.subscriptions.subscriptionFieldUtils import mapBillingModeToPlanType
@@ -28,14 +28,6 @@ import requests
 import os
 
 
-def _getSupabaseClient():
-    """
-    Create and return a Supabase client using environment variables.
-
-    Returns:
-        Client: A Supabase client instance.
-    """
-    return create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
 
 
 def _auditSubscriptionIntegrityIssue(client, userId: str, reason: str, metadata: dict | None = None) -> None:
@@ -77,7 +69,7 @@ def recalculateSubscriptionDays() -> None:
         Exception: For any errors during the recalculation process.
     """
     edgeFunctionUrl = os.environ.get("FREE_TRIAL_EXPIRY_WARNING_EMAIL_URL", "")
-    client = _getSupabaseClient()
+    client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
     now = datetime.now(timezone.utc)
     subscriptions = client.table("subscriptions") \
         .select("id, user_id, current_period_start, current_period_end, status, billing_mode, billing_state") \
