@@ -1,7 +1,7 @@
 {
   "version": "2.0.0",
   "token_to_credit_ratio": 100,
-  "daily_credit_percent": 0.05,
+  "daily_credit_percent": 0.10,
   "quotas": {
     "free": {
       "monthly_credits": 5000,
