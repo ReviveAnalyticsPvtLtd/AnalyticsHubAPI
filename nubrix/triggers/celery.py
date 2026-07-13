@@ -19,7 +19,6 @@ from nubrix.triggers.tasks.billingMetricsTask import BillingMetricsTask
 from nubrix.triggers.tasks.entitlementBoundaryTask import EntitlementBoundaryTask
 from nubrix.triggers.tasks.subscriptionExpiryTask import SubscriptionExpiryTask
 from nubrix.triggers.tasks.creditReconciliationTask import CreditReconciliationTask
-from nubrix.triggers.tasks.creditResetTask import CreditResetTask
 from nubrix.triggers.tasks.billingTask import DailyBillingTask
 from celery.schedules import crontab
 from celery import Celery
@@ -123,10 +122,6 @@ class CeleryWrapper:
         def runSubscriptionExpiry():
             return SubscriptionExpiryTask().execute()
 
-        @self._app.task(name=f"{self.name}.creditReset")
-        def runCreditReset():
-            return CreditResetTask().execute()
-
         @self._app.task(name=f"{self.name}.creditReconciliation")
         def runCreditReconciliation():
             return CreditReconciliationTask().execute()
@@ -163,10 +158,6 @@ class CeleryWrapper:
             "subscription-expiry-daily": {
                 "task": f"{self.name}.subscriptionExpiry",
                 "schedule": crontab(minute=0, hour=1),
-            },
-            "credit-reset-daily": {
-                "task": f"{self.name}.creditReset",
-                "schedule": crontab(minute=30, hour=1),
             },
             "credit-reconciliation-hourly": {
                 "task": f"{self.name}.creditReconciliation",

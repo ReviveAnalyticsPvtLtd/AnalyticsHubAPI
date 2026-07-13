@@ -1,10 +1,12 @@
 {
-  "version": "1.0.0",
+  "version": "2.0.0",
   "token_to_credit_ratio": 100,
+  "daily_credit_percent": 0.05,
   "quotas": {
     "free": {
       "monthly_credits": 5000,
-      "description": "Free-tier and trial users (12-day trial period)"
+      "daily_exempt": true,
+      "description": "Free-tier and trial users (12-day trial period) — full quota across the trial, no daily throttle"
     },
     "pro": {
       "monthly_credits": 50000,
@@ -16,6 +18,7 @@
     },
     "none": {
       "monthly_credits": 0,
+      "daily_exempt": true,
       "description": "No active plan"
     }
   },
