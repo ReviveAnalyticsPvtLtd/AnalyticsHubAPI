@@ -229,21 +229,40 @@ def requireCredits(operationType: str):
         from api.services.credits.creditService import creditService
         from api.services.credits.creditConfig import getOperationMinimum
 
-        remaining = creditService.getRemainingCredits(user.userId)
         minimum = getOperationMinimum(operationType)
+        effective = creditService.getRemainingCredits(user.userId)
 
-        if remaining != -1 and remaining < minimum:
+        if effective != -1 and effective < minimum:
+            snapshot = creditService.getBalanceSnapshot(user.userId)
+            monthlyRemaining = snapshot.get("remainingCredits", 0)
+
+            if monthlyRemaining < minimum:
+                raise HTTPException(
+                    status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                    detail={
+                        "status": "FAILURE",
+                        "message": (
+                            "Monthly quota exhausted. Your credits reset at the start "
+                            f"of your next billing period ({snapshot.get('periodEnd')})."
+                        ),
+                        "errorCode": "MONTHLY_QUOTA_EXHAUSTED",
+                        "remaining": effective,
+                        "required": minimum,
+                        "resetAt": snapshot.get("periodEnd"),
+                    },
+                )
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
                 detail={
                     "status": "FAILURE",
                     "message": (
-                        f"Insufficient credits. You need at least {minimum} credits "
-                        f"for this operation but have {remaining} remaining."
+                        "Daily credit limit reached. Your daily allowance resets at "
+                        f"00:00 UTC ({snapshot.get('dailyResetAt')})."
                     ),
-                    "errorCode": "INSUFFICIENT_CREDITS",
-                    "remaining": remaining,
+                    "errorCode": "DAILY_LIMIT_REACHED",
+                    "remaining": effective,
                     "required": minimum,
+                    "resetAt": snapshot.get("dailyResetAt"),
                 },
             )
         return user

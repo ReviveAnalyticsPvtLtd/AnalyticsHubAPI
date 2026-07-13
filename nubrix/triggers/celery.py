@@ -17,7 +17,6 @@ from nubrix.triggers.tasks.billingMetricsTask import BillingMetricsTask
 from nubrix.triggers.tasks.entitlementBoundaryTask import EntitlementBoundaryTask
 from nubrix.triggers.tasks.subscriptionExpiryTask import SubscriptionExpiryTask
 from nubrix.triggers.tasks.creditReconciliationTask import CreditReconciliationTask
-from nubrix.triggers.tasks.creditResetTask import CreditResetTask
 from nubrix.triggers.tasks.billingTask import DailyBillingTask
 from celery.schedules import crontab
 from celery import Celery
@@ -65,10 +64,6 @@ def runBillingMetrics():
 def runSubscriptionExpiry():
     return SubscriptionExpiryTask().execute()
 
-@celeryApp.task(name=f"{APP_NAME}.creditReset")
-def runCreditReset():
-    return CreditResetTask().execute()
-
 @celeryApp.task(name=f"{APP_NAME}.creditReconciliation")
 def runCreditReconciliation():
     return CreditReconciliationTask().execute()
@@ -83,7 +78,6 @@ celeryApp.conf.beat_schedule = {
     "reconciliation-every-15min": {"task": f"{APP_NAME}.reconciliation", "schedule": crontab(minute="*/15")},
     "billing-metrics-every-30min": {"task": f"{APP_NAME}.billingMetrics", "schedule": crontab(minute="*/30")},
     "subscription-expiry-daily": {"task": f"{APP_NAME}.subscriptionExpiry", "schedule": crontab(minute=0, hour=1)},
-    "credit-reset-daily": {"task": f"{APP_NAME}.creditReset", "schedule": crontab(minute=30, hour=1)},
     "credit-reconciliation-hourly": {"task": f"{APP_NAME}.creditReconciliation", "schedule": crontab(minute=0)},
 }
 celeryApp.conf.timezone = "UTC"

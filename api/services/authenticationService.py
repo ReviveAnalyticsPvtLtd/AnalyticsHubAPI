@@ -332,7 +332,7 @@ class AuthenticationService:
                 raise CustomException(
                     ValueError("Invalid credentials"),
                     statusCode=401,
-                    uiMessage="Email or password is incorrect."
+                    uiMessage="The email or password you entered is incorrect. If you originally signed up using a social provider, please click 'Continue with Google/Microsoft' below."
                 )
             email_confirmed_at = (
                 user.get("email_confirmed_at") or user.get("confirmed_at")
@@ -361,7 +361,7 @@ class AuthenticationService:
                     raise CustomException(
                         ValueError("Invalid credentials"),
                         statusCode=401,
-                        uiMessage="Email or password is incorrect."
+                        uiMessage="The email or password you entered is incorrect. If you originally signed up using a social provider, please click 'Continue with Google/Microsoft' below."
                     )
                 workspaceId = str(uuid.uuid4())
                 self.client.table("Users").insert({
@@ -392,7 +392,7 @@ class AuthenticationService:
                     raise CustomException(
                         ValueError("Invalid credentials"),
                         statusCode=401,
-                        uiMessage="Email or password is incorrect."
+                        uiMessage="The email or password you entered is incorrect. If you originally signed up using a social provider, please click 'Continue with Google/Microsoft' below."
                     )
             sessionStartTime = datetime.datetime.now(datetime.timezone.utc)
             expiresAt = sessionStartTime + datetime.timedelta(hours=24)
