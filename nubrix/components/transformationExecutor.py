@@ -4,14 +4,14 @@ transformationExecutor.py
 This module executes generated transformation code and persists approved
 transformed tables.
 
-Production design: every code execution runs in a forked child process so a
-hard timeout can SIGKILL it. This prevents runaway pandas/numpy work from
-hanging the agent's self-validation loop or OOMing the API worker. The sandbox
-globals are built in the child, so the parent never holds the transformed
-DataFrame in memory except as parquet bytes.
+Production design: every code execution runs in a forked child process.
+The child writes its result to a temp file and the parent reads it back,
+avoiding the multiprocessing Queue pickle overhead for large DataFrames.
+No hard timeout/SIGKILL is enforced by default; set TRANSFORMATION_TIMEOUT_SECONDS
+env var to re-enable one.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["TransformationExecutor"]
 
@@ -21,6 +21,8 @@ from utils.initMethods import fetch_data, fetch_data_pl, scan_data, serializer
 from api.commons import client
 from utils.logger import logger
 import multiprocessing as mp
+import subprocess
+import sys
 import pandas as pd
 import numpy as np
 import datetime
@@ -30,6 +32,8 @@ import math
 import io
 import os
 import re
+import tempfile
+import polars as pl
 
 # Module-level Redis connection pool for reuse
 _redis_pool: redis.ConnectionPool | None = None
@@ -99,107 +103,54 @@ def _sandbox_globals(projectId: str) -> dict:
     return g
 
 
-def _child_execute_validate(projectId: str, pythonCode: str, out_q: mp.Queue, err_q: mp.Queue) -> None:
-    """Child entry: exec the code and put final_df rows on a queue as parquet bytes."""
-    stdout = io.StringIO()
-    stderr = io.StringIO()
-    g = _sandbox_globals(projectId)
-    import sys
-    class _W:
-        def write(self, s): stdout.write(s)
-        def flush(self): pass
-    class _E:
-        def write(self, s): stderr.write(s)
-        def flush(self): pass
-    real_out, real_err = sys.stdout, sys.stderr
-    sys.stdout, sys.stderr = _W(), _E()
+def _run_subprocess(launcher_name: str, payload: dict, timeoutSeconds: int) -> tuple[str, str, int]:
+    """Run a launcher script in a subprocess with close_fds=True (no inherited sockets)."""
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    launcher_path = os.path.join(repo_root, "utils", launcher_name)
+    inherit_envs = (
+        "PATH", "PYTHONPATH", "HOME", "LANG", "LC_ALL", "TZ",
+        "REDIS_HOST", "REDIS_PORT", "REDIS_PASSWORD", "REDIS_DB",
+        "SUPABASE_URL", "SUPABASE_KEY", "DATABASE_URL",
+        "FILE_URL", "STORAGE_URL",
+        "GOOGLE_API_KEY", "GEMINI_API_KEY",
+        "POLARS_MAX_THREADS", "OPENBLAS_NUM_THREADS",
+        "DF_CACHE_MAX_BYTES", "DF_CACHE_MAX_ENTRIES",
+    )
+    clean_env = {k: os.environ[k] for k in inherit_envs if k in os.environ}
+    clean_env["PYTHONPATH"] = repo_root + os.pathsep + clean_env.get("PYTHONPATH", "")
+    proc = subprocess.Popen(
+        [sys.executable, "-s", launcher_path],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=clean_env,
+        close_fds=True,
+    )
     try:
-        exec(pythonCode, g)
-        finalDf = g.get("final_df")
-        if finalDf is None:
-            err_q.put("Transformation code must create a final_df variable.")
-            return
-        # Accept pandas DataFrame, Polars DataFrame, or Polars LazyFrame.
-        # All are normalized to an Arrow table for parquet serialization so the
-        # sandbox can use whichever engine is fastest for the workload.
-        try:
-            import polars as pl
-        except Exception:
-            pl = None
-        try:
-            import pyarrow as pa
-            import pyarrow.parquet as pq
-        except Exception:
-            pa = None
-            pq = None
-        if pl is not None and isinstance(finalDf, pl.LazyFrame):
-            finalDf = finalDf.collect()
-        if pl is not None and isinstance(finalDf, pl.DataFrame):
-            try:
-                arrow_table = finalDf.to_arrow()
-            except Exception:
-                # Fallback: polars → pandas → arrow
-                arrow_table = pa.Table.from_pandas(finalDf.to_pandas(), preserve_index=False) if pa else None
-        elif isinstance(finalDf, pd.DataFrame):
-            arrow_table = pa.Table.from_pandas(finalDf, preserve_index=False) if pa else None
+        if timeoutSeconds and timeoutSeconds > 0:
+            stdout, stderr = proc.communicate(input=json.dumps(payload), timeout=timeoutSeconds)
         else:
-            err_q.put(f"final_df must be a pandas/polars DataFrame or LazyFrame, got {type(finalDf).__name__}.")
-            return
-        buf = io.BytesIO()
-        if pq is not None and arrow_table is not None:
-            pq.write_table(arrow_table, buf, compression="snappy")
-        else:
-            # Fallback to pandas parquet writer
-            df_to_write = arrow_table.to_pandas() if arrow_table is not None else (
-                finalDf.to_pandas() if pl is not None and isinstance(finalDf, pl.DataFrame) else finalDf
-            )
-            df_to_write.to_parquet(buf, compression="snappy")
-        out_q.put(buf.getvalue())
-    except Exception:
-        import traceback
-        err_q.put(traceback.format_exc())
-    finally:
-        sys.stdout, sys.stderr = real_out, real_err
-        try:
-            out_q.put(None)
-        except Exception:
-            pass
-
-
-def _child_execute_inspect(projectId: str, pythonCode: str, out_q: mp.Queue, err_q: mp.Queue) -> None:
-    """Child entry: exec inspection code and put combined stdout+stderr string."""
-    stdout = io.StringIO()
-    stderr = io.StringIO()
-    g = _sandbox_globals(projectId)
-    import sys
-    class _W:
-        def write(self, s): stdout.write(s)
-        def flush(self): pass
-    class _E:
-        def write(self, s): stderr.write(s)
-        def flush(self): pass
-    real_out, real_err = sys.stdout, sys.stderr
-    sys.stdout, sys.stderr = _W(), _E()
-    try:
-        exec(pythonCode, g)
-    except Exception:
-        import traceback
-        stderr.write(traceback.format_exc())
-    finally:
-        sys.stdout, sys.stderr = real_out, real_err
-        out_q.put(stdout.getvalue())
-        err_q.put(stderr.getvalue())
+            stdout, stderr = proc.communicate(input=json.dumps(payload))
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        stdout, stderr = proc.communicate()
+        stderr += f"\nExecution timed out after {timeoutSeconds} seconds.\n"
+    return stdout, stderr, proc.returncode
 
 
 class TransformationExecutor:
     """
-    Execute pandas transformation code and persist approved transformed tables.
+    Execute pandas/polars transformation code and persist approved transformed tables.
+    Uses subprocess isolation (close_fds=True) to avoid fork+Redis deadlocks.
     """
-    def __init__(self, timeoutSeconds: int = 30):
-        """Initialize the executor."""
+    def __init__(self, timeoutSeconds: int | None = None):
+        """Initialize the executor. timeoutSeconds=0/None means no hard timeout."""
+        if timeoutSeconds is None:
+            env_val = os.environ.get("TRANSFORMATION_TIMEOUT_SECONDS", "0")
+            timeoutSeconds = int(env_val) if env_val else 0
         self.timeoutSeconds = timeoutSeconds
         self.client = client
-        self._ctx = mp.get_context("fork")
 
     def _redis_client(self) -> redis.Redis:
         """Create a Redis client using shared connection pool."""
@@ -211,89 +162,78 @@ class TransformationExecutor:
             raise ValueError("Table name must start with a letter and contain only letters, numbers, hyphens, and underscores.")
         return tableName
 
-    def _run_child(self, target, *args) -> tuple[object, object]:
-        """Spawn a child process, enforce a hard timeout, SIGKILL on overrun."""
-        out_q = self._ctx.Queue()
-        err_q = self._ctx.Queue()
-        proc = self._ctx.Process(target=target, args=(*args, out_q, err_q), daemon=False)
-        proc.start()
-        proc.join(timeout=self.timeoutSeconds)
-        if proc.is_alive():
-            logger.warning(f"Transformation child timed out after {self.timeoutSeconds}s; killing PID {proc.pid}.")
-            proc.terminate()
-            proc.join(timeout=2)
-            if proc.is_alive():
-                proc.kill()
-                proc.join(timeout=1)
-            try:
-                out_q.close(); err_q.close()
-            except Exception:
-                pass
-            raise TimeoutError(f"Transformation execution exceeded {self.timeoutSeconds} seconds.")
-        out = None
-        err = None
-        try:
-            out = out_q.get_nowait()
-        except Exception:
-            pass
-        try:
-            err = err_q.get_nowait()
-        except Exception:
-            pass
-        try:
-            out_q.close(); err_q.close()
-        except Exception:
-            pass
-        return out, err
-
     def _execute_code(self, projectId: str, pythonCode: str) -> pd.DataFrame:
         """Execute generated code and return `final_df` (validation run, result discarded)."""
-        parquet_bytes, err = self._run_child(_child_execute_validate, projectId, pythonCode)
-        if err:
-            raise ValueError(str(err))
-        if parquet_bytes is None:
-            raise ValueError("Transformation produced no final_df.")
-        return pd.read_parquet(io.BytesIO(parquet_bytes))
+        fd, result_path = tempfile.mkstemp(suffix=".parquet", prefix="transform_")
+        os.close(fd)
+        try:
+            _, stderr, rc = _run_subprocess(
+                "transform_launcher.py",
+                {"projectId": projectId, "code": pythonCode, "result_path": result_path},
+                self.timeoutSeconds,
+            )
+            if rc != 0:
+                raise ValueError(stderr.strip() or "Transformation execution failed.")
+            if not os.path.exists(result_path) or os.path.getsize(result_path) == 0:
+                raise ValueError("Transformation produced no final_df.")
+            return pd.read_parquet(result_path)
+        finally:
+            try:
+                os.unlink(result_path)
+            except Exception:
+                pass
 
     def executeInspection(self, projectId: str, pythonCode: str) -> str:
-        """
-        Execute inspection code in the sandbox and return stdout + stderr.
-        """
-        out, err = self._run_child(_child_execute_inspect, projectId, pythonCode)
-        output = out or ""
-        errors = err or ""
-        if errors:
-            return f"Stdout:\n{output}\nStderr/Errors:\n{errors}"
-        return output if output else "Inspection executed successfully with no output."
+        """Execute inspection code in the sandbox and return stdout + stderr."""
+        stdout, stderr, rc = _run_subprocess(
+            "inspect_launcher.py",
+            {"projectId": projectId, "code": pythonCode},
+            self.timeoutSeconds,
+        )
+        if rc != 0 and stderr:
+            return f"Stdout:\n{stdout}\nStderr/Errors:\n{stderr}"
+        return stdout if stdout else "Inspection executed successfully with no output."
 
     def executeAndPreview(self, projectId: str, pythonCode: str, tableName: str) -> tuple[list[dict], bytes]:
-        """
-        Execute code and return preview rows plus parquet bytes.
+        """Execute code and return preview rows plus parquet bytes.
+        Uses Polars to read only the first 100 rows for the preview, so heavy
+        datasets don't need to be fully loaded into pandas.
         """
         try:
             self._validate_table_name(tableName)
-            parquetBytes, err = self._run_child(_child_execute_validate, projectId, pythonCode)
-            if err:
-                raise ValueError(str(err))
-            if parquetBytes is None:
-                raise ValueError("Transformation produced no final_df.")
-            finalDf = pd.read_parquet(io.BytesIO(parquetBytes))
-            previewRecords = finalDf.head(100).replace({np.nan: None}).to_dict(orient="records")
-            previewRows = json.loads(json.dumps(previewRecords, default=serializer))
-            return previewRows, parquetBytes
-        except TimeoutError:
-            raise
+            fd, result_path = tempfile.mkstemp(suffix=".parquet", prefix="transform_")
+            os.close(fd)
+            try:
+                _, stderr, rc = _run_subprocess(
+                    "transform_launcher.py",
+                    {"projectId": projectId, "code": pythonCode, "result_path": result_path},
+                    self.timeoutSeconds,
+                )
+                if rc != 0:
+                    raise ValueError(stderr.strip() or "Transformation execution failed.")
+                if not os.path.exists(result_path) or os.path.getsize(result_path) == 0:
+                    raise ValueError("Transformation produced no final_df.")
+                with open(result_path, "rb") as f:
+                    parquetBytes = f.read()
+                previewRecords = (
+                    pl.read_parquet(io.BytesIO(parquetBytes))
+                    .head(100)
+                    .to_dicts()
+                )
+                previewRows = json.loads(json.dumps(previewRecords, default=serializer))
+                return previewRows, parquetBytes
+            finally:
+                try:
+                    os.unlink(result_path)
+                except Exception:
+                    pass
         except Exception as e:
             exception = CustomException(e, statusCode=400, uiMessage=str(e))
             logger.error(exception)
             raise exception
 
     def apply(self, projectId: str, parquetBytes: bytes, tableName: str) -> None:
-        """
-        Upload parquet bytes to Supabase storage and refresh the fetch_data cache.
-        Invalidates the in-process DataFrame LRU + Redis byte cache so the next
-        fetch_data call sees the new table immediately.
-        """
+        """Upload parquet bytes to Supabase storage and refresh the fetch_data cache."""
         try:
             self._validate_table_name(tableName)
             storagePath = f"{projectId}/{tableName}.parquet"
@@ -304,7 +244,6 @@ class TransformationExecutor:
             )
             redisClient = self._redis_client()
             redisClient.set(name=f"{projectId}::{tableName}", value=parquetBytes, ex=300)
-            # Drop the stale in-process DataFrame so reporting/transformation see the new data.
             try:
                 from utils.initMethods import invalidate_data_cache
                 invalidate_data_cache(projectId=projectId, tableName=tableName)

@@ -33,7 +33,10 @@ class REPLManager:
     Concurrency is bounded per project via Redis ZSET semaphore (soft cap).
     """
 
-    def __init__(self, timeoutSeconds: int = 300, maxConcurrentPerProject: int = 50):
+    def __init__(self, timeoutSeconds: int | None = None, maxConcurrentPerProject: int = 50):
+        if timeoutSeconds is None:
+            env_val = os.environ.get("CODE_EXEC_TIMEOUT_SECONDS", "0")
+            timeoutSeconds = int(env_val) if env_val else None
         self.timeoutSeconds = timeoutSeconds
         self.maxConcurrentPerProject = maxConcurrentPerProject
 
@@ -95,12 +98,16 @@ class REPLManager:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                env=clean_env
+                env=clean_env,
+                close_fds=True,
             )
 
             payload = json.dumps({"projectId": projectId, "code": codeString})
             try:
-                stdout, stderr = proc.communicate(input=payload, timeout=self.timeoutSeconds)
+                if self.timeoutSeconds:
+                    stdout, stderr = proc.communicate(input=payload, timeout=self.timeoutSeconds)
+                else:
+                    stdout, stderr = proc.communicate(input=payload)
             except subprocess.TimeoutExpired:
                 proc.kill()
                 stdout, stderr = proc.communicate()
@@ -119,4 +126,4 @@ class REPLManager:
         return stderr
 
 
-replManager = REPLManager(timeoutSeconds=300, maxConcurrentPerProject=50)
+replManager = REPLManager(timeoutSeconds=None, maxConcurrentPerProject=50)

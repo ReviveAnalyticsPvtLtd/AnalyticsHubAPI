@@ -103,7 +103,7 @@ class TransformationService:
         except Exception as e:
             logger.warning(f"Metadata cache read failed for project {projectId}: {e}")
 
-        async with httpx.AsyncClient(timeout=20) as httpClient:
+        async with httpx.AsyncClient(timeout=None) as httpClient:
             response = await httpClient.get(self._metadata_url(projectId))
             response.raise_for_status()
             metadata = response.json()
