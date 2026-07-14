@@ -134,7 +134,7 @@ def _cache_put(key: tuple[str, str], table: "pa.Table") -> None:
         _DF_CACHE.move_to_end(key)
         while (len(_DF_CACHE) > entries_cap or _DF_CACHE_BYTES > bytes_cap) and _DF_CACHE:
             evicted = _DF_CACHE.popitem(last=False)
-            _DF_CACHE_BYTES -= evicted[1]
+            _DF_CACHE_BYTES -= evicted[1][1]
 
 
 def _cache_get(key: tuple[str, str]):
