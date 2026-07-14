@@ -21,6 +21,7 @@ from utils.exceptionHandler import CustomException, raiseHttpException
 from fastapi.responses import ORJSONResponse
 from fastapi import APIRouter, Depends, HTTPException, status
 from api.commons import verifyToken
+from utils.logger import logger
 from jose import jwt
 import os
 
@@ -143,6 +144,38 @@ async def markInvestigated(
             entityId=payload.entityId,
             adminUserId=adminUserId,
             note=payload.note,
+        )
+        return ORJSONResponse(
+            status_code=200,
+            content={"status": "SUCCESS", "data": result},
+        )
+    except CustomException as e:
+        raiseHttpException(e)
+    except Exception as e:
+        raiseHttpException(CustomException(e))
+
+
+@router.post("/credits/force-reset")
+async def forceResetAllQuotas(
+    resetUsage: bool = False,
+    adminUserId=Depends(verifyBillingAdmin),
+):
+    """
+    Recompute daily_quota and monthly_quota for all users from credits.json,
+    then flush all Redis credit hashes so they rebuild with updated values.
+
+    Query params:
+        resetUsage (bool, default false): when true, also zero out daily_used
+            for all users, giving everyone a fresh daily bucket immediately.
+            Monthly usage and billing period are left untouched.
+    """
+    try:
+        from api.services.credits.creditService import creditService
+
+        result = creditService.forceResetAllQuotas(resetUsage=resetUsage)
+        logger.info(
+            f"Force credit reset triggered by admin={adminUserId}, "
+            f"resetUsage={resetUsage}: {result}"
         )
         return ORJSONResponse(
             status_code=200,

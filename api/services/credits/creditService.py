@@ -419,12 +419,13 @@ class CreditService:
     def reconcile(self, userId: str) -> None:
         """Safety-net sync of the Redis hash back to Supabase (guards eviction/drift)."""
         try:
+            self.syncQuotaFromConfig(userId)
+
             state = self._peek(userId)
             row = self._dbRow(userId)
             if not row:
                 return
             if state is None:
-                # Redis missing — rebuild from DB.
                 self._ensureHash(userId)
                 return
             mquota = row.get("monthly_quota", 0)
@@ -488,6 +489,112 @@ class CreditService:
         except Exception as e:
             logger.warning(f"getBalanceSnapshot failed for userId={userId}: {e}")
             return defaults
+
+
+    def forceResetAllQuotas(self, resetUsage: bool = False) -> dict:
+        """
+        Admin-triggered bulk reset.
+
+        Always: recompute daily_quota and monthly_quota from config for every
+        credit_balances row, then flush all Redis credit hashes.
+
+        When resetUsage=True: also zero out daily_used and reset daily_stamp
+        — equivalent to giving every user a fresh daily bucket mid-cycle.
+        Monthly usage (used_credits, remaining_credits, billing period) is
+        left untouched.
+
+        Returns:
+            dict with updatedCount, redisDeletedCount, and mode.
+        """
+        try:
+            rows = (
+                self.supabase.table("credit_balances")
+                .select("user_id, plan_tier")
+                .execute()
+            )
+            if not rows.data:
+                return {"updatedCount": 0, "redisDeletedCount": 0, "mode": "none"}
+
+            now = datetime.now(timezone.utc)
+            updatedCount = 0
+            for row in rows.data:
+                userId = row["user_id"]
+                planTier = row.get("plan_tier", "none")
+                newDcap = getDailyCapForPlan(planTier)
+                newQuota = getQuotaForPlan(planTier)
+
+                payload = {
+                    "daily_quota": newDcap,
+                    "monthly_quota": newQuota,
+                    "updated_at": now.isoformat(),
+                }
+
+                if resetUsage:
+                    payload.update({
+                        "daily_used": 0,
+                        "daily_stamp": now.date().isoformat(),
+                        "daily_reset_at": now.isoformat(),
+                    })
+
+                try:
+                    self.supabase.table("credit_balances").update(
+                        payload
+                    ).eq("user_id", userId).execute()
+                    updatedCount += 1
+                except Exception as e:
+                    logger.warning(f"Force quota update failed for userId={userId}: {e}")
+
+            redisDeletedCount = 0
+            try:
+                r = self._redis()
+                keys = list(r.scan_iter("credits:v2:*"))
+                if keys:
+                    redisDeletedCount = r.delete(*keys)
+            except Exception as e:
+                logger.warning(f"Redis bulk delete failed during force reset: {e}")
+
+            mode = "quotaSync+usageReset" if resetUsage else "quotaSync"
+            logger.info(
+                f"Force quota reset complete — mode={mode}, "
+                f"dbUpdated={updatedCount}, redisDeleted={redisDeletedCount}"
+            )
+            return {
+                "updatedCount": updatedCount,
+                "redisDeletedCount": int(redisDeletedCount),
+                "mode": mode,
+            }
+        except Exception as e:
+            logger.error(f"forceResetAllQuotas failed: {e}")
+            raise
+
+    def syncQuotaFromConfig(self, userId: str) -> None:
+        """
+        Ensure a single user's daily_quota matches the current config.
+        Called during reconcile to prevent long-term drift.
+        """
+        try:
+            row = self._dbRow(userId)
+            if not row:
+                return
+            planTier = row.get("plan_tier", "none")
+            expectedDcap = getDailyCapForPlan(planTier)
+            currentDcap = row.get("daily_quota", 0)
+            if currentDcap != expectedDcap:
+                self.supabase.table("credit_balances").update({
+                    "daily_quota": expectedDcap,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }).eq("user_id", userId).execute()
+                try:
+                    r = self._redis()
+                    r.hset(self._redisKey(userId), "dcap", expectedDcap)
+                except Exception:
+                    pass
+                logger.info(
+                    f"Quota drift corrected for userId={userId}: "
+                    f"{currentDcap} -> {expectedDcap}"
+                )
+        except Exception as e:
+            logger.warning(f"syncQuotaFromConfig failed for userId={userId}: {e}")
 
 
 creditService = CreditService()
