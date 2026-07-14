@@ -17,7 +17,7 @@ from api.services.transformationService import transformationService
 from utils.exceptionHandler import CustomException, raiseHttpException
 from fastapi.responses import ORJSONResponse, StreamingResponse
 from fastapi import APIRouter, Depends
-from api.commons import verifyToken, verifyUser, requireActiveSubscription, requireCredits, UserContext
+from api.commons import verifyToken, verifyProjectOwnership, verifyProjectOwnershipDirect, verifyUser, requireActiveSubscription, requireCredits, UserContext
 
 
 router = APIRouter()
@@ -31,6 +31,7 @@ async def createTransformation(
     projectId: str,
     request: CreateTransformationRequest,
     user: UserContext = Depends(requireActiveSubscription),
+    userId: str = Depends(verifyProjectOwnership),
 ):
     """
     Create a new transformation workspace for a project.
@@ -47,7 +48,7 @@ async def createTransformation(
 
 
 @router.get("")
-async def listTransformations(projectId: str, token=Depends(verifyToken)):
+async def listTransformations(projectId: str, userId: str = Depends(verifyProjectOwnership)):
     """
     List all transformations for a project.
     """
@@ -62,7 +63,7 @@ async def listTransformations(projectId: str, token=Depends(verifyToken)):
 async def getTransformationMessages(
     transformation_id: str,
     projectId: str,
-    token=Depends(verifyToken),
+    userId: str = Depends(verifyProjectOwnership),
 ):
     """
     Return persisted chat history for a transformation.
@@ -83,6 +84,7 @@ async def sendTransformationMessage(
     projectId: str,
     request: SendMessageRequest,
     user: UserContext = Depends(requireCredits("transformation_message")),
+    userId: str = Depends(verifyProjectOwnership),
 ):
     """
     Send a user message and stream the assistant response over SSE.
@@ -104,6 +106,7 @@ async def approveTransformationMessage(
     message_id: str,
     projectId: str,
     user: UserContext = Depends(requireActiveSubscription),
+    userId: str = Depends(verifyProjectOwnership),
 ):
     """
     Approve a Mermaid artifact and return a transformed table preview.
@@ -125,6 +128,7 @@ async def applyTransformationMessage(
     message_id: str,
     projectId: str,
     user: UserContext = Depends(requireActiveSubscription),
+    userId: str = Depends(verifyProjectOwnership),
 ):
     """
     Persist an approved transformation output as a project table.
@@ -147,6 +151,7 @@ async def rollbackTransformation(
     projectId: str,
     request: RollbackRequest,
     user: UserContext = Depends(requireActiveSubscription),
+    userId: str = Depends(verifyProjectOwnership),
 ):
     """
     Rollback workspace state and messages to a specific message ID.
@@ -168,7 +173,7 @@ async def renameTransformation(
     transformation_id: str,
     projectId: str,
     request: RenameTransformationRequest,
-    token=Depends(verifyToken),
+    userId: str = Depends(verifyProjectOwnership),
 ):
     """
     Rename an existing transformation workspace.
@@ -189,6 +194,7 @@ async def deleteTransformation(
     transformation_id: str,
     projectId: str,
     user: UserContext = Depends(verifyUser),
+    userId: str = Depends(verifyProjectOwnership),
 ):
     """
     Delete a transformation workspace and its associated parquet file if it exists.

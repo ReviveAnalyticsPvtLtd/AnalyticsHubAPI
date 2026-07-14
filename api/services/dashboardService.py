@@ -64,7 +64,7 @@ class DashboardService:
         return "```python\n" + code.strip() + "\n```"
 
     @staticmethod
-    def _applyFilterToAWidget(widget: dict, filters: list, codeExecutor: callable) -> dict:
+    def _applyFilterToAWidget(widget: dict, filters: list, codeExecutor: callable, projectId: str) -> dict:
         """
         Apply filters to a widget's generated code and update its data accordingly.
         """
@@ -77,7 +77,7 @@ class DashboardService:
         ast.fix_missing_locations(tree)
         code = ast.unparse(tree)
         code = DashboardService._addCodeFences(code)
-        result = codeExecutor.run(code)
+        result = codeExecutor.run(code, projectId=projectId)
         widget["generatedCode"] = code
         try:
             resultDict = json.loads(result)
@@ -259,14 +259,16 @@ class DashboardService:
             elif (details.filters) and (not details.refresh):
                 widgets = pageInfo.get("widgets")
                 numWidgets = len(widgets)
-                with ProcessPoolExecutor(max_workers = 4) as executor:
-                    results = executor.map(self._applyFilterToAWidget, widgets, [details.filters] * numWidgets, [replManager] * numWidgets)
+                from utils.initMethods import get_report_pool
+                executor = get_report_pool()
+                results = executor.map(self._applyFilterToAWidget, widgets, [details.filters] * numWidgets, [replManager] * numWidgets, [details.projectId] * numWidgets)
                 pageInfo["widgets"] = [x for x in results]
             elif (not details.filters) and (details.refresh):
                 widgets = pageInfo.get("widgets")
                 numWidgets = len(widgets)
-                with ProcessPoolExecutor(max_workers = 4) as executor:
-                    results = executor.map(self._applyFilterToAWidget, widgets, [details.filters] * numWidgets, [replManager] * numWidgets)
+                from utils.initMethods import get_report_pool
+                executor = get_report_pool()
+                results = executor.map(self._applyFilterToAWidget, widgets, [details.filters] * numWidgets, [replManager] * numWidgets, [details.projectId] * numWidgets)
                 pageInfo["widgets"] = [x for x in results] 
                 prevPageInfo = dashboardConfig.get(details.page)
                 for prevWidget in prevPageInfo.get("widgets"):

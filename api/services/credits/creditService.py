@@ -80,6 +80,8 @@ if eff < 0 then eff = 0 end
 return {eff, mrem, dused}
 """
 
+_redis_pool: redis.ConnectionPool | None = None
+
 
 class CreditService:
     """Per-user two-bucket credit balances backed by Redis + Supabase."""
@@ -100,11 +102,14 @@ class CreditService:
         self._supabase = value
 
     def _redis(self) -> redis.Redis:
-        return redis.Redis(
-            host=os.environ["REDIS_HOST"],
-            port=int(os.environ["REDIS_PORT"]),
-            password=os.environ["REDIS_PASSWORD"],
-        )
+        global _redis_pool
+        if _redis_pool is None:
+            _redis_pool = redis.ConnectionPool(
+                host=os.environ["REDIS_HOST"],
+                port=int(os.environ["REDIS_PORT"]),
+                password=os.environ["REDIS_PASSWORD"],
+            )
+        return redis.Redis(connection_pool=_redis_pool)
 
     @staticmethod
     def _redisKey(userId: str) -> str:

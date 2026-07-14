@@ -178,6 +178,89 @@ class ReportingService:
         filters = kwargs.get("filters")
         hasFilters = filters and len(filters) > 0
         
+        # Route to Polars lazy for large/medium tables to avoid loading
+        # the full dataset into pandas. Small tables use eager pandas.
+        from utils.initMethods import classify_table_size
+        _AGG_POLARS = {
+            "sum": "sum", "mean": "mean", "median": "median",
+            "max": "max", "min": "min", "count": "count",
+            "std": "std", "var": "var",
+        }
+
+        def _use_lazy(table_name):
+            if not table_name or isinstance(table_name, list):
+                return False
+            try:
+                info = classify_table_size(projectId, table_name)
+                return info.get("size_class") in ("large", "massive")
+            except Exception:
+                return False
+
+        def _polars_agg(lf, x, y, agg):
+            import polars as pl
+            expr = getattr(pl.col(y), agg)()
+            return lf.group_by(x).agg(expr.alias(y)).collect()
+
+        single_table = tablesUsed if not isinstance(tablesUsed, list) else None
+        use_lazy = _use_lazy(single_table) and not hasFilters and chartType != "pivot"
+
+        if use_lazy:
+            import polars as pl
+            lf = scan_data(projectId, single_table)
+            if aggregationMetric in _AGG_POLARS:
+                finalResult = _polars_agg(lf, xAxis, yAxis, _AGG_POLARS[aggregationMetric])
+            else:
+                finalResult = lf.select(pl.col(xAxis), pl.col(yAxis)).collect()
+            # Build response from Polars DataFrame
+            if chartType in ["bar", "line", "radar", "polarArea"]:
+                return {
+                    "chartType": chartType,
+                    "title": f"{chartType.capitalize()} Chart of {xAxis} vs {yAxis}",
+                    "xLabels": xAxis, "yLabels": yAxis,
+                    "data": {
+                        "labels": finalResult[xAxis].to_list(),
+                        "datasets": [{"label": f"{aggregationMetric} of {yAxis}", "data": finalResult[yAxis].to_list()}],
+                    },
+                }
+            elif chartType in ["pie", "doughnut"]:
+                return {
+                    "chartType": chartType,
+                    "title": f"{chartType.capitalize()} Chart of {xAxis} vs {yAxis}",
+                    "data": {
+                        "labels": finalResult[xAxis].to_list(),
+                        "datasets": [{"label": f"{aggregationMetric} of {yAxis}", "data": finalResult[yAxis].to_list()}],
+                    },
+                }
+            elif chartType == "scatter":
+                return {
+                    "chartType": chartType,
+                    "title": f"{chartType.capitalize()} Chart of {xAxis} vs {yAxis}",
+                    "xLabels": xAxis, "yLabels": yAxis,
+                    "data": {
+                        "datasets": [{"label": f"{aggregationMetric} of {yAxis}",
+                            "data": [{"x": r[xAxis], "y": r[yAxis]} for r in finalResult.to_dicts()]}],
+                    },
+                }
+            elif chartType == "card":
+                val = finalResult[yAxis].to_list()[0] if len(finalResult) > 0 else 0
+                return {
+                    "chartType": "card",
+                    "title": f"Card Chart of {xAxis} vs {yAxis}",
+                    "label": f"{aggregationMetric} of {yAxis}",
+                    "data": val,
+                }
+            elif chartType == "table":
+                cols = kwargs.get("selectedColumns") or finalResult.columns
+                return {
+                    "chartType": "table",
+                    "title": f"{dataSourceName} Data",
+                    "data": finalResult.select(cols).to_dicts(),
+                }
+            else:
+                # Fall through to pandas path for unsupported chart types
+                pass
+
+        # --- Eager pandas path (small tables, blends, filters, pivot) ---
         if isinstance(tablesUsed, list):
             allTables = [fetch_data(projectId, x) for x in tablesUsed]
             result = allTables[0]
@@ -645,7 +728,8 @@ class ReportingService:
         try:
             allFiles = [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = panelChartDetails.projectId)]
             if "".join([panelChartDetails.dataSource, ".parquet"]) in allFiles:
-                response = self._generatePanelChart(
+                response = await asyncio.to_thread(
+                    self._generatePanelChart,
                     projectId=panelChartDetails.projectId,
                     chartType=panelChartDetails.chartType,
                     xAxis=panelChartDetails.xAxis,
@@ -685,7 +769,8 @@ class ReportingService:
                 tablesUsed = blendConfig[panelChartDetails.dataSource].get("tables")
                 joinTypes = blendConfig[panelChartDetails.dataSource].get("joinTypes")
                 blendOn = blendConfig[panelChartDetails.dataSource].get("blendOn")
-                response = self._generatePanelChart(
+                response = await asyncio.to_thread(
+                    self._generatePanelChart,
                     projectId=panelChartDetails.projectId,
                     chartType=panelChartDetails.chartType,
                     xAxis=panelChartDetails.xAxis,

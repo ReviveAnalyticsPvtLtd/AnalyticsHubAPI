@@ -12,7 +12,8 @@ from utils.exceptionHandler import CustomException, raiseHttpException
 from api.services.blendService import blendService
 from fastapi.responses import ORJSONResponse
 from fastapi import APIRouter, Depends
-from api.commons import verifyToken
+import asyncio
+from api.commons import verifyToken, verifyProjectOwnership, verifyProjectOwnershipDirect, verifyUser, UserContext
 from api.models import (
     GetFieldsFromSources,
     CreateDataBlend
@@ -24,55 +25,57 @@ Router for blend-related endpoints.
 """
     
 @router.post("/createDataBlend")
-async def createDataBlend(blendDetails: CreateDataBlend, token = Depends(verifyToken)):
+async def createDataBlend(blendDetails: CreateDataBlend, user: UserContext = Depends(verifyUser)):
     """
     Create a new data blend using the provided blend details.
 
     Args:
         blendDetails (CreateDataBlend): The details required to create a data blend.
-        token: Authorization token dependency.
+        user: UserContext dependency.
 
     Returns:
         ORJSONResponse: Success or error message.
     """
     try:
-        blendService.createDataBlend(blendDetails = blendDetails)
+        await verifyProjectOwnershipDirect(blendDetails.projectId, user.userId)
+        await asyncio.to_thread(blendService.createDataBlend, blendDetails = blendDetails)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Blend created successfully."})
     except CustomException as e:
         raiseHttpException(e)
 
 @router.get("/getDataSources")
-async def getDataSources(projectId: str, token = Depends(verifyToken)):
+async def getDataSources(projectId: str, userId: str = Depends(verifyProjectOwnership)):
     """
     Retrieve available data sources for a given project.
 
     Args:
         projectId (str): The ID of the project to fetch data sources for.
-        token: Authorization token dependency.
+        userId: Verified user identifier.
 
     Returns:
         ORJSONResponse: List of data sources or error message.
     """
     try:
-        dataSources = blendService.getDataSources(projectId = projectId)
+        dataSources = await asyncio.to_thread(blendService.getDataSources, projectId = projectId)
         return ORJSONResponse(status_code = 200, content = dataSources)
     except CustomException as e:
         raiseHttpException(e)
 
 @router.post("/getFieldsFromSources")
-async def getFieldsFromSources(details: GetFieldsFromSources, token = Depends(verifyToken)):
+async def getFieldsFromSources(details: GetFieldsFromSources, user: UserContext = Depends(verifyUser)):
     """
     Get fields from the specified data sources.
 
     Args:
         details (GetFieldsFromSources): The details specifying which sources to fetch fields from.
-        token: Authorization token dependency.
+        user: UserContext dependency.
 
     Returns:
         ORJSONResponse: List of fields or error message.
     """
     try:
-        response = blendService.getFieldsFromSources(details = details)
+        await verifyProjectOwnershipDirect(details.projectId, user.userId)
+        response = await asyncio.to_thread(blendService.getFieldsFromSources, details = details)
         return ORJSONResponse(status_code = 200, content = response)
     except CustomException as e:
         raiseHttpException(e)

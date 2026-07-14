@@ -22,7 +22,7 @@ from api.models import GenerateChartInput, PanelChartDetails, GenerateChartsInPa
 from api.services.reportingService import reportingService
 from fastapi.responses import ORJSONResponse
 from fastapi import APIRouter, Depends
-from api.commons import verifyToken, requireCredits, UserContext
+from api.commons import verifyToken, verifyProjectOwnership, verifyProjectOwnershipDirect, requireCredits, UserContext, verifyUser
 
 router = APIRouter()
 """
@@ -45,19 +45,20 @@ async def generateChart(chartDetails: GenerateChartInput, user: UserContext = De
         HTTPException: If an error occurs during chart generation, returns a 500 status code with the error details.
     """
     try:
+        await verifyProjectOwnershipDirect(chartDetails.projectId, user.userId)
         response = await reportingService.generateChart(chartDetails=chartDetails, userId=user.userId)
         return ORJSONResponse(status_code = 200, content = response)
     except CustomException as e:
         raiseHttpException(e)
     
 @router.post("/generatePanelChart")
-async def generatePanelChart(panelChartDetails: PanelChartDetails, token=Depends(verifyToken)):
+async def generatePanelChart(panelChartDetails: PanelChartDetails, user: UserContext = Depends(verifyUser)):
     """
     Generate a panel chart (multiple charts in a single view) based on the provided panel chart details.
 
     Args:
         panelChartDetails (PanelChartDetails): The details required to generate the panel chart, including data sources, layout, and configuration for each sub-chart.
-        token: Authorization token dependency, automatically injected by FastAPI for authentication.
+        user: UserContext dependency.
 
     Returns:
         ORJSONResponse: A response containing the generated panel chart data in JSON format, or an error message if generation fails.
@@ -66,6 +67,7 @@ async def generatePanelChart(panelChartDetails: PanelChartDetails, token=Depends
         HTTPException: If an error occurs during panel chart generation, returns a 500 status code with the error details.
     """
     try:
+        await verifyProjectOwnershipDirect(panelChartDetails.projectId, user.userId)
         response = await reportingService.generatePanelChart(panelChartDetails = panelChartDetails)
         return ORJSONResponse(status_code = 200, content = response)
     except CustomException as e:
@@ -87,19 +89,20 @@ async def generateAndExportChartsInParallel(details: GenerateChartsInParallel, u
         HTTPException: If an error occurs during chart generation, returns a 500 status code with the error details.
     """
     try:
+        await verifyProjectOwnershipDirect(details.projectId, user.userId)
         response = await reportingService.generateChartsInParallel(details=details, userId=user.userId)
         return ORJSONResponse(status_code = 200, content = {"message": "Charts generated successfully", "pageData": response})
     except CustomException as e:
         raiseHttpException(e)
 
 @router.post("/saveQuery")
-async def saveQuery(details: SaveQuery, token = Depends(verifyToken)):
+async def saveQuery(details: SaveQuery, user: UserContext = Depends(verifyUser)):
     """
     Save a user-marked favourite query to a queryConfig.json file in the project's Supabase storage folder.
 
     Args:
         details (SaveQuery): The details containing the project ID and the favourite query string.
-        token: Authorization token dependency, automatically injected by FastAPI for authentication.
+        user: UserContext dependency.
 
     Returns:
         ORJSONResponse: A success response containing the assigned query ID, or an error message if saving fails.
@@ -108,25 +111,23 @@ async def saveQuery(details: SaveQuery, token = Depends(verifyToken)):
         HTTPException: If an error occurs during query saving, returns a 500 status code with the error details.
     """
     try:
+        await verifyProjectOwnershipDirect(details.projectId, user.userId)
         queryId = await reportingService.saveQuery(details = details)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Query saved successfully.", "queryId": queryId})
     except CustomException as e:
         raiseHttpException(e)
 
 @router.get("/getQueries/{projectId}")
-async def getQueries(projectId: str, token = Depends(verifyToken)):
+async def getQueries(projectId: str, userId: str = Depends(verifyProjectOwnership)):
     """
     Retrieve all saved favourite queries for a given project.
 
     Args:
         projectId (str): The ID of the project.
-        token: Authorization token dependency, automatically injected by FastAPI for authentication.
+        userId: Verified user identifier.
 
     Returns:
         ORJSONResponse: A response containing the saved queries dictionary, or an error message if retrieval fails.
-
-    Raises:
-        HTTPException: If an error occurs during retrieval, returns a 500 status code with the error details.
     """
     try:
         queries = await reportingService.getQueries(projectId = projectId)
@@ -135,21 +136,19 @@ async def getQueries(projectId: str, token = Depends(verifyToken)):
         raiseHttpException(e)
 
 @router.delete("/deleteQuery")
-async def deleteQuery(details: DeleteQuery, token = Depends(verifyToken)):
+async def deleteQuery(details: DeleteQuery, user: UserContext = Depends(verifyUser)):
     """
     Delete a saved favourite query from the project's queryConfig.json file.
 
     Args:
         details (DeleteQuery): The details containing the project ID and the query ID to delete.
-        token: Authorization token dependency, automatically injected by FastAPI for authentication.
+        user: UserContext dependency.
 
     Returns:
         ORJSONResponse: A success response confirming deletion, or an error message if deletion fails.
-
-    Raises:
-        HTTPException: If an error occurs during deletion, returns a 500 status code with the error details.
     """
     try:
+        await verifyProjectOwnershipDirect(details.projectId, user.userId)
         await reportingService.deleteQuery(details = details)
         return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "message": "Query deleted successfully."})
     except CustomException as e:

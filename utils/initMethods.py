@@ -26,6 +26,7 @@ import io
 import math
 import os
 import redis
+import threading
 from collections import OrderedDict
 from typing import Iterable
 
@@ -89,6 +90,18 @@ def _redis_pool() -> redis.ConnectionPool:
 # built only at the call site.
 _DF_CACHE: "OrderedDict[tuple[str, str], tuple[pa.Table, int]]" = OrderedDict()
 _DF_CACHE_BYTES = 0
+_DF_CACHE_LOCK = threading.Lock()
+
+_REPORT_POOL = None
+
+def get_report_pool():
+    global _REPORT_POOL
+    if _REPORT_POOL is None:
+        from concurrent.futures import ProcessPoolExecutor
+        from utils.sizing import parallel_chart_workers
+        workers = parallel_chart_workers()
+        _REPORT_POOL = ProcessPoolExecutor(max_workers=workers)
+    return _REPORT_POOL
 
 
 def _df_bytes(table: "pa.Table") -> int:
@@ -113,22 +126,24 @@ def _cache_put(key: tuple[str, str], table: "pa.Table") -> None:
     size = _df_bytes(table)
     if size > bytes_cap:
         return
-    if key in _DF_CACHE:
-        _DF_CACHE_BYTES -= _DF_CACHE.pop(key)[1]
-    _DF_CACHE[key] = (table, size)
-    _DF_CACHE_BYTES += size
-    _DF_CACHE.move_to_end(key)
-    while (len(_DF_CACHE) > entries_cap or _DF_CACHE_BYTES > bytes_cap) and _DF_CACHE:
-        evicted = _DF_CACHE.popitem(last=False)
-        _DF_CACHE_BYTES -= evicted[1]
+    with _DF_CACHE_LOCK:
+        if key in _DF_CACHE:
+            _DF_CACHE_BYTES -= _DF_CACHE.pop(key)[1]
+        _DF_CACHE[key] = (table, size)
+        _DF_CACHE_BYTES += size
+        _DF_CACHE.move_to_end(key)
+        while (len(_DF_CACHE) > entries_cap or _DF_CACHE_BYTES > bytes_cap) and _DF_CACHE:
+            evicted = _DF_CACHE.popitem(last=False)
+            _DF_CACHE_BYTES -= evicted[1]
 
 
 def _cache_get(key: tuple[str, str]):
-    entry = _DF_CACHE.get(key)
-    if entry is None:
-        return None
-    _DF_CACHE.move_to_end(key)
-    return entry[0]
+    with _DF_CACHE_LOCK:
+        entry = _DF_CACHE.get(key)
+        if entry is None:
+            return None
+        _DF_CACHE.move_to_end(key)
+        return entry[0]
 
 
 def serializer(obj):
@@ -201,8 +216,12 @@ def _fetch_data_from_supabase(projectId: str, tableName: str) -> "pa.Table":
     """Cold-path reader that pulls the full unfiltered table for caching."""
     if pq is None:
         raise RuntimeError("pyarrow is required.")
+    import io
+    import httpx
     url = os.environ["FILE_URL"].format(projectId=projectId, fileName=tableName)
-    return pq.ParquetFile(url).read()
+    resp = httpx.get(url, timeout=60, follow_redirects=True)
+    resp.raise_for_status()
+    return pq.read_table(io.BytesIO(resp.content))
 
 
 def _apply_filters_in_arrow_if_possible(table: "pa.Table", tableName: str, filters: list) -> "pa.Table":
@@ -296,12 +315,22 @@ def _fetch_data_from_redis(redis_key: str) -> "pa.Table | None":
 
 
 def _store_to_redis(redis_key: str, table: "pa.Table") -> None:
+    num_rows = table.num_rows
+    if num_rows > 100000:
+        # Skip caching entirely for large/massive tables to prevent Redis OOM
+        return
+
+    if num_rows <= 10000:
+        ttl = 600  # 10 minutes for small tables
+    else:
+        ttl = 300  # 5 minutes for medium tables
+
     r = redis.Redis(connection_pool=_redis_pool())
     try:
         sink = pa.BufferOutputStream()
         with pa.ipc.new_stream(sink, table.schema) as writer:
             writer.write_table(table)
-        r.set(name=redis_key, value=sink.getvalue().to_pybytes(), ex=60)
+        r.set(name=redis_key, value=sink.getvalue().to_pybytes(), ex=ttl)
     except Exception:
         pass
 
@@ -335,13 +364,13 @@ def fetch_data(projectId: str, tableName: str, baseFilters: list | None = None, 
             # Cold path: scan without pushdown so the cached table is always the
             # complete dataset. Filter translation + pushdown live in
             # ``_apply_filters_in_arrow_if_possible`` for in-memory use.
-            table = _fetch_data_from_supabase(projectId, tableName, None)
+            table = _fetch_data_from_supabase(projectId, tableName)
             _store_to_redis(redis_key, table)
         _cache_put(cache_key, table)
 
     if filters:
         table = _apply_filters_in_arrow_if_possible(table, tableName, filters)
-    return table.to_pandas().copy()
+    return table.to_pandas()
 
 
 def fetch_data_pl(projectId: str, tableName: str) -> "pl.DataFrame":
@@ -449,12 +478,69 @@ def classify_table_size(projectId: str, tableName: str) -> dict:
 def invalidate_data_cache(projectId: str | None = None, tableName: str | None = None) -> None:
     """Drop cached tables for a project/table. Call after transformations apply."""
     global _DF_CACHE_BYTES
-    if projectId is None and tableName is None:
-        _DF_CACHE.clear()
-        _DF_CACHE_BYTES = 0
+    with _DF_CACHE_LOCK:
+        if projectId is None and tableName is None:
+            _DF_CACHE.clear()
+            _DF_CACHE_BYTES = 0
+            return
+        to_drop = [key for key in _DF_CACHE
+                   if (projectId is None or key[0] == projectId)
+                   and (tableName is None or key[1] == tableName)]
+        for key in to_drop:
+            _DF_CACHE_BYTES -= _DF_CACHE.pop(key)[1]
+
+
+def compute_rollups(projectId: str, tableName: str) -> None:
+    """Pre-compute common group-by rollups for large/medium tables and cache
+    in Redis. Called after data load or transformation. For small tables this
+    is a no-op (eager fetch is fast enough).
+
+    Stores per-column aggregations as JSON in Redis under
+    ``{projectId}::rollup::{tableName}::{agg}::{column}`` with 1h TTL.
+    """
+    if pq is None or pl is None:
         return
-    to_drop = [key for key in _DF_CACHE
-               if (projectId is None or key[0] == projectId)
-               and (tableName is None or key[1] == tableName)]
-    for key in to_drop:
-        _DF_CACHE_BYTES -= _DF_CACHE.pop(key)[1]
+    try:
+        info = classify_table_size(projectId, tableName)
+        if info.get("size_class") in ("small", "unknown"):
+            return
+        table = _cache_get((projectId, tableName))
+        if table is None:
+            table = _fetch_data_from_redis(f"{projectId}::{tableName}")
+        if table is None:
+            return
+        df = pl.from_arrow(table)
+        numeric_cols = [c for c in df.columns if df[c].dtype.is_numeric()]
+        categorical_cols = [c for c in df.columns if not df[c].dtype.is_numeric()]
+        if not numeric_cols or not categorical_cols:
+            return
+        r = redis.Redis(connection_pool=_redis_pool())
+        import orjson
+        for cat_col in categorical_cols[:20]:
+            for num_col in numeric_cols[:20]:
+                for agg in ("sum", "mean", "count"):
+                    try:
+                        rollup = df.group_by(cat_col).agg(
+                            getattr(pl.col(num_col), agg)().alias(num_col)
+                        ).to_dicts()
+                        key = f"{projectId}::rollup::{tableName}::{agg}::{cat_col}::{num_col}"
+                        r.setex(key, 3600, orjson.dumps(rollup))
+                    except Exception:
+                        pass
+        logger.info(f"Rollups computed for {projectId}/{tableName} ({len(categorical_cols)}×{len(numeric_cols)} cols).")
+    except Exception as e:
+        logger.warning(f"Rollup computation failed for {projectId}/{tableName}: {e}")
+
+
+def get_rollup(projectId: str, tableName: str, agg: str, cat_col: str, num_col: str):
+    """Retrieve a pre-computed rollup from Redis, or None if not cached."""
+    try:
+        r = redis.Redis(connection_pool=_redis_pool())
+        import orjson
+        key = f"{projectId}::rollup::{tableName}::{agg}::{cat_col}::{num_col}"
+        raw = r.get(key)
+        if raw:
+            return orjson.loads(raw)
+    except Exception:
+        pass
+    return None

@@ -76,22 +76,35 @@ class ReportingToolWorkflow:
         # Deterministic routing: per-table size class drives fetch_data_pl
         # -> scan_data for massive tables so we always get lazy pushdown.
         response = self._route_large_tables_to_scan(response, pid)
+        # Normalize every json.dumps() call to have exactly one default=serializer
+        # (LLM sometimes emits default=str or duplicate default= kwargs → SyntaxError).
+        import re as _re
+        def _fix_dumps(m):
+            inner = m.group(1)
+            inner = _re.sub(r',?\s*default=\w+\s*,?', ',', inner)
+            inner = _re.sub(r',\s*,', ',', inner)
+            inner = _re.sub(r'^\s*,\s*', '', inner)
+            inner = _re.sub(r',\s*$', '', inner).rstrip()
+            if inner and not inner.endswith(','):
+                inner += ','
+            return f'json.dumps({inner} default=serializer)'
+        response = _re.sub(r'json\.dumps\(([^)]*)\)', _fix_dumps, response)
         return {
-            "generatedCode": response.replace('indent=4', 'default=serializer')
+            "generatedCode": response,
         }
 
     @staticmethod
     def _route_large_tables_to_scan(code: str, projectId: str) -> str:
         """Rewrite eager ``fetch_data_pl("<pid>", "<table>")`` -> lazy ``scan_data(...)``.
 
-        Only applied to tables classified as 'large' or 'massive' (>=100k rows)
-        so small tables keep the eager fast-path. No-op when the underlying
+        Only applied to tables with rows >= LAZY_FETCH_ROW_THRESHOLD (default 1M)
+        so small/medium tables keep the eager fast-path. No-op when the underlying
         cache lookup misses (no information beats a bad heuristic).
         """
         import re
         from utils.initMethods import classify_table_size
         try:
-            threshold = int(os.getenv("LAZY_FETCH_ROW_THRESHOLD", "100000"))
+            threshold = int(os.getenv("LAZY_FETCH_ROW_THRESHOLD", "1000000"))
         except Exception:
             threshold = 100000
         if threshold <= 0:
@@ -110,7 +123,7 @@ class ReportingToolWorkflow:
         Executes the generated code in a Python sandbox environment and captures the output.
         """
         code = _remove_code_fences(state["generatedCode"])
-        response = self.replManager.run(code)
+        response = self.replManager.run(code, projectId=state["projectId"])
         return {
             "codeOutput": response
         }

@@ -1,154 +1,115 @@
 """
-codeExecutor.py
+codeExecutor.py — sandboxed subprocess code execution with timeout and concurrency locks.
 
-Production design: a warm, fork-based ProcessPoolExecutor shares N long-lived
-child processes across all REPLManager instances. Fork is copy-on-write so
-pandas/numpy are already imported in the child address space; a warm pool
-amortizes that cost across thousands of chart executions instead of paying it
-on every run(). A hard timeout cancels the future and recycles the worker so a
-runaway query cannot leak CPU or memory.
+Runs LLM-generated code in an isolated subprocess with stdout/stderr capture,
+hard resource limits, and environment cleanup. Employs a Redis Sorted Set (ZSET)
+concurrency semaphore to limit executions to 2 per tenant.
 """
 
 __all__ = ["replManager", "REPLManager", "_remove_code_fences"]
 
 
-from utils.initMethods import serializer, fetch_data, fetch_data_pl, scan_data
-from utils.logger import logger
-from concurrent.futures import ProcessPoolExecutor, TimeoutError as FuturesTimeoutError
-import multiprocessing as mp
-import functools
-import os
-import re
 import sys
-import threading
-import traceback
-
-_CODE_FENCE_RE = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL)
+import os
+import json
+import subprocess
+import time
+import uuid
+import re
+from api.services.credits.creditService import creditService
+from utils.logger import logger
 
 
 def _remove_code_fences(code: str) -> str:
-    """Extract the first python fenced block; fall back to the raw string."""
-    match = _CODE_FENCE_RE.search(code)
-    if match:
-        return match.group(1).strip()
-    return code.strip()
-
-
-_POOL_SIZE: int | None = None
-_POOL: ProcessPoolExecutor | None = None
-_POOL_LOCK = threading.Lock()
-
-
-def _pool_size() -> int:
-    global _POOL_SIZE
-    if _POOL_SIZE is None:
-        env = int(os.environ.get("CODE_EXEC_POOL_SIZE", "0") or 0)
-        if env > 0:
-            _POOL_SIZE = env
-        else:
-            from utils.sizing import sandbox_pool_size, detect_resources
-            _POOL_SIZE = sandbox_pool_size(detect_resources())
-        if _POOL_SIZE < 2:
-            _POOL_SIZE = 2
-    return _POOL_SIZE
-
-
-def _pool() -> ProcessPoolExecutor:
-    """Lazy module-level warm process pool shared by all REPLManager instances.
-
-    Double-checked-locked to guarantee a single instance under concurrent first-callers.
-    """
-    global _POOL
-    pool_local = _POOL
-    if pool_local is not None:
-        return pool_local
-    with _POOL_LOCK:
-        if _POOL is None:
-            size = _pool_size()
-            logger.info(f"Initializing code-exec process pool: size={size}.")
-            _POOL = ProcessPoolExecutor(max_workers=size, mp_context=mp.get_context("fork"))
-        return _POOL
-
-
-def _execute_in_child(codeString: str) -> str:
-    """Child-process entry point. Captures stdout+stderr and returns a string."""
-    import io
-    globalContext = {
-        "fetch_data": fetch_data,
-        "fetch_data_pl": fetch_data_pl,
-        "scan_data": scan_data,
-        "serializer": serializer,
-        "__name__": "__main__",
-        "__builtins__": __builtins__,
-    }
-    # Optional Polars for very-large dataset code paths.
-    try:
-        import polars as pl
-        globalContext["pl"] = pl
-    except Exception:
-        pass
-    stdout = io.StringIO()
-    stderr = io.StringIO()
-
-    class _Redirect:
-        def write(self, s): stdout.write(s)
-        def flush(self): pass
-
-    class _ErrRedirect:
-        def write(self, s): stderr.write(s)
-        def flush(self): pass
-
-    real_stdout, real_stderr = sys.stdout, sys.stderr
-    sys.stdout = _Redirect()
-    sys.stderr = _ErrRedirect()
-    try:
-        if "```" in codeString:
-            codeString = _remove_code_fences(codeString)
-        exec(codeString, globalContext)
-    except Exception:
-        stderr.write(traceback.format_exc())
-    finally:
-        sys.stdout = real_stdout
-        sys.stderr = real_stderr
-    output = stdout.getvalue()
-    error = stderr.getvalue()
-    if output:
-        return output
-    return error
+    """Strip ```python ... ``` fences if present."""
+    return re.sub(r"^```(?:python)?\s*\n|\s*```\s*$", "", code.strip(), flags=re.MULTILINE)
 
 
 class REPLManager:
-    """Executes code strings in a warm, isolated process pool with a hard timeout."""
+    """
+    Executes code strings inside a secure isolated subprocess.
+    """
+
     def __init__(self, timeoutSeconds: int):
         self.timeoutSeconds = timeoutSeconds
 
-    def run(self, codeString: str) -> str:
-        """Submit code to the warm pool; on timeout, cancel + recycle the worker."""
-        pool = _pool()
-        future = pool.submit(_execute_in_child, codeString)
+    def run(self, codeString: str, projectId: str = None) -> str:
+        if not projectId:
+            return "Error: projectId is required for sandboxed code execution."
+
+        if "```" in codeString:
+            codeString = _remove_code_fences(codeString)
+
+        # 1. Per-tenant concurrency limits: ZSET-based semaphore
+        r = creditService._redis()
+        sem_key = f"semaphore:{projectId}"
+        slot_id = str(uuid.uuid4())
+        now = time.time()
+
+        acquired = False
         try:
-            return future.result(timeout=self.timeoutSeconds)
-        except FuturesTimeoutError:
-            logger.warning(f"Code execution timed out after {self.timeoutSeconds}s; recycling worker.")
-            future.cancel()
-            return f"Execution timed out after {self.timeoutSeconds} seconds.\n"
+            # Clean up slots older than self.timeoutSeconds + 5 seconds to prevent deadlocks
+            r.zremrangebyscore(sem_key, 0, now - (self.timeoutSeconds + 5))
+            count = r.zcard(sem_key)
+            if count < 2:
+                r.zadd(sem_key, {slot_id: now})
+                r.expire(sem_key, self.timeoutSeconds + 5)
+                acquired = True
+            else:
+                return f"Concurrency limit reached: Too many running code execution tasks for project '{projectId}'. Please try again in a few seconds."
         except Exception as e:
-            # A broken worker (segfault/OOM) surfaces as a BrokenProcessPool or
-            # similar; recycle the pool so subsequent requests get a fresh one.
-            logger.error(f"Code-exec pool error: {e}; rebuilding pool.")
-            _recycle_pool()
-            return f"Execution failed: {e}\n"
+            logger.warning(f"Failed to check/acquire concurrency semaphore for project {projectId}: {e}")
+            # Fallback to allow execution if Redis is down, preventing a hard crash for the user
+            acquired = True
 
-
-def _recycle_pool() -> None:
-    """Tear down and recreate the process pool after a worker failure."""
-    global _POOL
-    if _POOL is not None:
+        # 2. Launch subprocess using isolated Python mode
+        stdout = ""
+        stderr = ""
+        launcher_path = os.path.join(os.path.dirname(__file__), "sandbox_launcher.py")
         try:
-            _POOL.shutdown(wait=False, cancel_futures=True)
-        except Exception:
-            pass
-        _POOL = None
+            # Standard python paths + environment credentials needed for data fetching
+            # passed explicitly during Popen startup
+            app_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            clean_env = {
+                "PATH": os.environ.get("PATH", ""),
+                "PYTHONPATH": app_root + os.pathsep + os.environ.get("PYTHONPATH", ""),
+                "REDIS_HOST": os.environ.get("REDIS_HOST", ""),
+                "REDIS_PORT": os.environ.get("REDIS_PORT", ""),
+                "REDIS_PASSWORD": os.environ.get("REDIS_PASSWORD", ""),
+                "SUPABASE_URL": os.environ.get("SUPABASE_URL", ""),
+                "SUPABASE_KEY": os.environ.get("SUPABASE_KEY", ""),
+                "FILE_URL": os.environ.get("FILE_URL", ""),
+                "POLARS_MAX_THREADS": "2",
+                "OPENBLAS_NUM_THREADS": "2",
+            }
+            proc = subprocess.Popen(
+                [sys.executable, "-s", launcher_path],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=clean_env
+            )
+
+            payload = json.dumps({"projectId": projectId, "code": codeString})
+            try:
+                stdout, stderr = proc.communicate(input=payload, timeout=self.timeoutSeconds)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                stdout, stderr = proc.communicate()
+                stderr += f"\nExecution timed out after {self.timeoutSeconds} seconds.\n"
+        except Exception as e:
+            stderr = f"Error during subprocess execution: {e}\n"
+        finally:
+            if acquired:
+                try:
+                    r.zrem(sem_key, slot_id)
+                except Exception as e:
+                    logger.warning(f"Failed to release semaphore for project {projectId}: {e}")
+
+        if stdout:
+            return stdout
+        return stderr
 
 
-replManager = REPLManager(timeoutSeconds=7)
+replManager = REPLManager(timeoutSeconds=30)

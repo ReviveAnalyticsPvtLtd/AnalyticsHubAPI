@@ -491,6 +491,14 @@ class TransformationService:
             except Exception as e:
                 logger.warning(f"Failed to generate metadata for project {projectId} after apply: {e}")
 
+            # Pre-compute rollups for the new table
+            try:
+                from utils.initMethods import compute_rollups, invalidate_data_cache
+                invalidate_data_cache(projectId, newTransformedTableName)
+                compute_rollups(projectId, newTransformedTableName)
+            except Exception as e:
+                logger.debug(f"Rollup skipped for {projectId}/{newTransformedTableName}: {e}")
+
             updateProjectModifiedAt(projectId)
             return {
                 "status": "200",

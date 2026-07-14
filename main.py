@@ -8,9 +8,6 @@ __version__ = "1.0.0"
 __author__ = "Rauhan Ahmed Siddiqui"
 
 
-import ssl
-ssl._create_default_https_context = ssl._create_unverified_context
-
 from api.routers import authentication, manager, dataLoader, reporting, utils, blends, dashboard, subscriptions, webhooks, billingAdmin, transformations, credits
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -47,9 +44,12 @@ async def http_exception_handler(request: Request, exc: HTTPException):
         content={"detail": exc.detail}
     )
 
+allowed_origins_str = os.environ.get("ALLOWED_ORIGINS", "")
+allowed_origins = [o.strip() for o in allowed_origins_str.split(",") if o.strip()] if allowed_origins_str else ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins = ["*"],
+    allow_origins = allowed_origins,
     allow_credentials = True,
     allow_methods = ["*"],
     allow_headers = ["*"],
@@ -62,11 +62,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def stats():
-    """
-    FastAPI startup event handler.
-
-    Logs system memory and CPU usage statistics at application startup.
-    """
+    """Log system stats at startup."""
     memory = psutil.virtual_memory()
     cpu_usage = psutil.cpu_percent(interval=1, percpu=True)
     totalUsage = psutil.cpu_percent(interval=1)

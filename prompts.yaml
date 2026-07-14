@@ -142,7 +142,7 @@ queryRephraserAgentPrompt: |
     STEP 2: COLUMN COLLISION HANDLING (POLARS)
     - Polars does NOT auto-add `_x`/`_y` suffixes on join — duplicate non-key columns raise an error.
     - If both tables share a non-key column name (e.g. `region` in both `orders` and `customers`):
-      1) Rename the column in one table BEFORE the join: `right.rename({"region": "customer_region"})`
+      1) Rename the column in one table BEFORE the join: `right.rename({{"region": "customer_region"}})`
       2) Or select only the needed columns from each table before joining.
     - YOU MUST EXPLICITLY MENTION the column collision and the rename/select strategy in your steps.
     - Reference the renamed column name in ALL subsequent operations.
@@ -825,7 +825,7 @@ codeGeneratorAgentPrompt: |
     - Polars filters: `.filter(pl.col("x") > 100 & pl.col("y").str.contains("Paid"))`.
     - Polars aggregations: `.group_by("region").agg(pl.col("amount").sum().alias("total"))`.
     - Polars joins: `left.join(right, on="id", how="inner")`.
-    - For hue/multi-dataset charts, use Polars `.partition_by()` or build a list of `{label, data}` dicts from the collected frame.
+    - For hue/multi-dataset charts, use Polars `.partition_by()` or build a list of `{{label, data}}` dicts from the collected frame.
     - Ensure the final dataframe is named `final_df`.
 
     ### Chart.js JSON Output Structure
@@ -1547,27 +1547,27 @@ imageToInsightGeneratorPrompt: |
 
     You MUST respond with a single valid JSON object and nothing else. No markdown, no explanation outside the JSON. The JSON must have this exact structure:
 
-    {
+    {{
       "diagnostic_insights": [
-        {
+        {{
           "finding": "Clear business-level observation",
           "evidence": "Concise data citation under 30 words with exact numbers and signal type.",
           "business_impact": "What this means for the business in practical terms",
           "confidence": 0.85
-        }
+        }}
       ],
       "prescriptive_actions": [
-        {
+        {{
           "recommended_action": "Concrete, specific action step",
           "expected_impact": "Projected outcome if action is taken",
           "owner": "Suggested responsible role or team",
           "priority": "high"
-        }
+        }}
       ],
       "missing_data": [
         "Description of data that would improve analysis but was not available"
       ]
-    }
+    }}
 
     * **diagnostic_insights**: Array of 4-8 objects.
     * **prescriptive_actions**: Array of 3-8 objects. Priority is "high", "medium", or "low".
