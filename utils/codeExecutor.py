@@ -1,9 +1,9 @@
 """
-codeExecutor.py — sandboxed subprocess code execution with timeout and concurrency locks.
+codeExecutor.py — sandboxed subprocess code execution with per-project concurrency lock.
 
-Runs LLM-generated code in an isolated subprocess with stdout/stderr capture,
-hard resource limits, and environment cleanup. Employs a Redis Sorted Set (ZSET)
-concurrency semaphore to limit executions to 2 per tenant.
+Runs LLM-generated code in an isolated subprocess with stdout/stderr capture.
+Uses a Redis Sorted Set (ZSET) soft concurrency gate per projectId; no hard
+CPU/memory caps (RLIMIT_AS crashes polars import).
 """
 
 __all__ = ["replManager", "REPLManager", "_remove_code_fences"]
@@ -27,11 +27,15 @@ def _remove_code_fences(code: str) -> str:
 
 class REPLManager:
     """
-    Executes code strings inside a secure isolated subprocess.
+    Executes code strings inside an isolated subprocess.
+
+    No hard CPU/memory caps (RLIMIT_AS would crash polars import).
+    Concurrency is bounded per project via Redis ZSET semaphore (soft cap).
     """
 
-    def __init__(self, timeoutSeconds: int):
+    def __init__(self, timeoutSeconds: int = 300, maxConcurrentPerProject: int = 50):
         self.timeoutSeconds = timeoutSeconds
+        self.maxConcurrentPerProject = maxConcurrentPerProject
 
     def run(self, codeString: str, projectId: str = None) -> str:
         if not projectId:
@@ -40,54 +44,51 @@ class REPLManager:
         if "```" in codeString:
             codeString = _remove_code_fences(codeString)
 
-        # 1. Per-tenant concurrency limits: ZSET-based semaphore
+        # 1. Per-tenant concurrency limits: ZSET-based semaphore (soft cap)
         r = creditService._redis()
         sem_key = f"semaphore:{projectId}"
         slot_id = str(uuid.uuid4())
-        
+
         acquired = False
-        import time
         start_time = time.time()
-        while time.time() - start_time < 15.0:  # retry up to 15 seconds
+        while time.time() - start_time < 30.0:
             try:
-                # Clean up slots older than self.timeoutSeconds + 5 seconds to prevent deadlocks
-                r.zremrangebyscore(sem_key, 0, time.time() - (self.timeoutSeconds + 5))
+                r.zremrangebyscore(sem_key, 0, time.time() - (self.timeoutSeconds + 60))
                 count = r.zcard(sem_key)
-                if count < 2:
+                if count < self.maxConcurrentPerProject:
                     r.zadd(sem_key, {slot_id: time.time()})
-                    r.expire(sem_key, self.timeoutSeconds + 5)
+                    r.expire(sem_key, self.timeoutSeconds + 60)
                     acquired = True
                     break
             except Exception as e:
                 logger.warning(f"Failed to check/acquire concurrency semaphore for project {projectId}: {e}")
-                # Fallback to allow execution if Redis is down, preventing a hard crash for the user
                 acquired = True
                 break
-            time.sleep(0.2)  # sleep for 200ms before retrying
+            time.sleep(0.2)
 
         if not acquired:
             return f"Concurrency limit reached: Too many running code execution tasks for project '{projectId}'. Please try again in a few seconds."
 
-        # 2. Launch subprocess using isolated Python mode
+        # 2. Launch subprocess
         stdout = ""
         stderr = ""
         launcher_path = os.path.join(os.path.dirname(__file__), "sandbox_launcher.py")
         try:
-            # Standard python paths + environment credentials needed for data fetching
-            # passed explicitly during Popen startup
             app_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            clean_env = {
-                "PATH": os.environ.get("PATH", ""),
-                "PYTHONPATH": app_root + os.pathsep + os.environ.get("PYTHONPATH", ""),
-                "REDIS_HOST": os.environ.get("REDIS_HOST", ""),
-                "REDIS_PORT": os.environ.get("REDIS_PORT", ""),
-                "REDIS_PASSWORD": os.environ.get("REDIS_PASSWORD", ""),
-                "SUPABASE_URL": os.environ.get("SUPABASE_URL", ""),
-                "SUPABASE_KEY": os.environ.get("SUPABASE_KEY", ""),
-                "FILE_URL": os.environ.get("FILE_URL", ""),
-                "POLARS_MAX_THREADS": "2",
-                "OPENBLAS_NUM_THREADS": "2",
-            }
+            inherit_envs = (
+                "PATH", "PYTHONPATH", "HOME", "LANG", "LC_ALL", "TZ",
+                "REDIS_HOST", "REDIS_PORT", "REDIS_PASSWORD", "REDIS_DB",
+                "REDIS_SEMAPHORE_DB", "SUPABASE_URL", "SUPABASE_KEY", "DATABASE_URL",
+                "FILE_URL", "STORAGE_URL",
+                "GOOGLE_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "CEREBRAS_API_KEY",
+                "OPENAI_API_KEY", "LANGSMITH_API_KEY", "LOGTAIL_SOURCE_TOKEN",
+                "RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET", "BREVO_API_KEY",
+                "LANGFUSE_SECRET_KEY", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_HOST",
+                "POLARS_MAX_THREADS", "OPENBLAS_NUM_THREADS",
+                "DF_CACHE_MAX_BYTES", "DF_CACHE_MAX_ENTRIES",
+            )
+            clean_env = {k: os.environ[k] for k in inherit_envs if k in os.environ}
+            clean_env["PYTHONPATH"] = app_root + os.pathsep + clean_env.get("PYTHONPATH", "")
             proc = subprocess.Popen(
                 [sys.executable, "-s", launcher_path],
                 stdin=subprocess.PIPE,
@@ -118,4 +119,4 @@ class REPLManager:
         return stderr
 
 
-replManager = REPLManager(timeoutSeconds=30)
+replManager = REPLManager(timeoutSeconds=300, maxConcurrentPerProject=50)
