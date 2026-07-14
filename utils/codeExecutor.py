@@ -44,23 +44,29 @@ class REPLManager:
         r = creditService._redis()
         sem_key = f"semaphore:{projectId}"
         slot_id = str(uuid.uuid4())
-        now = time.time()
-
+        
         acquired = False
-        try:
-            # Clean up slots older than self.timeoutSeconds + 5 seconds to prevent deadlocks
-            r.zremrangebyscore(sem_key, 0, now - (self.timeoutSeconds + 5))
-            count = r.zcard(sem_key)
-            if count < 2:
-                r.zadd(sem_key, {slot_id: now})
-                r.expire(sem_key, self.timeoutSeconds + 5)
+        import time
+        start_time = time.time()
+        while time.time() - start_time < 15.0:  # retry up to 15 seconds
+            try:
+                # Clean up slots older than self.timeoutSeconds + 5 seconds to prevent deadlocks
+                r.zremrangebyscore(sem_key, 0, time.time() - (self.timeoutSeconds + 5))
+                count = r.zcard(sem_key)
+                if count < 2:
+                    r.zadd(sem_key, {slot_id: time.time()})
+                    r.expire(sem_key, self.timeoutSeconds + 5)
+                    acquired = True
+                    break
+            except Exception as e:
+                logger.warning(f"Failed to check/acquire concurrency semaphore for project {projectId}: {e}")
+                # Fallback to allow execution if Redis is down, preventing a hard crash for the user
                 acquired = True
-            else:
-                return f"Concurrency limit reached: Too many running code execution tasks for project '{projectId}'. Please try again in a few seconds."
-        except Exception as e:
-            logger.warning(f"Failed to check/acquire concurrency semaphore for project {projectId}: {e}")
-            # Fallback to allow execution if Redis is down, preventing a hard crash for the user
-            acquired = True
+                break
+            time.sleep(0.2)  # sleep for 200ms before retrying
+
+        if not acquired:
+            return f"Concurrency limit reached: Too many running code execution tasks for project '{projectId}'. Please try again in a few seconds."
 
         # 2. Launch subprocess using isolated Python mode
         stdout = ""

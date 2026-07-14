@@ -70,11 +70,7 @@ class ReportingToolWorkflow:
             "metadata": state["metadata"]
         })
         pid = state["projectId"]
-        # Inject projectId into all fetch function variants.
-        for fn in ("fetch_data_pl", "scan_data", "fetch_data"):
-            response = f'{fn}("{pid}", '.join(response.split(f"{fn}("))
-        # Deterministic routing: per-table size class drives fetch_data_pl
-        # -> scan_data for massive tables so we always get lazy pushdown.
+        response = self._injectProjectId(response, pid)
         response = self._route_large_tables_to_scan(response, pid)
         # Normalize every json.dumps() call to have exactly one default=serializer
         # (LLM sometimes emits default=str or duplicate default= kwargs → SyntaxError).
@@ -118,6 +114,23 @@ class ReportingToolWorkflow:
             return match.group(0)
         return re.sub(r'fetch_data_pl\("' + re.escape(projectId) + r'",\s*"([^"]+)"', _maybe_swap, code)
 
+    @staticmethod
+    def _injectProjectId(code: str, projectId: str) -> str:
+        import re
+        # Strip double-injections first (e.g. fn("pid", "pid", "table")) by deduplicating projectIds in arguments
+        cleaned_code = re.sub(rf'\b(fetch_data|fetch_data_pl|scan_data)\(\s*["\']{re.escape(projectId)}["\'],\s*["\']{re.escape(projectId)}["\'],\s*', rf'\1("{projectId}", ', code)
+        
+        # Inject to single-argument calls
+        pattern = r'\b(fetch_data|fetch_data_pl|scan_data)\(\s*(["\'])([^"\'\s]+)\2'
+        def replace_fn(match):
+            fn_name = match.group(1)
+            quote = match.group(2)
+            first_arg = match.group(3)
+            if first_arg == projectId:
+                return match.group(0)
+            return f'{fn_name}("{projectId}", {quote}{first_arg}{quote}'
+        return re.sub(pattern, replace_fn, cleaned_code)
+
     def _runInPythonSandbox(self, state: State):
         """
         Executes the generated code in a Python sandbox environment and captures the output.
@@ -150,6 +163,9 @@ class ReportingToolWorkflow:
             "code_with_errors": state["generatedCode"],
             "error_message": state["codeOutput"]
         })
+        pid = state["projectId"]
+        response = self._injectProjectId(response, pid)
+        response = self._route_large_tables_to_scan(response, pid)
         return {
             "generatedCode": response,
             "debugAttempts": attempts + 1,
