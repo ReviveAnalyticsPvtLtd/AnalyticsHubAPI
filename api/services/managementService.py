@@ -367,7 +367,7 @@ class ManagementService:
                 .eq("workspaceId", workspaceId) \
                 .execute().data
             for project in projects:
-                self.deleteProject(projectId=project.get("projectId"))
+                self.deleteProject(projectId=project.get("projectId"), userId=decodedToken["userId"])
             _ = self.client.table("Workspaces").delete().eq("id", workspaceId).execute()
             return
         except Exception as e:
