@@ -18,13 +18,14 @@ __all__ = [
     "UserContext",
     "updateProjectModifiedAt",
     "verifyProjectOwnership",
+    "verifyMultipartProjectOwnership",
     "verifyProjectOwnershipDirect",
     "requireTenantSlot",
     "releaseTenantSlot",
 ]
 
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from fastapi import status, HTTPException, Request, Depends
+from fastapi import status, HTTPException, Request, Depends, Form
 from supabase.lib.client_options import ClientOptions
 from supabase import create_client
 from utils.logger import logger
@@ -36,6 +37,7 @@ import redis
 import os
 import gc
 import threading
+from typing import Annotated
 
 security = HTTPBearer()
 
@@ -366,6 +368,15 @@ async def verifyProjectOwnershipDirect(projectId: str, userId: str) -> None:
 
 async def verifyProjectOwnership(projectId: str, user: UserContext = Depends(verifyUser)) -> str:
     """FastAPI dependency to verify project ownership for path/query parameters."""
+    await verifyProjectOwnershipDirect(projectId, user.userId)
+    return user.userId
+
+
+async def verifyMultipartProjectOwnership(
+    projectId: Annotated[str, Form()],
+    user: UserContext = Depends(verifyUser),
+) -> str:
+    """Verify ownership using a ``projectId`` supplied in multipart form data."""
     await verifyProjectOwnershipDirect(projectId, user.userId)
     return user.userId
 

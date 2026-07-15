@@ -4,7 +4,7 @@ API router for data loading operations.
 This module provides endpoints for loading data from various sources (CSV, Excel, PDF, MySQL, PostgreSQL, MongoDB) and deleting tables.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["router"]
 
@@ -18,7 +18,7 @@ from utils.exceptionHandler import CustomException, raiseHttpException
 from fastapi import APIRouter, Depends, UploadFile, File, Form
 from api.services.dataLoadService import dataLoadService
 from fastapi.responses import ORJSONResponse
-from api.commons import verifyToken, verifyProjectOwnership, verifyProjectOwnershipDirect, verifyUser, UserContext, requireCredits
+from api.commons import verifyMultipartProjectOwnership, verifyProjectOwnershipDirect, verifyUser, UserContext, requireCredits
 import asyncio
 from typing import Annotated
 
@@ -31,7 +31,7 @@ Router for data loading-related endpoints.
 async def loadCsvData(
     projectId: Annotated[str, Form()],
     files: list[UploadFile],
-    userId: str = Depends(verifyProjectOwnership)
+    userId: str = Depends(verifyMultipartProjectOwnership)
 ):
     """
     Load data from a CSV file into the specified project.
@@ -54,7 +54,7 @@ async def loadCsvData(
 async def loadExcelData(
     projectId: Annotated[str, Form()],
     files: list[UploadFile],
-    userId: str = Depends(verifyProjectOwnership)
+    userId: str = Depends(verifyMultipartProjectOwnership)
 ):
     """
     Load data from an Excel file into the specified project.
@@ -78,7 +78,7 @@ async def loadPdfData(
     projectId: Annotated[str, Form()],
     files: list[UploadFile],
     user: UserContext = Depends(requireCredits("pdf_extraction_per_page")),
-    userId: str = Depends(verifyProjectOwnership)
+    userId: str = Depends(verifyMultipartProjectOwnership)
 ):
     """
     Load data from PDF files into the specified project.
