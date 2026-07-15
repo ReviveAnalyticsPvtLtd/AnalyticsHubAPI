@@ -8,6 +8,9 @@ __version__ = "1.0.0"
 __author__ = "Rauhan Ahmed Siddiqui"
 
 
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
+
 from api.routers import authentication, manager, dataLoader, reporting, utils, blends, dashboard, subscriptions, webhooks, billingAdmin, transformations, credits
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
