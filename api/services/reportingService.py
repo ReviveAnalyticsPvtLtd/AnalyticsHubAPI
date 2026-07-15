@@ -17,7 +17,7 @@ from api.services.credits.creditTrackingCallback import CreditTrackingCallback
 from api.commons import updateProjectModifiedAt
 from utils.exceptionHandler import CustomException
 from concurrent.futures import ThreadPoolExecutor
-from utils.initMethods import fetch_data
+from utils.initMethods import fetch_data, scan_data
 from nubrix.utils import readYaml
 from utils.logger import logger
 from api.commons import client

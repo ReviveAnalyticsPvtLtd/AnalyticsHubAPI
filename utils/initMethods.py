@@ -28,6 +28,7 @@ import os
 import redis
 import threading
 from collections import OrderedDict
+from utils.logger import logger
 from typing import Iterable
 
 try:

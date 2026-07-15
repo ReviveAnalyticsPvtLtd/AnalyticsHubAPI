@@ -21,6 +21,7 @@ import uuid
 import time
 import os
 import io
+from urllib.request import urlopen
 
 VALID_INSIGHT_STATUSES = {"new", "accepted", "rejected", "implemented"}
 
