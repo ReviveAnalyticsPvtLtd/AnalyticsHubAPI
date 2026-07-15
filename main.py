@@ -45,7 +45,21 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     )
 
 allowed_origins_str = os.environ.get("ALLOWED_ORIGINS", "")
-allowed_origins = [o.strip() for o in allowed_origins_str.split(",") if o.strip()] if allowed_origins_str else ["*"]
+if allowed_origins_str:
+    allowed_origins = [o.strip() for o in allowed_origins_str.split(",") if o.strip()]
+    localhost_origins = [
+        "http://localhost",
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+    ]
+    for origin in localhost_origins:
+        if origin not in allowed_origins:
+            allowed_origins.append(origin)
+else:
+    allowed_origins = ["*"]
 
 app.add_middleware(
     CORSMiddleware,
