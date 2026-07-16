@@ -259,16 +259,14 @@ class DashboardService:
             elif (details.filters) and (not details.refresh):
                 widgets = pageInfo.get("widgets")
                 numWidgets = len(widgets)
-                from utils.initMethods import get_report_pool
-                executor = get_report_pool()
-                results = executor.map(self._applyFilterToAWidget, widgets, [details.filters] * numWidgets, [replManager] * numWidgets, [details.projectId] * numWidgets)
+                with ProcessPoolExecutor(max_workers = 4) as executor:
+                    results = executor.map(self._applyFilterToAWidget, widgets, [details.filters] * numWidgets, [replManager] * numWidgets, [details.projectId] * numWidgets)
                 pageInfo["widgets"] = [x for x in results]
             elif (not details.filters) and (details.refresh):
                 widgets = pageInfo.get("widgets")
                 numWidgets = len(widgets)
-                from utils.initMethods import get_report_pool
-                executor = get_report_pool()
-                results = executor.map(self._applyFilterToAWidget, widgets, [details.filters] * numWidgets, [replManager] * numWidgets, [details.projectId] * numWidgets)
+                with ProcessPoolExecutor(max_workers = 4) as executor:
+                    results = executor.map(self._applyFilterToAWidget, widgets, [details.filters] * numWidgets, [replManager] * numWidgets, [details.projectId] * numWidgets)
                 pageInfo["widgets"] = [x for x in results] 
                 prevPageInfo = dashboardConfig.get(details.page)
                 for prevWidget in prevPageInfo.get("widgets"):

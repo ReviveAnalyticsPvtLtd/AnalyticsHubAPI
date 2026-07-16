@@ -93,17 +93,6 @@ _DF_CACHE: "OrderedDict[tuple[str, str], tuple[pa.Table, int]]" = OrderedDict()
 _DF_CACHE_BYTES = 0
 _DF_CACHE_LOCK = threading.Lock()
 
-_REPORT_POOL = None
-
-def get_report_pool():
-    global _REPORT_POOL
-    if _REPORT_POOL is None:
-        from concurrent.futures import ProcessPoolExecutor
-        from utils.sizing import parallel_chart_workers
-        workers = parallel_chart_workers()
-        _REPORT_POOL = ProcessPoolExecutor(max_workers=workers)
-    return _REPORT_POOL
-
 
 def _df_bytes(table: "pa.Table") -> int:
     """Approximate in-memory size of an Arrow table."""
@@ -489,59 +478,3 @@ def invalidate_data_cache(projectId: str | None = None, tableName: str | None = 
                    and (tableName is None or key[1] == tableName)]
         for key in to_drop:
             _DF_CACHE_BYTES -= _DF_CACHE.pop(key)[1]
-
-
-def compute_rollups(projectId: str, tableName: str) -> None:
-    """Pre-compute common group-by rollups for large/medium tables and cache
-    in Redis. Called after data load or transformation. For small tables this
-    is a no-op (eager fetch is fast enough).
-
-    Stores per-column aggregations as JSON in Redis under
-    ``{projectId}::rollup::{tableName}::{agg}::{column}`` with 1h TTL.
-    """
-    if pq is None or pl is None:
-        return
-    try:
-        info = classify_table_size(projectId, tableName)
-        if info.get("size_class") in ("small", "unknown"):
-            return
-        table = _cache_get((projectId, tableName))
-        if table is None:
-            table = _fetch_data_from_redis(f"{projectId}::{tableName}")
-        if table is None:
-            return
-        df = pl.from_arrow(table)
-        numeric_cols = [c for c in df.columns if df[c].dtype.is_numeric()]
-        categorical_cols = [c for c in df.columns if not df[c].dtype.is_numeric()]
-        if not numeric_cols or not categorical_cols:
-            return
-        r = redis.Redis(connection_pool=_redis_pool())
-        import orjson
-        for cat_col in categorical_cols[:20]:
-            for num_col in numeric_cols[:20]:
-                for agg in ("sum", "mean", "count"):
-                    try:
-                        rollup = df.group_by(cat_col).agg(
-                            getattr(pl.col(num_col), agg)().alias(num_col)
-                        ).to_dicts()
-                        key = f"{projectId}::rollup::{tableName}::{agg}::{cat_col}::{num_col}"
-                        r.setex(key, 3600, orjson.dumps(rollup))
-                    except Exception:
-                        pass
-        logger.info(f"Rollups computed for {projectId}/{tableName} ({len(categorical_cols)}×{len(numeric_cols)} cols).")
-    except Exception as e:
-        logger.warning(f"Rollup computation failed for {projectId}/{tableName}: {e}")
-
-
-def get_rollup(projectId: str, tableName: str, agg: str, cat_col: str, num_col: str):
-    """Retrieve a pre-computed rollup from Redis, or None if not cached."""
-    try:
-        r = redis.Redis(connection_pool=_redis_pool())
-        import orjson
-        key = f"{projectId}::rollup::{tableName}::{agg}::{cat_col}::{num_col}"
-        raw = r.get(key)
-        if raw:
-            return orjson.loads(raw)
-    except Exception:
-        pass
-    return None

@@ -18,7 +18,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from api.services.utilityService import utilityService
 from nubrix.triggers.celery import celeryApp
 from fastapi.responses import ORJSONResponse
-from api.commons import verifyToken, verifyProjectOwnership, verifyProjectOwnershipDirect, requireCredits, UserContext, verifyUser
+from api.commons import verifyToken, requireCredits, UserContext
 import asyncio
 
 router = APIRouter()
@@ -39,7 +39,7 @@ async def getSpeechTranscript(speechToText: SpeechToTextModel, user: UserContext
         ORJSONResponse: Transcription text or error message.
     """
     try:
-        transcriptText = await asyncio.to_thread(utilityService.getSpeechTranscript, speechToText=speechToText, userId=user.userId)
+        transcriptText = utilityService.getSpeechTranscript(speechToText=speechToText, userId=user.userId)
         return ORJSONResponse(status_code = 200, content = {"transcriptionText": transcriptText})
     except CustomException as e:
         raiseHttpException(e)
@@ -60,46 +60,43 @@ async def getInsightsFromImage(imageToInsights: ImageToInsightsModel, user: User
             and missing_data.
     """
     try:
-        await verifyProjectOwnershipDirect(imageToInsights.projectId, user.userId)
-        insights = await asyncio.to_thread(utilityService.getInsightsFromImage, imageToInsights=imageToInsights, userId=user.userId)
+        insights = utilityService.getInsightsFromImage(imageToInsights=imageToInsights, userId=user.userId)
         return ORJSONResponse(status_code=200, content=insights)
     except CustomException as e:
         raiseHttpException(e)
 
 @router.get("/getDashboardInsights/{projectId}")
-async def getDashboardInsights(projectId: str, userId: str = Depends(verifyProjectOwnership)):
+async def getDashboardInsights(projectId: str, token = Depends(verifyToken)):
     """
     Retrieve all persisted dashboard insights for a project.
 
     Args:
         projectId (str): The project identifier.
-        userId: Verified user identifier.
+        token: Authorization token dependency.
 
     Returns:
         ORJSONResponse: List of insight records with status lifecycle.
     """
     try:
-        records = await asyncio.to_thread(utilityService.getDashboardInsights, projectId=projectId)
+        records = utilityService.getDashboardInsights(projectId=projectId)
         return ORJSONResponse(status_code=200, content={"insights": records})
     except CustomException as e:
         raiseHttpException(e)
 
 @router.patch("/updateDashboardInsightStatus")
-async def updateDashboardInsightStatus(body: UpdateDashboardInsightStatus, user: UserContext = Depends(verifyUser)):
+async def updateDashboardInsightStatus(body: UpdateDashboardInsightStatus, token = Depends(verifyToken)):
     """
     Update the lifecycle status of a persisted dashboard insight.
 
     Args:
         body (UpdateDashboardInsightStatus): Model containing projectId, insightId, and new status.
-        user: UserContext dependency.
+        token: Authorization token dependency.
 
     Returns:
         ORJSONResponse: The updated insight record.
     """
     try:
-        await verifyProjectOwnershipDirect(body.projectId, user.userId)
-        record = await asyncio.to_thread(
-            utilityService.updateDashboardInsightStatus,
+        record = utilityService.updateDashboardInsightStatus(
             projectId=body.projectId,
             insightId=body.insightId,
             status=body.status,
@@ -120,7 +117,7 @@ async def sendForecasts(token = Depends(verifyToken)):
         ORJSONResponse: Task ID, trigger name, and task status or error message.
     """
     try:
-        r = await asyncio.to_thread(utilityService.sendForecasts)
+        r = utilityService.sendForecasts()
         return ORJSONResponse(status_code = 200, content = {"taskId": r.task_id, "triggerName": "forecast", "taskStatus": r.status})
     except CustomException as e:
         raiseHttpException(e)

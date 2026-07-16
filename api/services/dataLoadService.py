@@ -13,7 +13,6 @@ from nubrix.components.pdfTableExtractor import PdfTableExtractor
 from api.services.credits.creditTrackingCallback import CreditTrackingCallback
 from api.commons import updateProjectModifiedAt
 from utils.exceptionHandler import CustomException
-from utils.initMethods import compute_rollups
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
 from fastapi import Form, UploadFile
@@ -48,14 +47,6 @@ class DataLoadService:
         """
         logger.info("Initializing Data Load Service.")
         self.client = client
-
-    @staticmethod
-    def _try_rollups(projectId: str, tableName: str) -> None:
-        """Best-effort rollup computation after data load. Never raises."""
-        try:
-            compute_rollups(projectId, tableName)
-        except Exception as e:
-            logger.debug(f"Rollup skipped for {projectId}/{tableName}: {e}")
 
     def _sanitizeFileName(self, fileName: str) -> str:
         """
@@ -136,7 +127,6 @@ class DataLoadService:
                         path=f"{projectId}/{sanitizedName}.parquet",
                         file_options={"upsert": "true"}
                     )
-                    self._try_rollups(projectId, sanitizedName)
             updateProjectModifiedAt(projectId)
             return
         except CustomException:
@@ -185,7 +175,6 @@ class DataLoadService:
                             path=f"{projectId}/{fileName}",
                             file_options={"upsert": "true"}
                         )
-                        self._try_rollups(projectId, fileName.replace(".parquet", ""))
             updateProjectModifiedAt(projectId)
             return
         except CustomException:
@@ -362,7 +351,6 @@ class DataLoadService:
                     path=f"{connection.projectId}/{sanitizedTable}.parquet",
                     file_options={"upsert": "true"}
                 )
-                self._try_rollups(connection.projectId, sanitizedTable)
             updateProjectModifiedAt(connection.projectId)
             return
         except CustomException:
@@ -408,7 +396,6 @@ class DataLoadService:
                     path=f"{connection.projectId}/{sanitizedTable}.parquet",
                     file_options={"upsert": "true"}
                 )
-                self._try_rollups(connection.projectId, sanitizedTable)
             updateProjectModifiedAt(connection.projectId)
             return
         except CustomException:
@@ -451,7 +438,6 @@ class DataLoadService:
                     path=f"{connection.projectId}/{sanitizedCollection}.parquet",
                     file_options={"upsert": "true"}
                 )
-                self._try_rollups(connection.projectId, sanitizedCollection)
             updateProjectModifiedAt(connection.projectId)
             return
         except CustomException:

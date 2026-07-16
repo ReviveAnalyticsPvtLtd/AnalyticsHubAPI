@@ -85,7 +85,7 @@ class ReportingService:
         self.codeTemplates = readYaml(os.path.join(os.getcwd(), "codeTemplates.yaml"))
         self.reportingToolWorkflow = buildReportingWorkflow()
         self.client = client
-        self._httpClient = httpx.AsyncClient(timeout=None)
+        self._httpClient = httpx.AsyncClient(timeout=20)
         self._metadataCache: dict[str, tuple[float, dict]] = {}
         self._metadataCacheTtl = 30.0
         self._redis = redis.Redis(connection_pool=_reporting_redis_pool())

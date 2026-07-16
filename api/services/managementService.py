@@ -367,7 +367,7 @@ class ManagementService:
                 .eq("workspaceId", workspaceId) \
                 .execute().data
             for project in projects:
-                self.deleteProject(projectId=project.get("projectId"), userId=decodedToken["userId"])
+                self.deleteProject(projectId=project.get("projectId"))
             _ = self.client.table("Workspaces").delete().eq("id", workspaceId).execute()
             return
         except Exception as e:
@@ -378,22 +378,21 @@ class ManagementService:
             logger.error(exception)
             raise exception
         
-    def updateBookmark(self, updateBookmarkDetails: UpdateProjectState, userId: str) -> None:
+    def updateBookmark(self, updateBookmarkDetails: UpdateProjectState) -> None:
         """
         Update the bookmark state of a project.
 
         Args:
             updateBookmarkDetails (UpdateProjectState): Details specifying the project and action (add/remove).
-            userId (str): The user identifier.
 
         Raises:
             CustomException: For any errors during update.
         """
         try:
             if updateBookmarkDetails.action == "add":
-                _ = self.client.table("Projects").update({"isBookmarked": 1}).eq("projectId", updateBookmarkDetails.projectId).eq("ownerUserId", userId).execute()
+                _ = self.client.table("Projects").update({"isBookmarked": 1}).eq("projectId", updateBookmarkDetails.projectId).execute()
             else:
-                _ = self.client.table("Projects").update({"isBookmarked": 0}).eq("projectId", updateBookmarkDetails.projectId).eq("ownerUserId", userId).execute()   
+                _ = self.client.table("Projects").update({"isBookmarked": 0}).eq("projectId", updateBookmarkDetails.projectId).execute()   
             updateProjectModifiedAt(updateBookmarkDetails.projectId)
             return
         except Exception as e:
@@ -401,22 +400,21 @@ class ManagementService:
             logger.error(exception)
             raise exception   
 
-    def updateArchive(self, updateArchiveDetails: UpdateProjectState, userId: str) -> None:
+    def updateArchive(self, updateArchiveDetails: UpdateProjectState) -> None:
         """
         Update the archive state of a project.
 
         Args:
             updateArchiveDetails (UpdateProjectState): Details specifying the project and action (add/remove).
-            userId (str): The user identifier.
 
         Raises:
             CustomException: For any errors during update.
         """
         try:
             if updateArchiveDetails.action == "add":
-                _ = self.client.table("Projects").update({"isArchived": 1}).eq("projectId", updateArchiveDetails.projectId).eq("ownerUserId", userId).execute()
+                _ = self.client.table("Projects").update({"isArchived": 1}).eq("projectId", updateArchiveDetails.projectId).execute()
             else:
-                _ = self.client.table("Projects").update({"isArchived": 0}).eq("projectId", updateArchiveDetails.projectId).eq("ownerUserId", userId).execute()    
+                _ = self.client.table("Projects").update({"isArchived": 0}).eq("projectId", updateArchiveDetails.projectId).execute()    
             updateProjectModifiedAt(updateArchiveDetails.projectId)
             return
         except Exception as e:
@@ -424,22 +422,21 @@ class ManagementService:
             logger.error(exception)
             raise exception  
 
-    def updateTrash(self, updateTrashDetails: UpdateProjectState, userId: str) -> None:
+    def updateTrash(self, updateTrashDetails: UpdateProjectState) -> None:
         """
         Update the trash state of a project.
 
         Args:
             updateTrashDetails (UpdateProjectState): Details specifying the project and action (add/remove).
-            userId (str): The user identifier.
 
         Raises:
             CustomException: For any errors during update.
         """
         try:
             if updateTrashDetails.action == "add":
-                _ = self.client.table("Projects").update({"isTrash": 1}).eq("projectId", updateTrashDetails.projectId).eq("ownerUserId", userId).execute()
+                _ = self.client.table("Projects").update({"isTrash": 1}).eq("projectId", updateTrashDetails.projectId).execute()
             else:
-                _ = self.client.table("Projects").update({"isTrash": 0}).eq("projectId", updateTrashDetails.projectId).eq("ownerUserId", userId).execute()    
+                _ = self.client.table("Projects").update({"isTrash": 0}).eq("projectId", updateTrashDetails.projectId).execute()    
             updateProjectModifiedAt(updateTrashDetails.projectId)
             return
         except Exception as e:
@@ -466,25 +463,20 @@ class ManagementService:
             url = os.environ["FILE_URL"].format(projectId = projectId, fileName = dataframeName)
             resp = httpx.get(url, timeout=60, follow_redirects=True)
             resp.raise_for_status()
-
             file_like = io.BytesIO(resp.content)
             pf = pq.ParquetFile(file_like)
             schema = pf.schema_arrow
             num_rows = pf.metadata.num_rows
             num_cols = pf.metadata.num_columns
-
             attributeInfo = f'DATAFRAME NAME: {dataframeName}\n'
             for field in schema:
                 attributeInfo += f'- {field.name} ({field.type})\n'
             attributeInfo += f'SHAPE: ({num_rows}, {num_cols})\n'
-
             try:
-                # Read only the first row of the first row group
                 sample_df = pf.read_row_group(0).slice(0, 1).to_pandas()
                 attributeInfo += 'SAMPLE ROW:\n' + str(sample_df.to_string()) + '\n'
             except Exception:
                 attributeInfo += 'SAMPLE ROW: (failed to load)\n'
-
             return attributeInfo
         except Exception as e:
             logger.error(f"Failed to generate attribute info for {dataframeName} under project {projectId}: {e}")
@@ -791,19 +783,18 @@ class ManagementService:
             logger.error(exception)
             raise exception   
         
-    def deleteProject(self, projectId: str, userId: str) -> None:
+    def deleteProject(self, projectId: str) -> None:
         """
         Delete a project and all associated files from storage.
 
         Args:
             projectId (str): The project identifier.
-            userId (str): The user identifier.
 
         Raises:
             CustomException: For any errors during deletion.
         """
         try:
-            _ = self.client.table("Projects").delete().eq("projectId", projectId).eq("ownerUserId", userId).execute()
+            _ = self.client.table("Projects").delete().eq("projectId", projectId).execute()
             allFiles = self.client.storage.from_("AnalyticsHub").list(projectId)
             fileNames = [os.path.join(projectId, x.get("name")) for x in allFiles]
             if fileNames:
@@ -886,9 +877,8 @@ class ManagementService:
         """
         try:
             allTables = self.reportGenerator.getAllTables(projectId = projectId)
-            from utils.initMethods import get_report_pool
-            executor = get_report_pool()
-            futures = [executor.submit(self.reportGenerator.getProfilingReport, projectId, tableName) for tableName in allTables]
+            with ProcessPoolExecutor(max_workers = 5) as executor:
+                futures = [executor.submit(self.reportGenerator.getProfilingReport, projectId, tableName) for tableName in allTables]
             results = [x.result() for x in futures]
             dct = dict(zip(allTables, results))
             with io.BytesIO() as buffer:
