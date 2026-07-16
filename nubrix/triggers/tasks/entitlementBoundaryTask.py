@@ -14,9 +14,8 @@ from api.services.subscriptions.subscriptionFieldUtils import (
     subscriptionExperts,
     subscriptionPendingRemovals,
 )
-from api.commons import client
+from api.commons import client as supabaseClient
 from utils.logger import logger
-import os
 
 
 
@@ -28,7 +27,7 @@ class EntitlementBoundaryTask:
     """
 
     def __init__(self, client=None, now=None):
-        self.client = client
+        self.client = client if client is not None else supabaseClient
         self._now = now or utcNow
 
     def execute(self) -> dict:
