@@ -485,7 +485,38 @@ class ManagementService:
     def _parseModelJsonOutput(self, rawOutput: object, stage: str) -> dict:
         """Delegate to shared parser in utils.llmOutputParser."""
         return parseModelJsonOutput(rawOutput, stage)
-        
+
+    @staticmethod
+    def filterActiveTables(metadata: dict) -> dict:
+        """Return only table entries where isActive is not False.
+        Tables missing the isActive key are treated as active (backward compat).
+        """
+        if not isinstance(metadata, dict):
+            return {}
+        return {k: v for k, v in metadata.items() if not k.startswith("_") and v.get("isActive", True) is not False}
+
+    def validateTableNameAvailable(self, projectId: str, tableName: str) -> None:
+        """Check that a table name does not already exist in metadata.json (active or inactive).
+        Raises CustomException(409) if the name is already taken.
+        """
+        try:
+            files = self.client.storage.from_("AnalyticsHub").list(projectId)
+            filenames = [x.get("name") for x in files]
+            if "metadata.json" not in filenames:
+                return
+            fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            metadata = json.loads(urlopen(fileUrl).read())
+            if tableName in metadata:
+                raise CustomException(
+                    ValueError(f"Table name '{tableName}' already exists in this project."),
+                    statusCode=409,
+                    uiMessage=f"A table named '{tableName}' already exists in this project. Please use a different name."
+                )
+        except CustomException:
+            raise
+        except Exception as e:
+            logger.warning(f"validateTableNameAvailable check failed for {projectId}/{tableName}: {e}")
+
     def _generateMetadata(self, projectId: str, userId: str | None = None) -> dict:
         """
         Generate metadata for all data files in a project.
@@ -523,6 +554,8 @@ class ManagementService:
                 rawOutput=metadataRaw,
                 stage="Metadata generation"
             )
+            for tableName in metadata:
+                metadata[tableName]["isActive"] = True
             return metadata
         except Exception as e:
             logger.error(CustomException(e))
@@ -536,6 +569,7 @@ class ManagementService:
         fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
         domainFile = self.client.table("Projects").select("domainExpert").eq("projectId", projectId).execute().data[0].get("domainExpert") + ".json"
         metadata = json.loads(urlopen(fileUrl).read())
+        metadata = self.filterActiveTables(metadata)
 
         if domainFile in [x.get("name") for x in self.client.storage.from_("DomainSpecificKpis").list()]:
             domainFileUrl = os.environ["DOMAIN_FILE_URL"].format(fileName = domainFile) + f"?cb={int(time.time())}"
@@ -693,7 +727,10 @@ class ManagementService:
                 updatedFiles = filter(lambda x: datetime.datetime.strptime(x["metadata"]["lastModified"], '%Y-%m-%dT%H:%M:%S.000Z') > metadataLastModifiedTime, dataFiles)
                 updatedFiles = [os.path.splitext(x.get("name"))[0] for x in updatedFiles]
                 if updatedFiles != []:
-                    for key in updatedFiles: jsonData[key] = newMetadata[key]
+                    for key in updatedFiles:
+                        isActive = jsonData.get(key, {}).get("isActive", True)
+                        jsonData[key] = newMetadata[key]
+                        jsonData[key]["isActive"] = isActive
                 else:
                     pass
             else:
@@ -736,7 +773,8 @@ class ManagementService:
                         "tableName": key,
                         "tableDesc": jsonData.get(key).get("description"),
                         "shape": jsonData.get(key).get("shape"),
-                        "columns": jsonData.get(key).get("columns")
+                        "columns": jsonData.get(key).get("columns"),
+                        "isActive": jsonData.get(key).get("isActive", True)
                     }
                     newJson.get("tables").append(tableJson)
                 return newJson
@@ -781,8 +819,46 @@ class ManagementService:
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)
-            raise exception   
-        
+            raise exception
+
+    def toggleTableActive(self, projectId: str, tableName: str) -> dict:
+        """
+        Toggle the isActive flag for a table in metadata.json.
+
+        Args:
+            projectId (str): The project identifier.
+            tableName (str): The table name (without .parquet extension).
+
+        Returns:
+            dict: The updated table entry with its new isActive state.
+
+        Raises:
+            CustomException: If metadata.json or the table is not found, or update fails.
+        """
+        try:
+            fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            jsonData = json.loads(urlopen(fileUrl).read())
+            if tableName not in jsonData:
+                raise CustomException(
+                    ValueError(f"Table '{tableName}' not found in metadata for project '{projectId}'."),
+                    statusCode=404,
+                    uiMessage=f"Table '{tableName}' not found in metadata."
+                )
+            currentActive = jsonData[tableName].get("isActive", True)
+            jsonData[tableName]["isActive"] = not currentActive
+            with io.BytesIO() as buffer:
+                buffer.write(json.dumps(jsonData, indent=4).encode("utf-8"))
+                buffer.seek(0)
+                self.client.storage.from_("AnalyticsHub").upload(path = f"{projectId}/metadata.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
+            updateProjectModifiedAt(projectId)
+            return {"tableName": tableName, "isActive": jsonData[tableName]["isActive"]}
+        except CustomException:
+            raise
+        except Exception as e:
+            exception = CustomException(e)
+            logger.error(exception)
+            raise exception
+
     def deleteProject(self, projectId: str) -> None:
         """
         Delete a project and all associated files from storage.

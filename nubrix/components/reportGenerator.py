@@ -39,7 +39,7 @@ class ReportGenerator:
         """
         metadataUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "")
         metadata = json.loads(urlopen(metadataUrl).read().decode("utf-8"))
-        tables = list(metadata.keys())
+        tables = [k for k, v in metadata.items() if not k.startswith("_") and v.get("isActive", True) is not False]
         return tables
 
     def getProfilingReport(self, projectId: str, tableName: str) -> str:

@@ -92,14 +92,16 @@ class TransformationService:
         return name
 
     async def _get_metadata(self, projectId: str) -> dict:
-        """Fetch project metadata with a short Redis cache."""
+        """Fetch project metadata with a short Redis cache.
+        Returns only active tables (isActive != False)."""
         cacheKey = f"{projectId}::metadata.json"
         redisClient = None
         try:
             redisClient = self._redis_client()
             cached = redisClient.get(cacheKey)
             if cached:
-                return json.loads(cached)
+                fullMetadata = json.loads(cached)
+                return self._filterActive(fullMetadata)
         except Exception as e:
             logger.warning(f"Metadata cache read failed for project {projectId}: {e}")
 
@@ -113,7 +115,13 @@ class TransformationService:
                 redisClient.set(cacheKey, json.dumps(metadata), ex=300)
             except Exception as e:
                 logger.warning(f"Metadata cache write failed for project {projectId}: {e}")
-        return metadata
+        return self._filterActive(metadata)
+
+    @staticmethod
+    def _filterActive(metadata: dict) -> dict:
+        """Return only active table entries. Delegates to managementService."""
+        from api.services.managementService import managementService
+        return managementService.filterActiveTables(metadata)
 
     def _ensure_transformation(self, projectId: str, transformationId: str) -> dict:
         """Fetch a transformation and verify project ownership."""
@@ -383,6 +391,9 @@ class TransformationService:
             row = self._ensure_transformation(projectId=projectId, transformationId=transformationId)
             transformationName = row.get("transformation_name")
             newTransformedTableName = self._sanitizeTableName(transformationName if transformationName else "table")
+
+            from api.services.managementService import managementService
+            managementService.validateTableNameAvailable(projectId=projectId, tableName=newTransformedTableName)
 
             messages = row.get("messages") or []
             target_msg = None

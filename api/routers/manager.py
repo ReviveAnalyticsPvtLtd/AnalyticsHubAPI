@@ -323,7 +323,24 @@ async def editMetadata(modifiedMetadata: EditMetadata, token = Depends(verifyTok
     """
     try:
         jsonData = managementService.editMetadata(modifiedMetadata = modifiedMetadata)
-        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "metadata": jsonData})   
+        return ORJSONResponse(status_code = 200, content = {"status": "SUCCESS", "metadata": jsonData})
+    except CustomException as e:
+        raiseHttpException(e)
+
+@router.patch("/toggleTableActive/{projectId}/{tableName}")
+async def toggleTableActive(projectId: str, tableName: str, token = Depends(verifyToken)):
+    """
+    Toggle the isActive flag for a table in a project's metadata.
+
+    Status Codes:
+        200 - Success. Returns the table name and its new isActive state.
+        401 - Please login to toggle table active state.
+        404 - Table not found in metadata.
+        500 - Failed to update table active state.
+    """
+    try:
+        result = managementService.toggleTableActive(projectId=projectId, tableName=tableName)
+        return ORJSONResponse(status_code=200, content={"status": "SUCCESS", **result})
     except CustomException as e:
         raiseHttpException(e)
 

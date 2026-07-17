@@ -131,10 +131,11 @@ class ReportingService:
         return metadata
 
     async def _getProjectMetadata(self, projectId: str) -> dict:
-        """Fetch project metadata with a two-layer cache + per-table size hint annotation."""
+        """Fetch project metadata with a two-layer cache + per-table size hint annotation.
+        Returns only active tables (isActive != False)."""
         cached = self._metadataCache.get(projectId)
         if cached and (time.time() - cached[0]) < self._metadataCacheTtl:
-            return cached[1]
+            return self._filterActive(cached[1])
         redis_key = f"{projectId}::metadata"
         try:
             hit = self._redis.get(redis_key)
@@ -142,7 +143,7 @@ class ReportingService:
                 metadata = orjson.loads(hit)
                 self._augment_with_size_hints(metadata, projectId)
                 self._metadataCache[projectId] = (time.time(), metadata)
-                return metadata
+                return self._filterActive(metadata)
         except Exception as e:
             logger.warning(f"Metadata Redis cache read failed for {projectId}: {e}")
         url = self._projectMetadataUrl(projectId, "metadata.json")
@@ -153,7 +154,13 @@ class ReportingService:
             self._redis.set(redis_key, orjson.dumps(metadata), ex=120)
         except Exception as e:
             logger.warning(f"Metadata Redis cache write failed for {projectId}: {e}")
-        return metadata
+        return self._filterActive(metadata)
+
+    @staticmethod
+    def _filterActive(metadata: dict) -> dict:
+        """Return only active table entries. Delegates to managementService."""
+        from api.services.managementService import managementService
+        return managementService.filterActiveTables(metadata)
 
     @staticmethod
     def _generatePanelChart(projectId: str, chartType: str, xAxis: str, yAxis: str, aggregationMetric: str | None, dataSourceName: str, tablesUsed: list[str] | str, joinTypes: list[str] | None = None, blendOn: list[str] | None = None, **kwargs) -> dict:

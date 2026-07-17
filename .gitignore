@@ -171,8 +171,4 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 CLAUDE.md
-AGENTS.md
-MEMORY.md
-agents.md
 claude.md
-memory.md

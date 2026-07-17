@@ -75,6 +75,10 @@ class EditMetadata(BaseModel):
     columnName: str | None = None
     columnDescription: str | None = None
 
+class ToggleTableActive(BaseModel):
+    projectId: str
+    tableName: str
+
 class PanelChartDetails(BaseModel):
     projectId: str
     chartType: str

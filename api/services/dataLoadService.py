@@ -118,10 +118,12 @@ class DataLoadService:
                         statusCode=415,
                         uiMessage="Unsupported file type. Upload CSV files only."
                     )
+                sanitizedName = self._sanitizeFileName(file.filename)
+                from api.services.managementService import managementService
+                managementService.validateTableNameAvailable(projectId=projectId, tableName=sanitizedName)
                 with tempfile.NamedTemporaryFile(delete=True, suffix=".parquet") as temp:
                     df = self._readCsvUpload(await file.read())
                     self._sanitizeDfForParquet(df).to_parquet(temp.name, compression="snappy")
-                    sanitizedName = self._sanitizeFileName(file.filename)
                     self.client.storage.from_("AnalyticsHub").upload(
                         file=temp.name,
                         path=f"{projectId}/{sanitizedName}.parquet",
@@ -165,11 +167,14 @@ class DataLoadService:
                     )
                 allSheetData = pd.read_excel(io.BytesIO(await file.read()), sheet_name=None, parse_dates=True)
                 sanitizedBase = self._sanitizeFileName(file.filename)
+                from api.services.managementService import managementService
                 for sheetName, sheetData in allSheetData.items():
                     sanitizedSheet = re.sub(r"[^\w-]", "_", str(sheetName)).strip("_")
+                    tableName = f"{sanitizedBase}_{sanitizedSheet}"
+                    managementService.validateTableNameAvailable(projectId=projectId, tableName=tableName)
                     with tempfile.NamedTemporaryFile(delete=True, suffix=".parquet") as temp:
                         sheetData.to_parquet(temp.name, compression="snappy")
-                        fileName = f"{sanitizedBase}_{sanitizedSheet}.parquet"
+                        fileName = f"{tableName}.parquet"
                         self.client.storage.from_("AnalyticsHub").upload(
                             file=temp.name,
                             path=f"{projectId}/{fileName}",
@@ -342,6 +347,8 @@ class DataLoadService:
             connStr = f"mysql+pymysql://{connection.user}:{connection.password}@{connection.host}:{connection.port}/{connection.db}"
             engine = create_engine(connStr)
             sanitizedTable = self._sanitizeFileName(connection.table)
+            from api.services.managementService import managementService
+            managementService.validateTableNameAvailable(projectId=connection.projectId, tableName=sanitizedTable)
             with tempfile.NamedTemporaryFile(delete=True, suffix=".parquet") as temp:
                 pd.read_sql(f"SELECT * FROM {connection.table}", engine).to_parquet(
                     temp.name, compression="snappy"
@@ -387,6 +394,8 @@ class DataLoadService:
             connStr = f"postgresql+psycopg2://{connection.user}:{connection.password}@{connection.host}:{connection.port}/{connection.db}"
             engine = create_engine(connStr)
             sanitizedTable = self._sanitizeFileName(connection.table)
+            from api.services.managementService import managementService
+            managementService.validateTableNameAvailable(projectId=connection.projectId, tableName=sanitizedTable)
             with tempfile.NamedTemporaryFile(delete=True, suffix=".parquet") as temp:
                 pd.read_sql(f"SELECT * FROM {connection.table}", engine).to_parquet(
                     temp.name, compression="snappy"
@@ -433,6 +442,8 @@ class DataLoadService:
                     record.pop("_id", None)
                 pd.DataFrame(records).to_parquet(temp.name, compression="snappy")
                 sanitizedCollection = self._sanitizeFileName(connection.collection)
+                from api.services.managementService import managementService
+                managementService.validateTableNameAvailable(projectId=connection.projectId, tableName=sanitizedCollection)
                 self.client.storage.from_("AnalyticsHub").upload(
                     file=temp.name,
                     path=f"{connection.projectId}/{sanitizedCollection}.parquet",

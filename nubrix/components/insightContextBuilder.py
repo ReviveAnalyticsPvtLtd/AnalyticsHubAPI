@@ -132,6 +132,7 @@ class InsightContextBuilder:
             logger.info(f"Building insight context for project {projectId}.")
 
             metadata = self._loadJsonFromStorage(projectId, "metadata.json") or {}
+            metadata = {k: v for k, v in metadata.items() if not k.startswith("_") and v.get("isActive", True) is not False}
             dashboardConfig = self._loadJsonFromStorage(projectId, "dashboardConfig.json") or {}
             existingInsights = self._loadJsonFromStorage(projectId, "insights.json") or {}
             domainContext = self._loadDomainContext(projectId)

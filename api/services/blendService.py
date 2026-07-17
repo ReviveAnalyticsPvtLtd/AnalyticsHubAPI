@@ -95,7 +95,7 @@ class BlendService:
                 blends, blendedTables = list(), list()
             metadataUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             metadata = json.loads(urlopen(metadataUrl).read())
-            rawTables = list(metadata.keys())
+            rawTables = [k for k, v in metadata.items() if not k.startswith("_") and v.get("isActive", True) is not False]
             dataSources = {
                 "blends": blends,
                 "rawTables": rawTables,
@@ -125,6 +125,12 @@ class BlendService:
             metadataUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
             metadata = json.loads(urlopen(metadataUrl).read())
             if details.tableName in metadata.keys():
+                if metadata[details.tableName].get("isActive", True) is False:
+                    raise CustomException(
+                        ValueError(f"Table '{details.tableName}' is inactive."),
+                        statusCode=403,
+                        uiMessage=f"Table '{details.tableName}' is inactive. Activate it first to use it."
+                    )
                 allFields = metadata[details.tableName]["columns"]
             elif "blendConfig.json" in allFiles:
                 blendConfigUrl = os.environ["FILE_URL"].format(projectId = details.projectId, fileName = "blendConfig.json").replace(".parquet", "") + f"?cb={int(time.time())}"
