@@ -65,6 +65,3 @@ dependencies = [
     "ydata-profiling>=4.16.1",
     "polars>=1.42.1",
 ]
-
-[tool.uv.extra-build-dependencies]
-htmlmin = ["setuptools"]
