@@ -85,3 +85,8 @@ NubrixAI Analytics Hub API — FastAPI + Celery + LangChain monolith.
 - New scheduled job: implement class in `nubrix/triggers/tasks/`, wire into `celery.py` (task decorator + beat entry), import at top of that file.
 - New table creation entry point: call `managementService.validateTableNameAvailable(projectId, tableName)` before upload to prevent name collisions.
 - Don't add: async auth deps, tenant concurrency caps, Celery queue splits, proxy clients, session caching, rollups, Docker cgroup tweaks. These were tried and reverted — see MEMORY.md.
+
+## Resources
+- `resources/EndpointSpec.md` — full 89-endpoint reference (auth, projects, data loading, reporting, dashboards, transformations, subscriptions, billing, webhooks, credits).
+- `resources/highlevel-architecture.html` — system architecture diagram (FastAPI, Celery, LLM agents, Supabase, Redis).
+- `resources/lowlevel-architecture.html` — detailed component interaction diagram (subprocess sandbox, data flow, cache layers).

@@ -106,7 +106,14 @@ Every table entry in `metadata.json` now has an `isActive` boolean. Inactive tab
 
 **Model**: `ToggleTableActive(projectId: str, tableName: str)` in `api/models.py`.
 
-### 11. Table Name Collision Guard (`managementService.validateTableNameAvailable`)
+### 11. Resources Directory (`resources/`)
+
+- `resources/EndpointSpec.md` — full 89-endpoint reference document covering all API surface.
+- `resources/highlevel-architecture.html` — system architecture diagram (FastAPI, Celery, LLM agents, Supabase, Redis, Razorpay).
+- `resources/lowlevel-architecture.html` — detailed component interaction diagram (subprocess sandbox, data flow, cache layers, Celery beat tasks).
+- All files are hand-maintained reference docs, not generated.
+
+### 12. Table Name Collision Guard (`managementService.validateTableNameAvailable`)
 
 No new table (from data load or transformation) can take a name that already exists in `metadata.json` — active or inactive. Raises `409` with message `"A table named '{tableName}' already exists in this project."`
 
