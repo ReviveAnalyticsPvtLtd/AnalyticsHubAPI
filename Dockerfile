@@ -13,9 +13,7 @@ RUN apt-get update && apt-get install -y \
 
 RUN pip install uv
 
-RUN pip install legacy-cgi setuptools
-
-RUN uv sync --no-build-isolation
+RUN uv sync
 
 RUN chmod +x /app/startup.sh
 
