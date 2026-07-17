@@ -8,7 +8,7 @@ This file documents changes made to the NubrixAI Analytics Hub API codebase.
 
 **Goal**: Use Polars as the primary data engine for LLM-generated code (5-100x faster on large datasets), fix sandbox execution reliability, and add a paginated table viewer endpoint.
 
-**What stayed**: All auth, CORS, Celery config, supervisord, Docker, sizing — unchanged from original. No async deps, no tenant caps, no queue splits, no proxy clients, no session caching, no rollups.
+**What stayed**: All auth, CORS, Celery config, supervisord, sizing — unchanged from original. No async deps, no tenant caps, no queue splits, no proxy clients, no session caching, no rollups.
 
 ---
 
@@ -113,7 +113,14 @@ Every table entry in `metadata.json` now has an `isActive` boolean. Inactive tab
 - `resources/lowlevel-architecture.html` — detailed component interaction diagram (subprocess sandbox, data flow, cache layers, Celery beat tasks).
 - All files are hand-maintained reference docs, not generated.
 
-### 12. Table Name Collision Guard (`managementService.validateTableNameAvailable`)
+### 12. Python 3.13 Migration + Dockerfile Fix
+
+- **Python version**: `.python-version` updated from `3.10` to `3.13`. AGENTS.md/MEMORY.md synced.
+- **Dockerfile**: Base image changed from `python:3.10-slim` to `python:3.13-slim`.
+- **`htmlmin==0.1.12` build fix**: `ydata-profiling` depends on `htmlmin==0.1.12` which `import cgi` (removed in Python 3.13). Fix: pre-install `legacy-cgi` + `uv sync --no-build-isolation` so the build environment has `cgi` available.
+- **Why no `pins/build-overrides`**: `legacy-cgi` isn't a runtime dep — only needed during `htmlmin` build. `--no-build-isolation` is the minimal change.
+
+### 13. Table Name Collision Guard (`managementService.validateTableNameAvailable`)
 
 No new table (from data load or transformation) can take a name that already exists in `metadata.json` — active or inactive. Raises `409` with message `"A table named '{tableName}' already exists in this project."`
 
@@ -161,7 +168,8 @@ These were added during the refactor and then reverted because they broke produc
 | Auth deps (sync `verifyToken`, `verifyUser`, etc.) | Original behavior, no async conversion |
 | Celery config (single worker, original beat schedule) | Working fine, no queue split |
 | Supervisord (fastapi + celery + beat) | Simple, working |
-| Docker / startup.sh | Original |
+| startup.sh | Original |
+| Dockerfile | Changed: python:3.10-slim → python:3.13-slim + legacy-cgi for htmlmin build |
 | Sizing formulas (`utils/sizing.py`) | Original server-aware formulas |
 
 ---

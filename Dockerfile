@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM python:3.13-slim
 
 WORKDIR /app
 
@@ -13,7 +13,9 @@ RUN apt-get update && apt-get install -y \
 
 RUN pip install uv
 
-RUN uv sync
+RUN pip install legacy-cgi
+
+RUN uv sync --no-build-isolation
 
 RUN chmod +x /app/startup.sh
 

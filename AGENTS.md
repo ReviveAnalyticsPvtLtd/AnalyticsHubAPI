@@ -3,7 +3,7 @@
 NubrixAI Analytics Hub API — FastAPI + Celery + LangChain monolith.
 
 ## Stack
-- Python 3.10 (pinned via `.python-version`). Use `uv` for deps; lockfile is `uv.lock`.
+- Python 3.13 (pinned via `.python-version`). Use `uv` for deps; lockfile is `uv.lock`.
 - FastAPI on gunicorn (uvicorn worker class), port 7860, mounted at `/api/latest`.
 - Celery worker + beat on Redis for billing/subscription/credit/cron jobs.
 - LangChain + LangGraph orchestrating LLM components (Gemini via Google GenAI, Groq, Cerebras, OpenAI via OpenRouter).
