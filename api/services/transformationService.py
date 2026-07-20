@@ -393,7 +393,9 @@ class TransformationService:
             newTransformedTableName = self._sanitizeTableName(transformationName if transformationName else "table")
 
             from api.services.managementService import managementService
-            managementService.validateTableNameAvailable(projectId=projectId, tableName=newTransformedTableName)
+            existingArtifact = row.get("latest_approved_artifact") or {}
+            if existingArtifact.get("table_name") != newTransformedTableName:
+                managementService.validateTableNameAvailable(projectId=projectId, tableName=newTransformedTableName)
 
             messages = row.get("messages") or []
             target_msg = None

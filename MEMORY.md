@@ -126,6 +126,8 @@ No new table (from data load or transformation) can take a name that already exi
 
 Called at every entry point where a new table is created:
 - Transformation preview (`transformationService.executeAndPreviewArtifact`) — validated once at preview, not re-validated at apply.
+
+**Carve-out**: `transformationService.approveMessage` skips the check when the transformation's own `latest_approved_artifact.table_name` matches `newTransformedTableName` — i.e., a transformation may re-approve / overwrite its own output. Re-using a name that belongs to a *different* table still raises 409.
 - CSV upload (`dataLoadService.loadCsvData`)
 - Excel upload (`dataLoadService.loadExcelData`)
 - MySQL load (`dataLoadService.loadMySql`)
