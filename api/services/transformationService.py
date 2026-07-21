@@ -137,6 +137,80 @@ class TransformationService:
             raise ValueError("Transformation not found.")
         return response.data[0]
 
+    def _validate_transformation_table_name(
+        self,
+        projectId: str,
+        targetTableName: str,
+        currentTransformationId: str | None = None,
+    ) -> None:
+        """
+        Validate that targetTableName can be created or updated by currentTransformationId.
+        
+        Rules:
+        - Cannot overwrite a table owned by ANOTHER transformation in this project.
+        - Cannot overwrite a base dataset table in metadata.json (uploaded/imported tables).
+        - CAN overwrite its own output table (rewriting versions within the same transformation chat).
+        """
+        import time
+        from urllib.request import urlopen
+
+        sanitizedTarget = self._sanitizeTableName(targetTableName)
+
+        # 1. Fetch all transformations in the project excluding current
+        query = self.supabase.table("transformations").select("*").eq("project_id", projectId)
+        if currentTransformationId:
+            query = query.neq("transformation_id", currentTransformationId)
+        otherTransformations = query.execute().data or []
+
+        # Build set of table names owned by OTHER transformations
+        otherTransformationTables = set()
+        for t in otherTransformations:
+            tname = t.get("transformation_name")
+            if tname:
+                otherTransformationTables.add(self._sanitizeTableName(tname))
+            latest = t.get("latest_approved_artifact")
+            if isinstance(latest, dict) and latest.get("table_name"):
+                otherTransformationTables.add(self._sanitizeTableName(latest.get("table_name")))
+
+        if sanitizedTarget in otherTransformationTables:
+            raise CustomException(
+                ValueError(f"A transformation named '{sanitizedTarget}' already exists in this project."),
+                statusCode=409,
+                uiMessage=f"A transformation named '{sanitizedTarget}' already exists in this project. Please use a different name."
+            )
+
+        # 2. Find table names owned by ALL transformations in this project (including current)
+        allTransformations = self.supabase.table("transformations").select("*").eq("project_id", projectId).execute().data or []
+        allTransformationTables = set()
+        for t in allTransformations:
+            tname = t.get("transformation_name")
+            if tname:
+                allTransformationTables.add(self._sanitizeTableName(tname))
+            latest = t.get("latest_approved_artifact")
+            if isinstance(latest, dict) and latest.get("table_name"):
+                allTransformationTables.add(self._sanitizeTableName(latest.get("table_name")))
+        if currentTransformationId is None:
+            allTransformationTables.add(sanitizedTarget)
+
+        # 3. Check metadata.json to block overwriting base dataset tables
+        try:
+            files = self.supabase.storage.from_("AnalyticsHub").list(projectId)
+            filenames = [x.get("name") for x in files]
+            if "metadata.json" in filenames:
+                fileUrl = os.environ["FILE_URL"].format(projectId=projectId, fileName="metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+                metadata = json.loads(urlopen(fileUrl).read())
+                # If target table exists in metadata.json AND is not owned by ANY transformation workspace, it's a base dataset table!
+                if sanitizedTarget in metadata and sanitizedTarget not in allTransformationTables:
+                    raise CustomException(
+                        ValueError(f"Table '{sanitizedTarget}' is a base dataset and cannot be overwritten."),
+                        statusCode=409,
+                        uiMessage=f"A base dataset named '{sanitizedTarget}' already exists in this project and cannot be overwritten by a transformation."
+                    )
+        except CustomException:
+            raise
+        except Exception as e:
+            logger.warning(f"_validate_transformation_table_name metadata check warning for {projectId}/{sanitizedTarget}: {e}")
+
     def _get_messages_from_db(self, projectId: str, transformationId: str) -> list[dict]:
         """Load messages list directly from transformations table."""
         row = self._ensure_transformation(projectId=projectId, transformationId=transformationId)
@@ -223,6 +297,9 @@ class TransformationService:
             if not re.match(r"^[A-Za-z0-9\s._-]+$", name):
                 raise ValueError("Transformation name can only contain letters, numbers, spaces, periods, hyphens, and underscores.")
 
+            sanitizedName = self._sanitizeTableName(name)
+            self._validate_transformation_table_name(projectId=projectId, targetTableName=sanitizedName, currentTransformationId=None)
+
             response = self.supabase.table("transformations").insert({
                 "project_id": projectId,
                 "transformation_name": name,
@@ -231,6 +308,8 @@ class TransformationService:
             }).execute()
             updateProjectModifiedAt(projectId)
             return response.data[0]
+        except CustomException:
+            raise
         except Exception as e:
             exception = CustomException(e, statusCode=400, uiMessage=str(e))
             logger.error(exception)
@@ -392,10 +471,11 @@ class TransformationService:
             transformationName = row.get("transformation_name")
             newTransformedTableName = self._sanitizeTableName(transformationName if transformationName else "table")
 
-            from api.services.managementService import managementService
-            existingArtifact = row.get("latest_approved_artifact") or {}
-            if existingArtifact.get("table_name") != newTransformedTableName:
-                managementService.validateTableNameAvailable(projectId=projectId, tableName=newTransformedTableName)
+            self._validate_transformation_table_name(
+                projectId=projectId,
+                targetTableName=newTransformedTableName,
+                currentTransformationId=transformationId,
+            )
 
             messages = row.get("messages") or []
             target_msg = None
@@ -666,21 +746,13 @@ class TransformationService:
 
             # Check if transformation exists
             row = self._ensure_transformation(projectId=projectId, transformationId=transformationId)
+            sanitizedNewName = self._sanitizeTableName(newName)
 
-            # Check for duplicate names in the project
-            existing = (
-                self.supabase.table("transformations")
-                .select("transformation_name")
-                .eq("project_id", projectId)
-                .neq("transformation_id", transformationId)
-                .execute()
+            self._validate_transformation_table_name(
+                projectId=projectId,
+                targetTableName=sanitizedNewName,
+                currentTransformationId=transformationId,
             )
-            if existing.data and newName in [x.get("transformation_name") for x in existing.data]:
-                raise CustomException(
-                    ValueError("Duplicate name"),
-                    statusCode=409,
-                    uiMessage="A transformation with this name already exists in the project."
-                )
 
             # Update transformation name
             self.supabase.table("transformations").update({
