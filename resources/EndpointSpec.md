@@ -36,12 +36,18 @@ Verify a JWT token and return the user's credit balance snapshot.
   "status": "SUCCESS",
   "message": "Token is valid and has not expired.",
   "credits": {
-    "remainingCredits": 8500,
-    "usedCredits": 1500,
-    "monthlyQuota": 10000,
-    "periodStart": "2025-01-01T00:00:00Z",
-    "periodEnd": "2025-01-31T23:59:59Z",
-    "planTier": "pro"
+    "planTier": "pro",
+    "monthlyTokenQuota": 10000000,
+    "usedTokens": 480000,
+    "remainingTokens": 9520000,
+    "monthlyCredits": 1000.0,
+    "usedCredits": 48.0,
+    "remainingCredits": 952.0,
+    "usagePercentage": 4.8,
+    "periodStart": "2026-07-01T00:00:00Z",
+    "periodEnd": "2026-08-01T00:00:00Z",
+    "lastResetAt": "2026-07-01T00:00:00Z",
+    "initialized": true
   }
 }
 ```
@@ -1853,9 +1859,9 @@ All routes under `/api/latest/billingAdmin/`. Auth via `verifyBillingAdmin` (req
 
 ### 12.5 `POST /api/latest/billingAdmin/credits/force-reset?resetUsage={true|false}`
 
-Recompute credit quotas for all users from `credits.json` and flush Redis credit hashes.
+Recompute `monthly_token_quota` for all users from `credits.json` and flush Redis credit hashes.
 
-**Query Params:** `resetUsage` (bool, default `false`)
+**Query Params:** `resetUsage` (bool, default `false`) — when `true`, also zero `used_tokens` and restore `remaining_tokens` to the full quota for every user, giving everyone a fresh monthly bucket immediately. The billing period is left untouched.
 
 **Response (200):**
 ```json
@@ -1906,53 +1912,69 @@ All routes under `/api/latest/credits/`. Auth via `verifyUser`.
 
 ### 14.1 `GET /api/latest/credits/balance`
 
-Get the current credit balance snapshot.
+Get the current balance snapshot. Balances are tracked in raw LLM tokens; credit
+fields are derived at 10,000 tokens per credit and returned as floats (2 dp).
 
 **Response (200):**
 ```json
 {
   "status": "SUCCESS",
   "data": {
-    "remainingCredits": 8500,
-    "usedCredits": 1500,
-    "monthlyQuota": 10000,
-    "periodStart": "2025-01-01T00:00:00Z",
-    "periodEnd": "2025-01-31T23:59:59Z",
-    "planTier": "pro"
+    "planTier": "pro",
+    "monthlyTokenQuota": 10000000,
+    "usedTokens": 480000,
+    "remainingTokens": 9520000,
+    "monthlyCredits": 1000.0,
+    "usedCredits": 48.0,
+    "remainingCredits": 952.0,
+    "usagePercentage": 4.8,
+    "periodStart": "2026-07-01T00:00:00Z",
+    "periodEnd": "2026-08-01T00:00:00Z",
+    "lastResetAt": "2026-07-01T00:00:00Z",
+    "initialized": true
   }
 }
 ```
+
+`initialized` is `false` with all counters at zero when the user has no
+`credit_balances` row yet.
 
 ---
 
 ### 14.2 `GET /api/latest/credits/usage`
 
-Get credit usage summary with optional Langfuse breakdown by operation and model.
+Get token usage summary with optional Langfuse breakdown by operation and model.
 
 **Response (200):**
 ```json
 {
   "status": "SUCCESS",
   "data": {
-    "totalUsedCredits": 1500,
-    "monthlyQuota": 10000,
-    "remainingCredits": 8500,
-    "usagePercentage": 15.0,
-    "periodStart": "2025-01-01T00:00:00Z",
-    "periodEnd": "2025-01-31T23:59:59Z",
+    "totalUsedTokens": 480000,
+    "monthlyTokenQuota": 10000000,
+    "remainingTokens": 9520000,
+    "totalUsedCredits": 48.0,
+    "monthlyCredits": 1000.0,
+    "remainingCredits": 952.0,
+    "usagePercentage": 4.8,
+    "periodStart": "2026-07-01T00:00:00Z",
+    "periodEnd": "2026-08-01T00:00:00Z",
     "planTier": "pro",
     "langfuseAvailable": true,
     "breakdown": {
       "byOperation": [
-        { "operation": "reporting_query", "credits": 800, "calls": 12 }
+        { "tag": "reporting_query", "totalTokens": 260000, "callCount": 12 }
       ],
       "byModel": [
-        { "model": "gemini-2.0-flash", "credits": 600, "calls": 20 }
+        { "model": "gemini-2.0-flash", "totalTokens": 180000, "callCount": 20 }
       ]
     }
   }
 }
 ```
+
+`breakdown` arrays are empty and `langfuseAvailable` is `false` when Langfuse is
+unconfigured or its metrics endpoint returns an unexpected shape.
 
 ---
 
