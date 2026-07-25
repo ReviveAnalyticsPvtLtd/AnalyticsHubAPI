@@ -26,8 +26,9 @@ async def getCreditBalance(user: UserContext = Depends(verifyUser)):
     Return the current credit balance for the authenticated user.
 
     Returns:
-        ORJSONResponse: Credit balance details including remaining,
-            used, quota, period start/end, and plan tier.
+        ORJSONResponse: Balance details including remaining/used tokens, the
+            monthly token quota, the same figures as derived credits, period
+            start/end, and plan tier.
     """
     try:
         from api.services.credits.creditService import creditService
@@ -48,13 +49,14 @@ async def getCreditBalance(user: UserContext = Depends(verifyUser)):
 @router.get("/usage")
 async def getCreditUsage(user: UserContext = Depends(verifyUser)):
     """
-    Return a summary of recent credit usage for the authenticated user.
+    Return a summary of recent token usage for the authenticated user.
 
-    Includes Supabase-backed credit totals and, when available, a
-    per-operation and per-model breakdown from the Langfuse Metrics API.
+    Includes Supabase-backed token totals (with credits derived at the ratio in
+    config/credits.json) and, when available, a per-operation and per-model
+    breakdown from the Langfuse Metrics API.
 
     Returns:
-        ORJSONResponse: Usage summary with credit totals and optional
+        ORJSONResponse: Usage summary with token and credit totals and optional
             Langfuse breakdown.
     """
     try:
@@ -93,9 +95,12 @@ async def getCreditUsage(user: UserContext = Depends(verifyUser)):
             content={
                 "status": "SUCCESS",
                 "data": {
-                    "totalUsedCredits": snapshot.get("usedCredits", 0),
-                    "monthlyQuota": snapshot.get("monthlyQuota", 0),
-                    "remainingCredits": snapshot.get("remainingCredits", 0),
+                    "totalUsedTokens": snapshot.get("usedTokens", 0),
+                    "monthlyTokenQuota": snapshot.get("monthlyTokenQuota", 0),
+                    "remainingTokens": snapshot.get("remainingTokens", 0),
+                    "totalUsedCredits": snapshot.get("usedCredits", 0.0),
+                    "monthlyCredits": snapshot.get("monthlyCredits", 0.0),
+                    "remainingCredits": snapshot.get("remainingCredits", 0.0),
                     "usagePercentage": snapshot.get("usagePercentage", 0.0),
                     "periodStart": periodStart,
                     "periodEnd": periodEnd,

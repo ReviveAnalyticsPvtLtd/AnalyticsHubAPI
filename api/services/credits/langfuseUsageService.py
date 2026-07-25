@@ -9,7 +9,7 @@ Falls back gracefully when Langfuse is not configured or the
 metrics endpoint returns an unexpected shape.
 """
 
-__version__ = "2.0.0"
+__version__ = "1.0.0"
 __author__ = "Rohit Mishra"
 __all__ = ["getUsageBreakdown"]
 

@@ -42,7 +42,7 @@ class UtilityService:
     # ~50 estimated tokens per second of audio for billing purposes (covers
     # input processing overhead on top of output token generation).
     _STT_TOKENS_PER_SECOND = 50
-    _STT_MIN_TOKENS = 200
+    _STT_MIN_TOKENS = 2000
 
     def getSpeechTranscript(self, speechToText: SpeechToTextModel, userId: str | None = None) -> str:
         """
@@ -68,7 +68,7 @@ class UtilityService:
                         estimatedTokens = max(self._STT_MIN_TOKENS, int(audioDuration * self._STT_TOKENS_PER_SECOND))
                     else:
                         estimatedTokens = self._STT_MIN_TOKENS
-                    creditService.deductCredits(userId=userId, tokensUsed=estimatedTokens, operationType="speech_to_text")
+                    creditService.deductTokens(userId=userId, tokensUsed=estimatedTokens, operationType="speech_to_text")
                 except Exception as e:
                     logger.warning(f"STT credit deduction failed: {e}")
                 try:

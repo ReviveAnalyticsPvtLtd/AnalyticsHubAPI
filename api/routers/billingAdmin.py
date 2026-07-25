@@ -161,13 +161,14 @@ async def forceResetAllQuotas(
     adminUserId=Depends(verifyBillingAdmin),
 ):
     """
-    Recompute daily_quota and monthly_quota for all users from credits.json,
-    then flush all Redis credit hashes so they rebuild with updated values.
+    Recompute monthly_token_quota for all users from credits.json, then flush
+    all Redis credit hashes so they rebuild with updated values.
 
     Query params:
-        resetUsage (bool, default false): when true, also zero out daily_used
-            for all users, giving everyone a fresh daily bucket immediately.
-            Monthly usage and billing period are left untouched.
+        resetUsage (bool, default false): when true, also zero out used_tokens
+            and restore remaining_tokens to the full quota for all users,
+            giving everyone a fresh monthly bucket immediately. The billing
+            period itself is left untouched.
     """
     try:
         from api.services.credits.creditService import creditService

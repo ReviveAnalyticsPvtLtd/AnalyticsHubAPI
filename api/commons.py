@@ -214,7 +214,7 @@ def requirePaidPlan(
 def requireCredits(operationType: str):
     """
     Dependency factory that returns a FastAPI dependency checking whether
-    the user has enough credits for the specified operation type.
+    the user has enough remaining monthly tokens for the specified operation.
 
     Usage::
 
@@ -222,47 +222,32 @@ def requireCredits(operationType: str):
         async def generateChart(body: ..., user=Depends(requireCredits("reporting_query"))):
             ...
 
-    Raises HTTPException 402 when the user's remaining credits are below
-    the configured minimum for the operation.
+    Raises HTTPException 402 when the user's remaining tokens are below the
+    configured minimum for the operation. A remaining value of -1 means the
+    balance is unreadable (Redis and Supabase both unavailable) and is allowed
+    through rather than blocking the user on an infrastructure fault.
     """
     def _dependency(user: UserContext = Depends(verifyUser)) -> UserContext:
         from api.services.credits.creditService import creditService
         from api.services.credits.creditConfig import getOperationMinimum
 
         minimum = getOperationMinimum(operationType)
-        effective = creditService.getRemainingCredits(user.userId)
+        remaining = creditService.getRemainingTokens(user.userId)
 
-        if effective != -1 and effective < minimum:
+        if remaining != -1 and remaining < minimum:
             snapshot = creditService.getBalanceSnapshot(user.userId)
-            monthlyRemaining = snapshot.get("remainingCredits", 0)
-
-            if monthlyRemaining < minimum:
-                raise HTTPException(
-                    status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                    detail={
-                        "status": "FAILURE",
-                        "message": (
-                            "Monthly quota exhausted. Your credits reset at the start "
-                            f"of your next billing period ({snapshot.get('periodEnd')})."
-                        ),
-                        "errorCode": "MONTHLY_QUOTA_EXHAUSTED",
-                        "remaining": effective,
-                        "required": minimum,
-                        "resetAt": snapshot.get("periodEnd"),
-                    },
-                )
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
                 detail={
                     "status": "FAILURE",
                     "message": (
-                        "Daily credit limit reached. Your daily allowance resets at "
-                        f"00:00 UTC ({snapshot.get('dailyResetAt')})."
+                        "Monthly token quota exhausted. Your quota resets at the start "
+                        f"of your next billing period ({snapshot.get('periodEnd')})."
                     ),
-                    "errorCode": "DAILY_LIMIT_REACHED",
-                    "remaining": effective,
+                    "errorCode": "MONTHLY_QUOTA_EXHAUSTED",
+                    "remaining": remaining,
                     "required": minimum,
-                    "resetAt": snapshot.get("dailyResetAt"),
+                    "resetAt": snapshot.get("periodEnd"),
                 },
             )
         return user

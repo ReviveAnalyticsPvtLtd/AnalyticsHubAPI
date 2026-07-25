@@ -4,6 +4,9 @@ creditConfig.py
 Loads and exposes the credit system configuration from config/credits.json.
 Follows the taxConfigLoader.py pattern — loads once at import time, cached
 in-memory, with a reload function for hot-reloading.
+
+Quotas and operation minimums are expressed in raw LLM tokens. Credits are a
+display unit only: credits = tokens / TOKEN_TO_CREDIT_RATIO.
 """
 
 __version__ = "1.0.0"
@@ -11,10 +14,7 @@ __author__ = "Rohit Mishra"
 __all__ = [
     "CREDIT_CONFIG",
     "TOKEN_TO_CREDIT_RATIO",
-    "DAILY_CREDIT_PERCENT",
-    "getQuotaForPlan",
-    "getDailyCapForPlan",
-    "isPlanDailyExempt",
+    "getTokenQuotaForPlan",
     "getOperationMinimum",
     "reloadCreditConfig",
 ]
@@ -26,6 +26,8 @@ import os
 
 
 _CREDIT_CONFIG_PATH = "config/credits.json"
+
+_DEFAULT_OPERATION_MINIMUM = 1000
 
 _cachedCreditConfig: dict | None = None
 
@@ -49,7 +51,7 @@ def _loadFromFile(filePath: str) -> dict:
     with open(resolvedPath, "r", encoding="utf-8") as f:
         config = json.load(f)
 
-    requiredKeys = {"version", "token_to_credit_ratio", "daily_credit_percent", "quotas", "operation_minimums"}
+    requiredKeys = {"version", "token_to_credit_ratio", "quotas", "operation_minimums"}
     missing = requiredKeys - set(config.keys())
     if missing:
         raise ValueError(f"Credit config missing required keys: {missing}")
@@ -83,60 +85,33 @@ def _getCreditConfig() -> dict:
 
 
 CREDIT_CONFIG = _getCreditConfig()
-TOKEN_TO_CREDIT_RATIO = CREDIT_CONFIG.get("token_to_credit_ratio", 100)
-DAILY_CREDIT_PERCENT = CREDIT_CONFIG.get("daily_credit_percent", 0.05)
+TOKEN_TO_CREDIT_RATIO = CREDIT_CONFIG.get("token_to_credit_ratio", 10000)
 
 
-def getQuotaForPlan(planType: str) -> int:
+def getTokenQuotaForPlan(planType: str) -> int:
     """
-    Return the monthly credit quota for the given plan tier.
+    Return the monthly token quota for the given plan tier.
 
     Args:
         planType: One of 'none', 'free', 'pro', 'annual'.
 
     Returns:
-        int: Monthly credit quota. Defaults to 0 for unknown plans.
+        int: Monthly token quota. Defaults to 0 for unknown plans.
     """
     quotas = _getCreditConfig().get("quotas", {})
     planInfo = quotas.get(planType, quotas.get("none", {}))
-    return planInfo.get("monthly_credits", 0)
-
-
-def isPlanDailyExempt(planType: str) -> bool:
-    """
-    Whether a plan is exempt from the daily throttle.
-
-    Exempt plans (free/trial, none) can spend their full monthly quota with no
-    daily cap. Defaults to False for unknown plans.
-    """
-    quotas = _getCreditConfig().get("quotas", {})
-    planInfo = quotas.get(planType, quotas.get("none", {}))
-    return bool(planInfo.get("daily_exempt", False))
-
-
-def getDailyCapForPlan(planType: str) -> int:
-    """
-    Return the daily credit cap for a plan tier.
-
-    Exempt plans (free/none) return the full monthly quota (no throttle);
-    others return ceil(monthly_credits * daily_credit_percent), min 1 for a
-    non-zero quota.
-    """
-    from api.services.credits.creditMath import computeDailyCap
-
-    monthly = getQuotaForPlan(planType)
-    return computeDailyCap(monthly, DAILY_CREDIT_PERCENT, isPlanDailyExempt(planType))
+    return planInfo.get("monthly_tokens", 0)
 
 
 def getOperationMinimum(operationType: str) -> int:
     """
-    Return the minimum credits required before allowing an operation.
+    Return the minimum remaining tokens required before allowing an operation.
 
     Args:
         operationType: Operation key from config, e.g. 'reporting_query'.
 
     Returns:
-        int: Minimum credit threshold. Defaults to 1 for unknown operations.
+        int: Minimum token threshold. Defaults to 1000 for unknown operations.
     """
     minimums = _getCreditConfig().get("operation_minimums", {})
-    return minimums.get(operationType, 1)
+    return minimums.get(operationType, _DEFAULT_OPERATION_MINIMUM)

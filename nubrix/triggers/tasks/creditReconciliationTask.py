@@ -38,7 +38,7 @@ class CreditReconciliationTask:
             rows = (
                 client.table("credit_balances")
                 .select("user_id")
-                .gt("monthly_quota", 0)
+                .gt("monthly_token_quota", 0)
                 .execute()
             )
 
