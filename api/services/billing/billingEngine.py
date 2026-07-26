@@ -8,6 +8,9 @@ RAZORPAY_PRO_PLAN_ID, annual via RAZORPAY_ANNUAL_PLAN_ID) with Redis
 fallback cache. Computes final invoice-ready amounts by combining
 domain count, billing mode, tax engine output, and proration windows.
 
+Credit top-up packs are the one exception: they are not Razorpay plans, so
+their prices come from config/credits.json instead.
+
 All outputs are immutable value objects (PricingSnapshot) suitable for
 direct persistence to invoice columns. Clients cannot override any
 computed amount, tax, or currency field.
@@ -15,7 +18,7 @@ computed amount, tax, or currency field.
 
 __version__ = "1.0.0"
 __author__ = "Rohit Mishra"
-__all__ = ["computeInvoiceSnapshot"]
+__all__ = ["computeInvoiceSnapshot", "computeTopupSnapshot"]
 
 
 from api.services.billing.billingConfig import RAZORPAY_ANNUAL_PLAN_ID
@@ -288,6 +291,81 @@ def computeInvoiceSnapshot(billingMode: str, billingReason: str,
     logger.info(
         f"Invoice snapshot computed — mode={billingMode}, reason={billingReason}, "
         f"domains={domainCount}, base={amountBeforeTax}, tax={taxBreakdown.tax_amount}, "
+        f"total={snapshot.total_amount}, version={pricingVersion}"
+    )
+
+    return snapshot
+
+
+def computeTopupSnapshot(packId: str, billingMode: str,
+                         customerState: str = None) -> PricingSnapshot:
+    """
+    Compute an invoice-ready pricing snapshot for a credit top-up pack.
+
+    Unlike the subscription snapshots, the price comes from config/credits.json
+    rather than a Razorpay reference plan — top-up packs are not Razorpay plans.
+    PricingSnapshot is domain-shaped, so domain_count is 1 and
+    base_price_per_domain is the pack price, read as "one pack".
+
+    The pack's token count is frozen into pricing_reference_snapshot_json here,
+    and grant_topup_tokens reads it back off the invoice at payment time. A
+    later config change therefore cannot alter what an in-flight order grants.
+
+    Args:
+        packId: Pack key from config, e.g. 'medium'.
+        billingMode: The subscriber's billing mode, recorded for reporting.
+        customerState: Customer billing state code for tax determination.
+
+    Returns:
+        PricingSnapshot: Frozen, immutable pricing result.
+
+    Raises:
+        ValueError: If the pack is unknown or retired.
+    """
+    from api.services.credits.creditConfig import getTopupPack, CREDIT_CONFIG
+
+    pack = getTopupPack(packId)
+    if pack is None:
+        raise ValueError(f"Unknown or inactive top-up pack: {packId}")
+
+    now = datetime.now(timezone.utc)
+    amountBeforeTax = pack["amount"]
+    taxBreakdown = computeTax(
+        amountBeforeTax=amountBeforeTax,
+        customerState=customerState,
+        invoiceTimestamp=now,
+    )
+
+    configVersion = CREDIT_CONFIG.get("version", "unknown")
+    priceRef = {
+        "source": "config_credits_json",
+        "configVersion": configVersion,
+        "packId": packId,
+        "tokens": pack["tokens"],
+        "amount": amountBeforeTax,
+        "fetched_at": now.isoformat(),
+    }
+    pricingVersion = f"topup_v{configVersion}_{packId}_{int(now.timestamp())}"
+
+    snapshot = PricingSnapshot(
+        billing_mode=billingMode,
+        billing_reason="add_on",
+        domain_count=1,
+        base_price_per_domain=amountBeforeTax,
+        amount_before_tax=amountBeforeTax,
+        tax=taxBreakdown,
+        total_amount=taxBreakdown.total_amount,
+        currency="INR",
+        pricing_version=pricingVersion,
+        plan_id=f"topup_{packId}",
+        pricing_reference_snapshot_json=priceRef,
+        period_start=now.isoformat(),
+        period_end=now.isoformat(),
+    )
+
+    logger.info(
+        f"Top-up snapshot computed — pack={packId}, tokens={pack['tokens']}, "
+        f"base={amountBeforeTax}, tax={taxBreakdown.tax_amount}, "
         f"total={snapshot.total_amount}, version={pricingVersion}"
     )
 

@@ -3,12 +3,22 @@ creditService.py
 
 Core credit management for the single-bucket monthly token system.
 
-Redis holds a per-user HASH at credits:v3:{userId} with fields trem, tquota,
-pend, pnext. Two Lua scripts perform the atomic hot-path operations (peek +
-deduct) and apply the monthly roll inline, so the first request after a billing
-boundary already sees a full quota. Python then repairs the exact calendar
-boundary and persists the new period. Supabase credit_balances is the durable
-source of truth, rebuilt into Redis on cache miss.
+Redis holds a per-user HASH at credits:v3:{userId} with fields trem, ttop,
+tquota, pend, pnext. Two Lua scripts perform the atomic hot-path operations
+(peek + deduct) and apply the monthly roll inline, so the first request after a
+billing boundary already sees a full quota. Python then repairs the exact
+calendar boundary and persists the new period. Supabase credit_balances is the
+durable source of truth, rebuilt into Redis on cache miss.
+
+There are two buckets. `trem` is the monthly allowance, restored by the roll.
+`ttop` holds purchased top-up tokens and is never touched by the roll, so it
+carries over indefinitely. Deductions draw down `trem` first and spill onto
+`ttop` only once it is empty.
+
+_ROLL_FALLBACK_SECONDS is the 31-day safety bound the Lua roll adds to pnext.
+Python replaces it with the exact calendar value immediately after, but if that
+write never lands the boundary is still monotonic and the loop terminates.
+_ROLL_MAX_ITERATIONS caps the roll at 10 years of missed periods.
 
 Tokens are the unit of record everywhere; credits are derived for display only.
 """
@@ -31,24 +41,17 @@ import redis
 import os
 
 
-# Seconds added to pnext by the Lua roll as a safety bound (31 days). Python
-# replaces it with the exact calendar value immediately after, but if that
-# write never lands the boundary is still monotonic and the loop terminates.
 _ROLL_FALLBACK_SECONDS = 2678400
 
-# Upper bound on roll iterations inside Lua (10 years of missed periods).
 _ROLL_MAX_ITERATIONS = 120
 
-# Rolls the billing period inline for every boundary `now` has passed, then
-# reports the remaining tokens. KEYS[1]=hash, ARGV[1]=nowEpoch,
-# ARGV[2]=fallbackSeconds, ARGV[3]=maxIterations.
-# Returns {trem, rolled}, or {-1,-1} when the hash is absent.
 _PEEK_LUA = """
 local h = redis.call('HGETALL', KEYS[1])
-if #h == 0 then return {-1, -1} end
+if #h == 0 then return {-1, -1, -1} end
 local m = {}
 for i = 1, #h, 2 do m[h[i]] = h[i+1] end
 local trem = tonumber(m['trem'])
+local ttop = tonumber(m['ttop']) or 0
 local tquota = tonumber(m['tquota'])
 local pend = tonumber(m['pend'])
 local pnext = tonumber(m['pnext'])
@@ -65,21 +68,20 @@ while now >= pend and guard < maxIter do
   guard = guard + 1
 end
 if trem < 0 then trem = 0 end
+if ttop < 0 then ttop = 0 end
 if rolled == 1 then
   redis.call('HSET', KEYS[1], 'trem', trem, 'pend', pend, 'pnext', pnext)
 end
-return {trem, rolled}
+return {trem, ttop, rolled}
 """
 
-# Same roll, then subtracts n tokens from the remaining balance (clamped at 0).
-# KEYS[1]=hash, ARGV[1]=n, ARGV[2]=nowEpoch, ARGV[3]=fallbackSeconds,
-# ARGV[4]=maxIterations. Returns {trem, rolled}, or {-1,-1} when absent.
 _DEDUCT_LUA = """
 local h = redis.call('HGETALL', KEYS[1])
-if #h == 0 then return {-1, -1} end
+if #h == 0 then return {-1, -1, -1, -1} end
 local m = {}
 for i = 1, #h, 2 do m[h[i]] = h[i+1] end
 local trem = tonumber(m['trem'])
+local ttop = tonumber(m['ttop']) or 0
 local tquota = tonumber(m['tquota'])
 local pend = tonumber(m['pend'])
 local pnext = tonumber(m['pnext'])
@@ -96,10 +98,17 @@ while now >= pend and guard < maxIter do
   rolled = 1
   guard = guard + 1
 end
+local spill = 0
 trem = trem - n
-if trem < 0 then trem = 0 end
-redis.call('HSET', KEYS[1], 'trem', trem, 'pend', pend, 'pnext', pnext)
-return {trem, rolled}
+if trem < 0 then
+  spill = -trem
+  if spill > ttop then spill = ttop end
+  ttop = ttop - spill
+  trem = 0
+end
+if ttop < 0 then ttop = 0 end
+redis.call('HSET', KEYS[1], 'trem', trem, 'ttop', ttop, 'pend', pend, 'pnext', pnext)
+return {trem, ttop, spill, rolled}
 """
 
 _redis_pool: redis.ConnectionPool | None = None
@@ -144,7 +153,7 @@ class CreditService:
             self.supabase.table("credit_balances")
             .select(
                 "plan_tier, monthly_token_quota, used_tokens, remaining_tokens, "
-                "period_start, period_end, last_reset_at"
+                "topup_tokens, period_start, period_end, last_reset_at"
             )
             .eq("user_id", userId)
             .limit(1)
@@ -179,6 +188,7 @@ class CreditService:
 
         tquota = dbRow.get("monthly_token_quota", 0)
         trem = dbRow.get("remaining_tokens", 0)
+        ttop = dbRow.get("topup_tokens", 0) or 0
         periodEnd = dbRow.get("period_end")
 
         pe = dateparser.parse(periodEnd) if periodEnd else now
@@ -192,6 +202,7 @@ class CreditService:
             try:
                 r.hset(self._redisKey(userId), mapping={
                     "trem": trem,
+                    "ttop": ttop,
                     "tquota": tquota,
                     "pend": int(pe.timestamp()),
                     "pnext": int(creditMath.nextPeriodEnd(pe).timestamp()),
@@ -206,7 +217,9 @@ class CreditService:
         the exact calendar boundary and persist the new period to Supabase.
 
         Best-effort. `pend` has already advanced inside Redis, so a failure here
-        cannot cause a double roll — the next request repairs it instead.
+        cannot cause a double roll — the next request repairs it instead. A
+        stored period_end at or past the new one means another request already
+        persisted this roll, and nothing is written.
         """
         try:
             r = self._redis()
@@ -224,7 +237,6 @@ class CreditService:
         try:
             row = self._dbRow(userId)
             storedEnd = dateparser.parse(row["period_end"]) if row and row.get("period_end") else None
-            # Another request already persisted this roll — nothing to write.
             if storedEnd is not None and storedEnd >= periodEnd:
                 return
             periodStart = storedEnd if storedEnd is not None else periodEnd - relativedelta(months=1)
@@ -252,7 +264,23 @@ class CreditService:
     # ---- Lua seams (patched in unit tests) ------------------------------------
 
     def _peek(self, userId: str) -> dict | None:
-        """Atomic monthly roll + remaining read. Returns {trem,rolled} or None."""
+        """
+        Atomic monthly roll + both-bucket read via _PEEK_LUA.
+
+        The script rolls the billing period inline for every boundary `now` has
+        passed, then reports both buckets. Its arguments are positional and
+        untyped, so the order below is the only contract it has:
+        KEYS[1]=hash, ARGV[1]=nowEpoch, ARGV[2]=fallbackSeconds,
+        ARGV[3]=maxIterations. It returns the flat array {trem, ttop, rolled},
+        or {-1,-1,-1} when the hash is absent.
+
+        Args:
+            userId (str): The user whose hash to read.
+
+        Returns:
+            dict | None: {trem, ttop, rolled}, or None when the hash is absent
+                or Redis is unreachable.
+        """
         try:
             r = self._redis()
             now = int(datetime.now(timezone.utc).timestamp())
@@ -262,13 +290,33 @@ class CreditService:
             )
             if not res or int(res[0]) == -1:
                 return None
-            return {"trem": int(res[0]), "rolled": int(res[1])}
+            return {"trem": int(res[0]), "ttop": int(res[1]), "rolled": int(res[2])}
         except Exception as e:
             logger.warning(f"Redis peek failed for {userId}: {e}")
             return None
 
     def _deduct(self, userId: str, n: int) -> dict | None:
-        """Atomic monthly roll + token decrement. Returns {trem,rolled} or None."""
+        """
+        Atomic monthly roll + token decrement across both buckets via _DEDUCT_LUA.
+
+        The script applies the same roll as _PEEK_LUA, then subtracts n tokens:
+        the monthly bucket first, spilling the remainder onto the purchased
+        bucket. Both clamp at 0. Its arguments are positional and untyped, so
+        the order below is the only contract it has — swapping n and nowEpoch
+        raises nothing and would charge an epoch timestamp's worth of tokens:
+        KEYS[1]=hash, ARGV[1]=n, ARGV[2]=nowEpoch, ARGV[3]=fallbackSeconds,
+        ARGV[4]=maxIterations. It returns the flat array
+        {trem, ttop, spill, rolled}, or {-1,-1,-1,-1} when the hash is absent.
+
+        Args:
+            userId (str): The user whose balance to charge.
+            n (int): Tokens to subtract.
+
+        Returns:
+            dict | None: {trem, ttop, spill, rolled}, where `spill` is the
+                number of tokens taken from the purchased bucket on this call.
+                None when the hash is absent or Redis is unreachable.
+        """
         try:
             r = self._redis()
             now = int(datetime.now(timezone.utc).timestamp())
@@ -278,7 +326,10 @@ class CreditService:
             )
             if not res or int(res[0]) == -1:
                 return None
-            return {"trem": int(res[0]), "rolled": int(res[1])}
+            return {
+                "trem": int(res[0]), "ttop": int(res[1]),
+                "spill": int(res[2]), "rolled": int(res[3]),
+            }
         except Exception as e:
             logger.warning(f"Redis deduct failed for {userId}: {e}")
             return None
@@ -286,10 +337,19 @@ class CreditService:
     # ---- public API -----------------------------------------------------------
 
     def initializeCreditBalance(self, userId, planTier, subscriptionId=None) -> dict:
-        """Create or reset a user's balance on activation / trial start / renewal."""
+        """
+        Create or reset a user's balance on activation / trial start / renewal.
+
+        The purchased bucket survives: the upsert payload omits topup_tokens so
+        PostgREST leaves the column untouched on conflict, and the Redis mapping
+        reseeds it from the existing row.
+        """
         quota = getTokenQuotaForPlan(planTier)
         now = datetime.now(timezone.utc)
         periodEnd = now + relativedelta(months=1)
+
+        existingRow = self._dbRow(userId)
+        topup = (existingRow or {}).get("topup_tokens", 0) or 0
 
         payload = {
             "user_id": userId,
@@ -312,13 +372,14 @@ class CreditService:
             r = self._redis()
             r.hset(self._redisKey(userId), mapping={
                 "trem": quota,
+                "ttop": topup,
                 "tquota": quota,
                 "pend": int(periodEnd.timestamp()),
                 "pnext": int(creditMath.nextPeriodEnd(periodEnd).timestamp()),
             })
             logger.info(
                 f"Credit balance initialized — userId={userId}, plan={planTier}, "
-                f"monthlyTokens={quota}"
+                f"monthlyTokens={quota}, topupTokens={topup}"
             )
         except Exception as e:
             logger.warning(f"Redis credit init failed for {userId}: {e}")
@@ -326,11 +387,19 @@ class CreditService:
 
     def deductTokens(self, userId, tokensUsed, operationType) -> int:
         """
-        Subtract the exact token count from the user's monthly balance.
+        Subtract the exact token count from the user's balance.
 
         No rounding: the tokens reported by the LLM response are the tokens
-        charged. Returns the remaining tokens, or -1 when the balance is
-        unreachable (the call is then not charged).
+        charged. The monthly bucket is drawn down first, spilling onto the
+        purchased bucket once it is empty. The spill is mirrored to Supabase as
+        a relative decrement, because an absolute write would race with a
+        concurrent grant and lose the purchase.
+
+        On a Redis miss the hash is rebuilt and the deduction retried once,
+        after which the balance is written back durably to Supabase.
+
+        Returns the total remaining tokens across both buckets, or -1 when the
+        balance is unreachable (the call is then not charged).
         """
         if tokensUsed <= 0:
             return self.getRemainingTokens(userId)
@@ -338,7 +407,6 @@ class CreditService:
         self._ensureHash(userId)
         state = self._deduct(userId, tokensUsed)
         if state is None:
-            # Redis miss — rebuild then retry once.
             self._ensureHash(userId)
             state = self._deduct(userId, tokensUsed)
         if state is None:
@@ -349,12 +417,21 @@ class CreditService:
         if state["rolled"]:
             self._repairPeriod(userId, now)
 
+        if state.get("spill", 0) > 0:
+            try:
+                self.supabase.rpc("decrement_topup_tokens", {
+                    "p_user_id": userId,
+                    "p_tokens": state["spill"],
+                }).execute()
+            except Exception as e:
+                logger.warning(f"Top-up decrement write-back failed for {userId}: {e}")
+
         logger.info(
             f"Tokens deducted — userId={userId}, tokens={tokensUsed}, "
-            f"remaining={state['trem']}, op={operationType}"
+            f"remaining={state['trem']}, topup={state['ttop']}, "
+            f"spill={state.get('spill', 0)}, op={operationType}"
         )
 
-        # Durable write-back.
         try:
             row = self._dbRow(userId)
             tquota = row.get("monthly_token_quota", 0) if row else 0
@@ -366,30 +443,51 @@ class CreditService:
         except Exception as e:
             logger.warning(f"DB token write-back failed for {userId}: {e}")
 
-        return state["trem"]
+        return state["trem"] + state["ttop"]
 
-    def getRemainingTokens(self, userId: str) -> int:
-        """Remaining tokens in the current billing period. -1 on total failure."""
+    def getRemainingParts(self, userId: str) -> dict:
+        """
+        Remaining tokens split by bucket: {"monthly": int, "topup": int}.
+
+        Falls back to Supabase when Redis is down or cold, applying the lazy
+        roll in Python. That fallback includes the purchased balance, so a Redis
+        outage cannot lock out the users who paid not to be locked out.
+
+        `monthly` is -1 when the balance is unreadable (Redis and Supabase both
+        unavailable), which callers treat as "allow".
+        """
         self._ensureHash(userId)
         state = self._peek(userId)
         if state is not None:
             if state["rolled"]:
                 self._repairPeriod(userId, datetime.now(timezone.utc))
-            return state["trem"]
+            return {"monthly": state["trem"], "topup": state["ttop"]}
 
-        # DB fallback (Redis down / cold) — apply the lazy roll in Python.
         try:
             row = self._dbRow(userId)
             if not row:
-                return -1
+                return {"monthly": -1, "topup": 0}
             now = datetime.now(timezone.utc)
+            topup = row.get("topup_tokens", 0) or 0
             periodEnd = row.get("period_end")
             if periodEnd and dateparser.parse(periodEnd) <= now:
-                return row.get("monthly_token_quota", 0)
-            return row.get("remaining_tokens", 0)
+                return {"monthly": row.get("monthly_token_quota", 0), "topup": topup}
+            return {"monthly": row.get("remaining_tokens", 0), "topup": topup}
         except Exception as e:
             logger.warning(f"DB token read failed for {userId}: {e}")
+            return {"monthly": -1, "topup": 0}
+
+    def getRemainingTokens(self, userId: str) -> int:
+        """
+        Total spendable tokens: monthly remainder plus purchased balance.
+
+        Returns -1 when the balance is unreadable, which requireCredits treats
+        as "allow" rather than blocking users on an infrastructure fault.
+        """
+        parts = self.getRemainingParts(userId)
+        if parts["monthly"] == -1:
             return -1
+        return parts["monthly"] + parts["topup"]
 
     def resetMonthlyTokens(self, userId: str) -> None:
         """Event-driven monthly reset (e.g. annual renewal). Restores the full quota."""
@@ -420,8 +518,100 @@ class CreditService:
         except Exception as e:
             logger.error(f"Token reset failed for userId={userId}: {e}")
 
+    def grantTopupTokens(self, userId: str, orderId: str, paymentId: str) -> dict:
+        """
+        Credit a purchased token pack, exactly once.
+
+        The RPC flips the add_on invoice to PAID and increments topup_tokens in
+        a single transaction, so the verify endpoint and the payment.captured
+        webhook can both call this safely — whichever arrives first claims the
+        grant and the other returns granted=False. A failed Redis increment
+        drops the hash rather than retrying: Supabase already holds the grant,
+        so a rebuild is safer than serving a silently low balance.
+
+        Args:
+            userId (str): The purchasing user.
+            orderId (str): Razorpay order ID the invoice was created against.
+            paymentId (str): Razorpay payment ID that settled the order.
+
+        Returns:
+            dict: {"granted": bool, "tokens": int}.
+        """
+        res = self.supabase.rpc("grant_topup_tokens", {
+            "p_order_id": orderId,
+            "p_payment_id": paymentId,
+        }).execute()
+
+        row = (res.data or [None])[0] or {}
+        if not row.get("granted"):
+            logger.info(f"Top-up grant already applied for order {orderId}, skipping")
+            return {"granted": False, "tokens": 0}
+
+        tokens = int(row.get("tokens", 0))
+        try:
+            self._redis().hincrby(self._redisKey(userId), "ttop", tokens)
+        except Exception as e:
+            logger.warning(f"Redis ttop increment failed for {userId}, dropping hash: {e}")
+            try:
+                self._redis().delete(self._redisKey(userId))
+            except Exception:
+                pass
+
+        logger.info(
+            f"Top-up granted — userId={userId}, tokens={tokens}, order={orderId}"
+        )
+        return {"granted": True, "tokens": tokens}
+
+    def clawbackTopupTokens(self, userId: str, refundId: str,
+                            paymentId: str, refundAmount: int) -> dict:
+        """
+        Remove purchased tokens in proportion to a refund, exactly once.
+
+        The RPC is guarded twice: the invoice must be billing_reason='add_on',
+        and the billing_events insert must actually happen (idempotency_key is
+        UNIQUE, so a redelivered refund.processed no-ops). A subscription
+        refund matches neither and moves nothing. The Redis hash is dropped
+        rather than decremented, since Supabase is authoritative.
+
+        Args:
+            userId (str): The refunded user.
+            refundId (str): Razorpay refund ID, the idempotency key.
+            paymentId (str): Razorpay payment ID being refunded.
+            refundAmount (int): Refunded amount in paise.
+
+        Returns:
+            dict: {"clawed": bool, "tokens": int}.
+        """
+        res = self.supabase.rpc("clawback_topup_tokens", {
+            "p_refund_id": refundId,
+            "p_payment_id": paymentId,
+            "p_refund_amount": refundAmount,
+        }).execute()
+
+        row = (res.data or [None])[0] or {}
+        if not row.get("clawed"):
+            return {"clawed": False, "tokens": 0}
+
+        tokens = int(row.get("tokens", 0))
+        try:
+            self._redis().delete(self._redisKey(userId))
+        except Exception as e:
+            logger.warning(f"Redis hash drop after clawback failed for {userId}: {e}")
+
+        logger.info(
+            f"Top-up clawed back — userId={userId}, tokens={tokens}, "
+            f"refund={refundId}, amount={refundAmount}"
+        )
+        return {"clawed": True, "tokens": tokens}
+
     def reconcile(self, userId: str) -> None:
-        """Safety-net sync of the Redis hash back to Supabase (guards eviction/drift)."""
+        """
+        Safety-net sync of the Redis hash back to Supabase (guards eviction/drift).
+
+        Covers the monthly bucket only. topup_tokens is maintained by relative
+        writes on both sides, so an absolute sync here would race with an
+        in-flight grant and lose a purchase.
+        """
         try:
             self.syncQuotaFromConfig(userId)
 
@@ -446,11 +636,18 @@ class CreditService:
             logger.warning(f"Credit reconciliation failed for userId={userId}: {e}")
 
     def getBalanceSnapshot(self, userId: str) -> dict:
-        """Login/balance snapshot in tokens, with credits derived. Never raises."""
+        """
+        Login/balance snapshot in tokens, with credits derived. Never raises.
+
+        remainingTokens is the total across both buckets; usagePercentage covers
+        the monthly bucket only, so a purchased balance cannot make the meter
+        read under 100% when the plan's included allowance is spent.
+        """
         defaults = {
             "planTier": "none", "monthlyTokenQuota": 0, "usedTokens": 0,
+            "monthlyRemainingTokens": 0, "topupTokens": 0,
             "remainingTokens": 0, "monthlyCredits": 0.0, "usedCredits": 0.0,
-            "remainingCredits": 0.0, "usagePercentage": 0.0,
+            "topupCredits": 0.0, "remainingCredits": 0.0, "usagePercentage": 0.0,
             "periodStart": None, "periodEnd": None, "lastResetAt": None,
             "initialized": False,
         }
@@ -460,19 +657,27 @@ class CreditService:
                 return defaults
 
             tquota = row.get("monthly_token_quota", 0)
-            remaining = self.getRemainingTokens(userId)
-            if remaining == -1:
-                remaining = row.get("remaining_tokens", 0)
-            used = max(0, tquota - remaining)
+            parts = self.getRemainingParts(userId)
+            if parts["monthly"] == -1:
+                monthlyRemaining = row.get("remaining_tokens", 0)
+                topup = row.get("topup_tokens", 0) or 0
+            else:
+                monthlyRemaining = parts["monthly"]
+                topup = parts["topup"]
+            used = max(0, tquota - monthlyRemaining)
+            remaining = monthlyRemaining + topup
             usagePercent = round((used / tquota) * 100, 2) if tquota > 0 else 0.0
 
             return {
                 "planTier": row.get("plan_tier", "none"),
                 "monthlyTokenQuota": tquota,
                 "usedTokens": used,
+                "monthlyRemainingTokens": monthlyRemaining,
+                "topupTokens": topup,
                 "remainingTokens": remaining,
                 "monthlyCredits": creditMath.tokensToCredits(tquota, TOKEN_TO_CREDIT_RATIO),
                 "usedCredits": creditMath.tokensToCredits(used, TOKEN_TO_CREDIT_RATIO),
+                "topupCredits": creditMath.tokensToCredits(topup, TOKEN_TO_CREDIT_RATIO),
                 "remainingCredits": creditMath.tokensToCredits(remaining, TOKEN_TO_CREDIT_RATIO),
                 "usagePercentage": usagePercent,
                 "periodStart": row.get("period_start"),
@@ -493,7 +698,9 @@ class CreditService:
 
         When resetUsage=True: also zero used_tokens and restore remaining_tokens
         to the full quota — equivalent to giving every user a fresh monthly
-        bucket mid-cycle. The billing period itself is left untouched.
+        bucket mid-cycle. The billing period itself is left untouched, and so is
+        topup_tokens: this runs over every user, so including it would destroy
+        every purchase ever made in a single call.
 
         Returns:
             dict with updatedCount, redisDeletedCount, and mode.

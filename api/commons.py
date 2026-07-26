@@ -156,6 +156,8 @@ def verifyUser(credentials: HTTPAuthorizationCredentials = Depends(security)) ->
 
 _ACTIVE_SUBSCRIPTION_STATUSES = {"active", "renewal_upcoming", "payment_pending", "cancelled"}
 
+_TOPUP_ELIGIBLE_STATUSES = {"active", "renewal_upcoming", "payment_pending"}
+
 def requireActiveSubscription(
     user: UserContext = Depends(verifyUser),
 ) -> UserContext:
@@ -223,9 +225,17 @@ def requireCredits(operationType: str):
             ...
 
     Raises HTTPException 402 when the user's remaining tokens are below the
-    configured minimum for the operation. A remaining value of -1 means the
-    balance is unreadable (Redis and Supabase both unavailable) and is allowed
-    through rather than blocking the user on an infrastructure fault.
+    configured minimum for the operation. Remaining covers both the monthly and
+    the purchased bucket, so a user with a top-up balance passes even once
+    their monthly quota is spent. A remaining value of -1 means the balance is
+    unreadable (Redis and Supabase both unavailable) and is allowed through
+    rather than blocking the user on an infrastructure fault.
+
+    The 402 body carries topupAvailable so the client knows whether to offer a
+    purchase or an upgrade. It follows _TOPUP_ELIGIBLE_STATUSES, which mirrors
+    subscriptionService._isSubscriptionActive rather than
+    _ACTIVE_SUBSCRIPTION_STATUSES: the latter admits 'cancelled', and purchased
+    tokens would outlive a departing user's access.
     """
     def _dependency(user: UserContext = Depends(verifyUser)) -> UserContext:
         from api.services.credits.creditService import creditService
@@ -236,15 +246,26 @@ def requireCredits(operationType: str):
 
         if remaining != -1 and remaining < minimum:
             snapshot = creditService.getBalanceSnapshot(user.userId)
+            topupAvailable = (
+                getattr(user, "plan_type", None) in ("pro", "annual")
+                and getattr(user, "sub_status", None) in _TOPUP_ELIGIBLE_STATUSES
+            )
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
                 detail={
                     "status": "FAILURE",
                     "message": (
-                        "Monthly token quota exhausted. Your quota resets at the start "
-                        f"of your next billing period ({snapshot.get('periodEnd')})."
+                        "Monthly token quota exhausted. "
+                        + (
+                            "Buy a credit top-up to continue, or wait until your quota "
+                            if topupAvailable
+                            else "Your quota "
+                        )
+                        + "resets at the start of your next billing period "
+                        f"({snapshot.get('periodEnd')})."
                     ),
                     "errorCode": "MONTHLY_QUOTA_EXHAUSTED",
+                    "topupAvailable": topupAvailable,
                     "remaining": remaining,
                     "required": minimum,
                     "resetAt": snapshot.get("periodEnd"),

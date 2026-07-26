@@ -216,6 +216,14 @@ class RefundRequest(BaseModel):
     paymentId: str
     amount: int | None = None
 
+class CreateTopupOrderRequest(BaseModel):
+    packId: str
+
+class VerifyTopupPaymentRequest(BaseModel):
+    razorpayOrderId: str
+    razorpayPaymentId: str
+    razorpaySignature: str
+
 class SaveQuery(BaseModel):
     projectId: str
     query: str

@@ -7,6 +7,9 @@ in-memory, with a reload function for hot-reloading.
 
 Quotas and operation minimums are expressed in raw LLM tokens. Credits are a
 display unit only: credits = tokens / TOKEN_TO_CREDIT_RATIO.
+
+Top-up packs are the purchasable bundles of extra tokens. Their prices are in
+paise and are server-authoritative — the client sends only a pack id.
 """
 
 __version__ = "1.0.0"
@@ -14,8 +17,11 @@ __author__ = "Rohit Mishra"
 __all__ = [
     "CREDIT_CONFIG",
     "TOKEN_TO_CREDIT_RATIO",
+    "TOPUP_PACKS",
     "getTokenQuotaForPlan",
     "getOperationMinimum",
+    "getTopupPacks",
+    "getTopupPack",
     "reloadCreditConfig",
 ]
 
@@ -86,6 +92,7 @@ def _getCreditConfig() -> dict:
 
 CREDIT_CONFIG = _getCreditConfig()
 TOKEN_TO_CREDIT_RATIO = CREDIT_CONFIG.get("token_to_credit_ratio", 10000)
+TOPUP_PACKS = CREDIT_CONFIG.get("topup_packs", {})
 
 
 def getTokenQuotaForPlan(planType: str) -> int:
@@ -115,3 +122,30 @@ def getOperationMinimum(operationType: str) -> int:
     """
     minimums = _getCreditConfig().get("operation_minimums", {})
     return minimums.get(operationType, _DEFAULT_OPERATION_MINIMUM)
+
+
+def getTopupPacks() -> dict:
+    """
+    Return the purchasable top-up packs, keyed by pack id.
+
+    Inactive packs are excluded so a retired pack disappears from the purchase
+    menu without invalidating historical invoices that reference its id.
+
+    Returns:
+        dict: Active packs, each with 'tokens' and 'amount' (paise).
+    """
+    packs = _getCreditConfig().get("topup_packs", {})
+    return {packId: pack for packId, pack in packs.items() if pack.get("active", False)}
+
+
+def getTopupPack(packId: str) -> dict | None:
+    """
+    Return a single active top-up pack.
+
+    Args:
+        packId: Pack key from config, e.g. 'medium'.
+
+    Returns:
+        dict | None: The pack, or None if it is unknown or retired.
+    """
+    return getTopupPacks().get(packId)

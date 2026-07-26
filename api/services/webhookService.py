@@ -456,6 +456,8 @@ class WebhookService:
         - recurring_renewal: extends billing cycle by 1 month, resets dunning counter
         - annual_renewal: extends billing cycle by 12 months, marks invoice paid
         - domain_upgrade_proration: activates paid domains (webhook backup for verifyDomainUpgrade)
+        - credit_topup: grants purchased tokens (webhook backup for verifyTopupPayment;
+          the grant is idempotent, so racing that endpoint is safe)
         - default: log-only
 
         Args:
@@ -617,6 +619,36 @@ class WebhookService:
                 }
             )
             logger.info(f"Annual renewal charged for user {userId}, new expiry {newExpiry}")
+        elif paymentType == "credit_topup":
+            userId = notes.get("userId")
+            if not userId:
+                logger.error(f"credit_topup payment {paymentId} missing userId in notes")
+                return
+            orderId = paymentEntity.get("order_id")
+            if not orderId:
+                logger.error(f"credit_topup payment {paymentId} missing order_id")
+                return
+            from api.services.credits.creditService import creditService
+
+            result = creditService.grantTopupTokens(userId, orderId, paymentId)
+            self._auditLog(
+                userId, "credit.topup_granted",
+                paymentId=paymentId,
+                amount=paymentEntity.get("amount"),
+                currency=paymentEntity.get("currency", "INR"),
+                status="GRANTED" if result["granted"] else "ALREADY_GRANTED",
+                metadata={
+                    "packId": notes.get("packId"),
+                    "tokens": result["tokens"],
+                    "orderId": orderId,
+                    "invoiceId": invoiceId,
+                    "flow": "webhook",
+                }
+            )
+            logger.info(
+                f"Credit top-up webhook processed — payment={paymentId}, "
+                f"granted={result['granted']}, tokens={result['tokens']}"
+            )
         else:
             self._auditLog(
                 notes.get("userId", "unknown"), "payment.captured",
@@ -852,18 +884,64 @@ class WebhookService:
         """
         Handle the refund.processed webhook event.
 
+        Refunds of credit top-up payments claw back the purchased tokens in
+        proportion to the refunded amount. Every other payment type keeps the
+        log-only behaviour.
+
+        The discrimination is on notes.type as fetched from Razorpay, backed by
+        a second check inside the RPC that the invoice is billing_reason
+        'add_on'. A subscription refund satisfies neither and moves no tokens.
+        The Razorpay client is borrowed from subscriptionService, as
+        _handlePaymentCaptured already does.
+
         Args:
             event (dict): The Razorpay webhook event.
         """
         refundEntity = event.get("payload", {}).get("refund", {}).get("entity", {})
         paymentId = refundEntity.get("payment_id", "")
+        refundId = refundEntity.get("id", "")
+        refundAmount = refundEntity.get("amount") or 0
+
+        paymentType = ""
+        userId = "system"
+        if paymentId:
+            try:
+                from api.services.subscriptions.subscriptionService import subscriptionService
+
+                payment = subscriptionService.razorpayClient.payment.fetch(paymentId)
+                paymentNotesRaw = payment.get("notes") or {}
+                paymentNotes = paymentNotesRaw if isinstance(paymentNotesRaw, dict) else {}
+                paymentType = paymentNotes.get("type", "")
+                userId = paymentNotes.get("userId") or "system"
+            except Exception as e:
+                logger.warning(
+                    f"Could not fetch payment {paymentId} during refund.processed: {e}"
+                )
+
+        clawedTokens = 0
+        if paymentType == "credit_topup" and userId != "system" and refundId:
+            from api.services.credits.creditService import creditService
+
+            result = creditService.clawbackTopupTokens(
+                userId, refundId, paymentId, refundAmount
+            )
+            clawedTokens = result["tokens"]
+            logger.info(
+                f"Top-up refund processed — payment={paymentId}, refund={refundId}, "
+                f"clawed={result['clawed']}, tokens={clawedTokens}"
+            )
+
         self._auditLog(
-            "system", "refund.processed",
+            userId, "refund.processed",
             paymentId=paymentId,
-            amount=refundEntity.get("amount"),
+            amount=refundAmount,
             currency=refundEntity.get("currency", "INR"),
             status="processed",
-            metadata={"refund_id": refundEntity.get("id")}
+            metadata={
+                "refund_id": refundId,
+                "paymentType": paymentType,
+                "tokensClawedBack": clawedTokens,
+            }
         )
         logger.info(f"Refund processed for payment {paymentId}")
 
