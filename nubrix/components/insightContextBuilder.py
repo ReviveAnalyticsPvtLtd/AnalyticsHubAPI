@@ -88,7 +88,18 @@ class InsightContextBuilder:
 
     def _extractChartData(self, dashboardConfig: dict, pageId: str | None) -> list[dict]:
         """
-        Extracts compact chart data from dashboard widgets, filtered by page.
+        Extracts widget data from dashboard pages, filtered by page.
+
+        Carries `generatedCode` through so downstream provenance extraction can
+        recover what each widget measures, and assigns each widget a short
+        sequential `ref` the LLM can cite in its findings.
+
+        Args:
+            dashboardConfig (dict): Parsed dashboardConfig.json.
+            pageId (str | None): Page to restrict to, or None for all pages.
+
+        Returns:
+            list[dict]: Widget dicts in render order.
         """
         chartData = []
         if not dashboardConfig:
@@ -101,12 +112,17 @@ class InsightContextBuilder:
                 continue
             for widget in page.get("widgets", []):
                 chartData.append({
+                    "ref": f"W{len(chartData) + 1}",
+                    "id": widget.get("id"),
+                    "pageId": pid,
                     "title": widget.get("title"),
                     "chartType": widget.get("chartType"),
                     "data": widget.get("data"),
                     "xLabels": widget.get("xLabels"),
                     "yLabels": widget.get("yLabels"),
                     "label": widget.get("label"),
+                    "map": widget.get("map"),
+                    "generatedCode": widget.get("generatedCode"),
                 })
         return chartData
 
@@ -138,15 +154,22 @@ class InsightContextBuilder:
             domainContext = self._loadDomainContext(projectId)
             chartData = self._extractChartData(dashboardConfig, pageId)
 
-            pageName = None
-            if pageId and dashboardConfig.get(pageId):
-                pageName = dashboardConfig[pageId].get("name")
+            pages = [
+                {"pageId": pid, "pageName": (page or {}).get("name")}
+                for pid, page in dashboardConfig.items()
+                if isinstance(page, dict)
+            ]
+            pageName = next(
+                (page["pageName"] for page in pages if page["pageId"] == pageId),
+                None,
+            )
 
             context = {
                 "metadata": metadata,
                 "dashboard": {
                     "pageId": pageId,
                     "pageName": pageName,
+                    "pages": pages,
                     "widgetCount": len(chartData),
                     "existingInsights": existingInsights,
                 },
