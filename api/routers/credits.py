@@ -107,9 +107,12 @@ async def getCreditUsage(user: UserContext = Depends(verifyUser)):
                 "data": {
                     "totalUsedTokens": snapshot.get("usedTokens", 0),
                     "monthlyTokenQuota": snapshot.get("monthlyTokenQuota", 0),
+                    "monthlyRemainingTokens": snapshot.get("monthlyRemainingTokens", 0),
+                    "topupTokens": snapshot.get("topupTokens", 0),
                     "remainingTokens": snapshot.get("remainingTokens", 0),
                     "totalUsedCredits": snapshot.get("usedCredits", 0.0),
                     "monthlyCredits": snapshot.get("monthlyCredits", 0.0),
+                    "topupCredits": snapshot.get("topupCredits", 0.0),
                     "remainingCredits": snapshot.get("remainingCredits", 0.0),
                     "usagePercentage": snapshot.get("usagePercentage", 0.0),
                     "periodStart": periodStart,
