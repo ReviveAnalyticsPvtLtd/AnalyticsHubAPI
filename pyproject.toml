@@ -65,3 +65,8 @@ dependencies = [
     "ydata-profiling>=4.16.1",
     "polars>=1.42.1",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

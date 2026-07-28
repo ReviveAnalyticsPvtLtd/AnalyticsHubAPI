@@ -1174,6 +1174,11 @@ class ManagementService:
                     uiMessage="User profile not found."
                 )
             record = userRecord[0]
+            try:
+                from api.services.credits.creditService import creditService
+                creditsSnapshot = creditService.getBalanceSnapshot(userId)
+            except Exception:
+                creditsSnapshot = None
             subscription = self._getCanonicalSubscription(userId)
             planFields = toApiPlanFields(subscription)
             expiryStr = subscription.get("current_period_end")
@@ -1225,6 +1230,7 @@ class ManagementService:
                 "company": record.get("companyName"),
                 "position": record.get("role"),
                 "bio": record.get("profileBio"),
+                "credits": creditsSnapshot,
                 "plan": {
                     "planType": freshPlanType,
                     "status": currentStatus,
