@@ -1176,9 +1176,18 @@ class ManagementService:
             record = userRecord[0]
             try:
                 from api.services.credits.creditService import creditService
-                creditsSnapshot = creditService.getBalanceSnapshot(userId)
+                snapshot = creditService.getBalanceSnapshot(userId)
+                creditsView = {
+                    "monthlyCredits": snapshot.get("monthlyCredits", 0.0),
+                    "usedCredits": snapshot.get("usedCredits", 0.0),
+                    "topupCredits": snapshot.get("topupCredits", 0.0),
+                    "remainingCredits": snapshot.get("remainingCredits", 0.0),
+                    "usagePercentage": snapshot.get("usagePercentage", 0.0),
+                    "periodEnd": snapshot.get("periodEnd"),
+                    "initialized": snapshot.get("initialized", False),
+                }
             except Exception:
-                creditsSnapshot = None
+                creditsView = None
             subscription = self._getCanonicalSubscription(userId)
             planFields = toApiPlanFields(subscription)
             expiryStr = subscription.get("current_period_end")
@@ -1230,7 +1239,7 @@ class ManagementService:
                 "company": record.get("companyName"),
                 "position": record.get("role"),
                 "bio": record.get("profileBio"),
-                "credits": creditsSnapshot,
+                "credits": creditsView,
                 "plan": {
                     "planType": freshPlanType,
                     "status": currentStatus,

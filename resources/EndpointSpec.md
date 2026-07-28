@@ -474,20 +474,12 @@ All routes under `/api/latest/projects/`. Auth via `verifyToken` unless otherwis
     "bio": "...",
     "profileImage": "https://...",
     "credits": {
-      "planTier": "pro",
-      "monthlyTokenQuota": 1000000,
-      "usedTokens": 240000,
-      "monthlyRemainingTokens": 760000,
-      "topupTokens": 50000,
-      "remainingTokens": 810000,
       "monthlyCredits": 1000.0,
       "usedCredits": 240.0,
       "topupCredits": 50.0,
       "remainingCredits": 810.0,
       "usagePercentage": 24.0,
-      "periodStart": "2026-07-01T00:00:00+00:00",
       "periodEnd": "2026-08-01T00:00:00+00:00",
-      "lastResetAt": "2026-07-01T00:00:00+00:00",
       "initialized": true
     },
     "plan": {
@@ -506,11 +498,11 @@ All routes under `/api/latest/projects/`. Auth via `verifyToken` unless otherwis
 }
 ```
 
-> `credits` is the same snapshot returned by `GET /credits/balance` and `GET /auth/verify`,
-> embedded here so a normal profile fetch can render the credit meter without a second call.
-> It is best-effort: on a credit-service error the field is `null` and the rest of the profile
-> still returns. For the usage breakdown page keep using `GET /credits/usage`.
-> `credits` may be `null` if the balance lookup failed.
+> `credits` is a **trimmed, credits-only** view of the balance snapshot — just the
+> fields the UI renders. Token counts, `planTier`, `periodStart`, and `lastResetAt`
+> are omitted here (the full snapshot lives on `GET /credits/balance`). It is
+> best-effort: on a credit-service error the field is `null` and the rest of the
+> profile still returns.
 
 ---
 
