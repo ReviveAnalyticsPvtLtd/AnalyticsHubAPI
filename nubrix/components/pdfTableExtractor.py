@@ -112,14 +112,12 @@ class PdfTableExtractor:
 
         self.dpi = config.getint("PDFTABLE", "dpi", fallback=300)
         self.model = config.get("PDFTABLE", "model")
-        self.temperature = config.getfloat("PDFTABLE", "temperature", fallback=0.1)
         self.maxTokens = config.getint("PDFTABLE", "maxTokens", fallback=8192)
         self.maxRetries = config.getint("PDFTABLE", "maxRetries", fallback=2)
         self.retryDelay = config.getfloat("PDFTABLE", "retryDelay", fallback=2.0)
         self.maxConcurrency = config.getint("PDFTABLE", "maxConcurrency", fallback=5)
         self.llm = getGenaiLlm(
             model=self.model,
-            temperature=self.temperature,
             max_tokens=self.maxTokens,
         )
 
@@ -371,7 +369,6 @@ class PdfTableExtractor:
                 f"{len(fragments)} fragments."
             )
             mergeLlm = self.llm.bind(
-                temperature=0.0,
                 max_tokens=self.maxTokens,
             )
             from utils.llm import getLangfuseConfig

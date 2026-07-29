@@ -147,7 +147,6 @@ class QueryRephaser:
             )
             llm = getGenaiLlm(
                 model=self.config.get("QUERYREPHRASER", "model"),
-                temperature=self.config.getfloat("QUERYREPHRASER", "temperature"),
                 max_tokens=self.config.getint("QUERYREPHRASER", "maxTokens", fallback=8192)
             )
             queryRephraseChain = (
@@ -198,7 +197,6 @@ class ParallelQueryRephaser(QueryRephaser):
             )
             llm = getGenaiLlm(
                 model=self.config.get("QUERYREPHRASER", "model"),
-                temperature=self.config.getfloat("QUERYREPHRASER", "temperature"),
                 max_tokens=self.config.getint("QUERYREPHRASER", "maxTokens", fallback=8192)
             )
             queryRephraseChain = (

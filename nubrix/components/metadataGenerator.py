@@ -37,7 +37,6 @@ class MetadataGenerator:
             prompt = ChatPromptTemplate.from_template(promptTemplate)
             llm = getGenaiLlm(
                 model=self.config.get("METADATAGENERATOR", "model"),
-                temperature=self.config.getfloat("METADATAGENERATOR", "temperature"),
                 max_tokens=self.config.getint("METADATAGENERATOR", "maxTokens", fallback=8192)
             )
             outputParser = StrOutputParser()

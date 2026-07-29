@@ -517,21 +517,28 @@ class ManagementService:
         except Exception as e:
             logger.warning(f"validateTableNameAvailable check failed for {projectId}/{tableName}: {e}")
 
-    def _generateMetadata(self, projectId: str, userId: str | None = None) -> dict:
+    def _generateMetadata(self, projectId: str, userId: str | None = None, tableNames: list[str] | None = None) -> dict:
         """
-        Generate metadata for all data files in a project.
+        Generate metadata for data files in a project.
 
         Args:
             projectId (str): The project identifier.
+            userId (str | None): The user ID for credit/observability tracking.
+            tableNames (list[str] | None): When provided, generate metadata ONLY
+                for these table names (without the .parquet extension). When None,
+                generate metadata for ALL parquet files in the project (full scan).
 
         Returns:
-            dict: Generated metadata dictionary.
+            dict: Generated metadata dictionary (only for the requested tables).
 
         Raises:
             CustomException: For any errors during metadata generation.
         """
         try:
-            dataFiles = [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = projectId) if x.get("name").endswith(".parquet")]
+            if tableNames is not None:
+                dataFiles = [f"{name}.parquet" for name in tableNames]
+            else:
+                dataFiles = [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = projectId) if x.get("name").endswith(".parquet")]
             results = ""
             for fileName in dataFiles:
                 dataframeName = fileName.replace(".parquet", "")
@@ -557,6 +564,65 @@ class ManagementService:
             for tableName in metadata:
                 metadata[tableName]["isActive"] = True
             return metadata
+        except Exception as e:
+            logger.error(CustomException(e))
+            raise CustomException(e)
+
+    def generateMetadataForTables(self, projectId: str, tableNames: list[str], userId: str | None = None) -> dict:
+        """
+        Generate metadata ONLY for the specified tables and merge it into the
+        existing metadata.json. This is the incremental metadata generation
+        path used by the data-loader endpoints — it avoids regenerating
+        metadata for tables that already exist.
+
+        Args:
+            projectId (str): The project identifier.
+            tableNames (list[str]): Table names (without .parquet extension) to
+                generate metadata for.
+            userId (str | None): The user ID for credit/observability tracking.
+
+        Returns:
+            dict: The newly generated metadata entries (only the tables that
+            were passed in).
+
+        Raises:
+            CustomException: For any errors during generation or persistence.
+        """
+        try:
+            if not tableNames:
+                return {}
+            # Generate metadata only for the specified tables
+            newMetadata = self._generateMetadata(
+                projectId=projectId, userId=userId, tableNames=tableNames
+            )
+            # Load existing metadata.json (if it exists)
+            files = self.client.storage.from_("AnalyticsHub").list(projectId)
+            filenames = [x.get("name") for x in files]
+            existingMetadata = {}
+            if "metadata.json" in filenames:
+                fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+                existingMetadata = json.loads(urlopen(fileUrl).read())
+            # Merge: new tables get isActive=True; existing tables being
+            # re-generated preserve their previous isActive flag.
+            for tableName in newMetadata:
+                if tableName in existingMetadata:
+                    isActive = existingMetadata.get(tableName, {}).get("isActive", True)
+                    newMetadata[tableName]["isActive"] = isActive
+                else:
+                    newMetadata[tableName]["isActive"] = True
+                existingMetadata[tableName] = newMetadata[tableName]
+            # Persist the merged metadata.json
+            with io.BytesIO() as buffer:
+                buffer.write(json.dumps(existingMetadata, indent=4).encode("utf-8"))
+                buffer.seek(0)
+                self.client.storage.from_("AnalyticsHub").upload(
+                    path = f"{projectId}/metadata.json",
+                    file = buffer.getvalue(),
+                    file_options = {"upsert": "true"}
+                )
+            updateProjectModifiedAt(projectId)
+            # Return only the newly generated entries
+            return {name: newMetadata[name] for name in tableNames if name in newMetadata}
         except Exception as e:
             logger.error(CustomException(e))
             raise CustomException(e)
@@ -697,14 +763,21 @@ class ManagementService:
 
     def generateMetadata(self, projectId: str, userId: str | None = None) -> dict:
         """
-        Generate or update metadata for a project, uploading it to storage, and generating insights.
+        Regenerate metadata for a project. When metadata.json already exists, only
+        tables that were added/modified after the last metadata.json update are
+        regenerated (incremental). When no metadata.json exists, all tables are
+        generated from scratch.
+
+        This endpoint is kept for full project-level regeneration. For loading
+        new data sources, the loader endpoints now generate metadata inline via
+        generateMetadataForTables().
 
         Args:
             projectId (str): The project identifier.
             userId (str | None): The user ID for credit/observability tracking.
 
         Returns:
-            dict: The updated metadata dictionary with important insights.
+            dict: The full updated metadata dictionary.
 
         Raises:
             CustomException: For any errors during metadata generation or upload.
@@ -715,8 +788,8 @@ class ManagementService:
             if "metadata.json" in filenames:
                 fileUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
                 jsonData = json.loads(urlopen(fileUrl).read())
-                newMetadata = self._generateMetadata(projectId=projectId, userId=userId)
                 dataFiles = list()
+                metadataLastModifiedTime = None
                 for file in files:
                     if file["name"] == "metadata.json":
                         metadataLastModifiedTime = datetime.datetime.strptime(file["metadata"]["lastModified"], '%Y-%m-%dT%H:%M:%S.000Z')
@@ -724,21 +797,26 @@ class ManagementService:
                         dataFiles.append(file)
                     else:
                         continue
-                updatedFiles = filter(lambda x: datetime.datetime.strptime(x["metadata"]["lastModified"], '%Y-%m-%dT%H:%M:%S.000Z') > metadataLastModifiedTime, dataFiles)
-                updatedFiles = [os.path.splitext(x.get("name"))[0] for x in updatedFiles]
-                if updatedFiles != []:
-                    for key in updatedFiles:
-                        isActive = jsonData.get(key, {}).get("isActive", True)
-                        jsonData[key] = newMetadata[key]
-                        jsonData[key]["isActive"] = isActive
+                # Find tables added/modified after metadata.json was last updated
+                if metadataLastModifiedTime is not None:
+                    updatedFiles = [os.path.splitext(x.get("name"))[0] for x in dataFiles
+                                    if datetime.datetime.strptime(x["metadata"]["lastModified"], '%Y-%m-%dT%H:%M:%S.000Z') > metadataLastModifiedTime]
                 else:
-                    pass
+                    updatedFiles = [os.path.splitext(x.get("name"))[0] for x in dataFiles]
+                if updatedFiles:
+                    # Generate metadata ONLY for changed tables (not all tables)
+                    newMetadata = self._generateMetadata(projectId=projectId, userId=userId, tableNames=updatedFiles)
+                    for key in updatedFiles:
+                        if key in newMetadata:
+                            isActive = jsonData.get(key, {}).get("isActive", True)
+                            jsonData[key] = newMetadata[key]
+                            jsonData[key]["isActive"] = isActive
             else:
                 jsonData = self._generateMetadata(projectId=projectId, userId=userId)
             with io.BytesIO() as buffer:
                 buffer.write(json.dumps(jsonData, indent=4).encode("utf-8"))
                 buffer.seek(0)
-                self.client.storage.from_("AnalyticsHub").upload(path = f"{projectId}/metadata.json", file = buffer.getvalue(), file_options = {"upsert": "true"})     
+                self.client.storage.from_("AnalyticsHub").upload(path = f"{projectId}/metadata.json", file = buffer.getvalue(), file_options = {"upsert": "true"})
             updateProjectModifiedAt(projectId)
             return jsonData
         except Exception as e:

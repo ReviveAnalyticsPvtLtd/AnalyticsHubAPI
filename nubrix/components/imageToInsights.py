@@ -58,7 +58,6 @@ class ImageToInsights:
         
         self.llm = getGenaiLlm(
             model=self.config.get("IMAGETOINSIGHTS", "model"),
-            temperature=self.config.getfloat("IMAGETOINSIGHTS", "temperature"),
             max_tokens=self.config.getint("IMAGETOINSIGHTS", "maxTokens", fallback=4096)
         )
 

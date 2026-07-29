@@ -59,7 +59,6 @@ def buildLlmChain(section: str, promptKey: str, fallbackTokens: int = 8192):
         prompt = PromptTemplate.from_template(promptTemplate)
         llm = getGenaiLlm(
             model=config.get(section, "model"),
-            temperature=config.getfloat(section, "temperature"),
             max_tokens=config.getint(section, "maxTokens", fallback=fallbackTokens),
         )
         chain = RunnablePassthrough() | prompt | llm | RunnableLambda(cleanThinkTokens) | StrOutputParser()

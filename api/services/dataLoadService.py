@@ -94,9 +94,11 @@ class DataLoadService:
         delimiter = cls._detectCsvDelimiter(fileBytes)
         return pd.read_csv(io.BytesIO(fileBytes), sep=delimiter, parse_dates=True)
 
-    async def loadCsvData(self, projectId: Annotated[str, Form()], files: list[UploadFile]) -> None:
+    async def loadCsvData(self, projectId: Annotated[str, Form()], files: list[UploadFile], userId: str | None = None) -> dict:
         """
-        Load CSV files into project storage.
+        Load CSV files into project storage and generate metadata for the newly
+        added tables only.
+
         Raises:
             CustomException:
                 400 - Missing projectId or files
@@ -111,6 +113,8 @@ class DataLoadService:
                     statusCode=400,
                     uiMessage="Missing projectId or files."
                 )
+            from api.services.managementService import managementService
+            loadedTableNames = []
             for file in files:
                 if not file.filename.lower().endswith(".csv"):
                     raise CustomException(
@@ -119,7 +123,6 @@ class DataLoadService:
                         uiMessage="Unsupported file type. Upload CSV files only."
                     )
                 sanitizedName = self._sanitizeFileName(file.filename)
-                from api.services.managementService import managementService
                 managementService.validateTableNameAvailable(projectId=projectId, tableName=sanitizedName)
                 with tempfile.NamedTemporaryFile(delete=True, suffix=".parquet") as temp:
                     df = self._readCsvUpload(await file.read())
@@ -129,8 +132,18 @@ class DataLoadService:
                         path=f"{projectId}/{sanitizedName}.parquet",
                         file_options={"upsert": "true"}
                     )
+                loadedTableNames.append(sanitizedName)
             updateProjectModifiedAt(projectId)
-            return
+            # Generate metadata ONLY for the newly loaded tables
+            newMetadata = {}
+            if loadedTableNames:
+                try:
+                    newMetadata = managementService.generateMetadataForTables(
+                        projectId=projectId, tableNames=loadedTableNames, userId=userId
+                    )
+                except Exception as metaErr:
+                    logger.error(f"Metadata generation failed for CSV load: {metaErr}")
+            return newMetadata
         except CustomException:
             raise
         except Exception as e:
@@ -141,9 +154,11 @@ class DataLoadService:
             logger.error(exception)
             raise exception
         
-    async def loadExcelData(self, projectId: Annotated[str, Form()], files: list[UploadFile]) -> None:
+    async def loadExcelData(self, projectId: Annotated[str, Form()], files: list[UploadFile], userId: str | None = None) -> dict:
         """
-        Load Excel files into project storage.
+        Load Excel files into project storage and generate metadata for the newly
+        added tables only.
+
         Raises:
             CustomException:
                 400 - Missing projectId or files
@@ -158,6 +173,8 @@ class DataLoadService:
                     statusCode=400,
                     uiMessage="Missing projectId or files."
                 )
+            from api.services.managementService import managementService
+            loadedTableNames = []
             for file in files:
                 if not file.filename.lower().endswith((".xls", ".xlsx")):
                     raise CustomException(
@@ -167,7 +184,6 @@ class DataLoadService:
                     )
                 allSheetData = pd.read_excel(io.BytesIO(await file.read()), sheet_name=None, parse_dates=True)
                 sanitizedBase = self._sanitizeFileName(file.filename)
-                from api.services.managementService import managementService
                 for sheetName, sheetData in allSheetData.items():
                     sanitizedSheet = re.sub(r"[^\w-]", "_", str(sheetName)).strip("_")
                     tableName = f"{sanitizedBase}_{sanitizedSheet}"
@@ -180,8 +196,17 @@ class DataLoadService:
                             path=f"{projectId}/{fileName}",
                             file_options={"upsert": "true"}
                         )
+                    loadedTableNames.append(tableName)
             updateProjectModifiedAt(projectId)
-            return
+            newMetadata = {}
+            if loadedTableNames:
+                try:
+                    newMetadata = managementService.generateMetadataForTables(
+                        projectId=projectId, tableNames=loadedTableNames, userId=userId
+                    )
+                except Exception as metaErr:
+                    logger.error(f"Metadata generation failed for Excel load: {metaErr}")
+            return newMetadata
         except CustomException:
             raise
         except Exception as e:
@@ -192,7 +217,7 @@ class DataLoadService:
             logger.error(exception)
             raise exception
         
-    async def loadPdfData(self, projectId: Annotated[str, Form()], files: list[UploadFile], userId: str | None = None) -> None:
+    async def loadPdfData(self, projectId: Annotated[str, Form()], files: list[UploadFile], userId: str | None = None) -> dict:
         """
         Load PDF files into project storage using a two-pass approach:
         Pass 1 rasterizes each page and extracts table fragments via a VLM.
@@ -213,6 +238,7 @@ class DataLoadService:
                     statusCode=400,
                     uiMessage="Missing projectId or files."
                 )
+            loadedTableNames = []
             for file in files:
                 if not file.filename.lower().endswith(".pdf"):
                     raise CustomException(
@@ -306,15 +332,27 @@ class DataLoadService:
                         self._sanitizeDfForParquet(entry["df"]).to_parquet(
                             temp.name, compression="snappy"
                         )
-                        fileName = f"{baseName}_table{idx}.parquet"
+                        tableName = f"{baseName}_table{idx}"
+                        fileName = f"{tableName}.parquet"
                         self.client.storage.from_("AnalyticsHub").upload(
                             file=temp.name,
                             path=f"{projectId}/{fileName}",
                             file_options={"upsert": "true"}
                         )
+                    loadedTableNames.append(tableName)
 
             updateProjectModifiedAt(projectId)
-            return
+            # Generate metadata ONLY for the newly loaded PDF tables
+            newMetadata = {}
+            if loadedTableNames:
+                try:
+                    from api.services.managementService import managementService
+                    newMetadata = managementService.generateMetadataForTables(
+                        projectId=projectId, tableNames=loadedTableNames, userId=userId
+                    )
+                except Exception as metaErr:
+                    logger.error(f"Metadata generation failed for PDF load: {metaErr}")
+            return newMetadata
         except CustomException:
             raise
         except Exception as e:
@@ -325,15 +363,9 @@ class DataLoadService:
             logger.error(exception)
             raise exception
 
-    def loadMySql(self, connection: LoadMySQLorPostgreSQL) -> None:
+    def loadMySql(self, connection: LoadMySQLorPostgreSQL, userId: str | None = None) -> dict:
         """
-        Load data from MySQL database.
-        Raises:
-            CustomException:
-                400 - Missing required DB connection fields
-                400 - Unable to connect to MySQL
-                422 - Invalid connection details
-                500 - MySQL data load failed
+        Load data from MySQL database and generate metadata for the loaded table.
         """
         try:
             required = [connection.host, connection.port, connection.user,
@@ -359,7 +391,14 @@ class DataLoadService:
                     file_options={"upsert": "true"}
                 )
             updateProjectModifiedAt(connection.projectId)
-            return
+            newMetadata = {}
+            try:
+                newMetadata = managementService.generateMetadataForTables(
+                    projectId=connection.projectId, tableNames=[sanitizedTable], userId=userId
+                )
+            except Exception as metaErr:
+                logger.error(f"Metadata generation failed for MySQL load: {metaErr}")
+            return newMetadata
         except CustomException:
             raise
         except Exception as e:
@@ -372,15 +411,9 @@ class DataLoadService:
             raise exception
 
             
-    def loadPostgreSQL(self, connection: LoadMySQLorPostgreSQL) -> None:
+    def loadPostgreSQL(self, connection: LoadMySQLorPostgreSQL, userId: str | None = None) -> dict:
         """
-        Load data from PostgreSQL database.
-        Raises:
-            CustomException:
-                400 - Missing required DB connection fields
-                400 - Unable to connect to PostgreSQL
-                422 - Invalid connection details
-                500 - PostgreSQL data load failed
+        Load data from PostgreSQL database and generate metadata for the loaded table.
         """
         try:
             required = [connection.host, connection.port, connection.user,
@@ -406,7 +439,14 @@ class DataLoadService:
                     file_options={"upsert": "true"}
                 )
             updateProjectModifiedAt(connection.projectId)
-            return
+            newMetadata = {}
+            try:
+                newMetadata = managementService.generateMetadataForTables(
+                    projectId=connection.projectId, tableNames=[sanitizedTable], userId=userId
+                )
+            except Exception as metaErr:
+                logger.error(f"Metadata generation failed for PostgreSQL load: {metaErr}")
+            return newMetadata
         except CustomException:
             raise
         except Exception as e:
@@ -418,15 +458,9 @@ class DataLoadService:
             logger.error(exception)
             raise exception
         
-    def loadMongoDB(self, connection: LoadMongoDB) -> None:
+    def loadMongoDB(self, connection: LoadMongoDB, userId: str | None = None) -> dict:
         """
-        Load data from MongoDB.
-        Raises:
-            CustomException:
-                400 - Missing required DB connection fields
-                400 - Unable to connect to MongoDB
-                422 - Invalid MongoDB connection details
-                500 - MongoDB data load failed
+        Load data from MongoDB and generate metadata for the loaded collection.
         """
         try:
             if not connection.connectionString or not connection.db or not connection.collection:
@@ -435,22 +469,29 @@ class DataLoadService:
                     statusCode=400,
                     uiMessage="Missing required DB connection fields."
                 )
+            sanitizedCollection = self._sanitizeFileName(connection.collection)
+            from api.services.managementService import managementService
+            managementService.validateTableNameAvailable(projectId=connection.projectId, tableName=sanitizedCollection)
             with tempfile.NamedTemporaryFile(delete=True, suffix=".parquet") as temp:
                 mongoClient = MongoClient(connection.connectionString, server_api=ServerApi('1'))
                 records = list(mongoClient[connection.db][connection.collection].find())
                 for record in records:
                     record.pop("_id", None)
                 pd.DataFrame(records).to_parquet(temp.name, compression="snappy")
-                sanitizedCollection = self._sanitizeFileName(connection.collection)
-                from api.services.managementService import managementService
-                managementService.validateTableNameAvailable(projectId=connection.projectId, tableName=sanitizedCollection)
                 self.client.storage.from_("AnalyticsHub").upload(
                     file=temp.name,
                     path=f"{connection.projectId}/{sanitizedCollection}.parquet",
                     file_options={"upsert": "true"}
                 )
             updateProjectModifiedAt(connection.projectId)
-            return
+            newMetadata = {}
+            try:
+                newMetadata = managementService.generateMetadataForTables(
+                    projectId=connection.projectId, tableNames=[sanitizedCollection], userId=userId
+                )
+            except Exception as metaErr:
+                logger.error(f"Metadata generation failed for MongoDB load: {metaErr}")
+            return newMetadata
         except CustomException:
             raise
         except Exception as e:
