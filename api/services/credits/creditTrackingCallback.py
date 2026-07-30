@@ -2,8 +2,12 @@
 creditTrackingCallback.py
 
 LangChain BaseCallbackHandler that extracts token usage from LLM responses
-and deducts credits via creditService.  Composed alongside the Langfuse
-callback in the ``callbacks`` list passed to chain invocations.
+and deducts it from the user's monthly balance via creditService.  Composed
+alongside the Langfuse callback in the ``callbacks`` list passed to chain
+invocations.
+
+Tokens are charged exactly as reported — there is no per-call rounding, so a
+chain of six small calls costs the sum of its six token counts.
 """
 
 __version__ = "1.0.0"
@@ -60,7 +64,7 @@ class CreditTrackingCallback(BaseCallbackHandler):
 
             if totalTokens > 0:
                 from api.services.credits.creditService import creditService
-                creditService.deductCredits(
+                creditService.deductTokens(
                     userId=self.userId,
                     tokensUsed=totalTokens,
                     operationType=self.operationType,

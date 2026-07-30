@@ -36,12 +36,18 @@ Verify a JWT token and return the user's credit balance snapshot.
   "status": "SUCCESS",
   "message": "Token is valid and has not expired.",
   "credits": {
-    "remainingCredits": 8500,
-    "usedCredits": 1500,
-    "monthlyQuota": 10000,
-    "periodStart": "2025-01-01T00:00:00Z",
-    "periodEnd": "2025-01-31T23:59:59Z",
-    "planTier": "pro"
+    "planTier": "pro",
+    "monthlyTokenQuota": 10000000,
+    "usedTokens": 480000,
+    "remainingTokens": 9520000,
+    "monthlyCredits": 1000.0,
+    "usedCredits": 48.0,
+    "remainingCredits": 952.0,
+    "usagePercentage": 4.8,
+    "periodStart": "2026-07-01T00:00:00Z",
+    "periodEnd": "2026-08-01T00:00:00Z",
+    "lastResetAt": "2026-07-01T00:00:00Z",
+    "initialized": true
   }
 }
 ```
@@ -467,10 +473,36 @@ All routes under `/api/latest/projects/`. Auth via `verifyToken` unless otherwis
     "position": "Data Analyst",
     "bio": "...",
     "profileImage": "https://...",
-    "currentWorkspaceId": "workspace-uuid"
+    "credits": {
+      "monthlyCredits": 1000.0,
+      "usedCredits": 240.0,
+      "topupCredits": 50.0,
+      "remainingCredits": 810.0,
+      "usagePercentage": 24.0,
+      "periodEnd": "2026-08-01T00:00:00+00:00",
+      "initialized": true
+    },
+    "plan": {
+      "planType": "monthly",
+      "status": "ACTIVE",
+      "planExpire": "2026-08-01T00:00:00+00:00",
+      "nextBilling": "2026-08-01T00:00:00+00:00",
+      "subscribedExperts": [],
+      "domainCount": 0,
+      "pendingRemovals": [],
+      "subscriptionDaysLeft": 4,
+      "billingMode": "recurring",
+      "renewalDueAt": "2026-08-01T00:00:00+00:00"
+    }
   }
 }
 ```
+
+> `credits` is a **trimmed, credits-only** view of the balance snapshot — just the
+> fields the UI renders. Token counts, `planTier`, `periodStart`, and `lastResetAt`
+> are omitted here (the full snapshot lives on `GET /credits/balance`). It is
+> best-effort: on a credit-service error the field is `null` and the rest of the
+> profile still returns.
 
 ---
 
@@ -1431,30 +1463,56 @@ Transcribe a base64-encoded audio file.
 
 ### 10.2 `POST /api/latest/utils/getInsightsFromImage`
 
-Extract structured insights from a base64-encoded dashboard image.
+Extract structured insights from a dashboard page's **data** — widget data,
+provenance, per-widget statistical signals, and schema — not a screenshot. The
+endpoint keeps its historical name for backward compatibility.
 
 **Auth:** Required + `requireCredits("image_to_insights")`
 
 **Request Body:**
 ```json
 {
-  "b64String": "data:image/png;base64,iVBOR...",
   "projectId": "effeaef7-...",
-  "pageId": "page-uuid",  // optional
-  "refresh": false
+  "pageId": "page-uuid",  // optional: dashboard page to analyse
+  "refresh": false,       // optional: false uses cache, true regenerates
+  "mode": "data",         // optional: "data" (default) or "hybrid"
+  "b64String": null       // optional: only used when mode is "hybrid"
 }
 ```
+
+`mode: "data"` (default, recommended) sends only the structured dashboard data.
+`mode: "hybrid"` additionally attaches a base64 screenshot in `b64String` as
+supplementary layout context; the data payload stays authoritative. Send
+`refresh: false` on a normal dashboard open (serves the cached insight when the
+page's data is unchanged) and `refresh: true` to force regeneration.
 
 **Response (200):**
 ```json
 {
-  "diagnostic_insights": [
-    { "insight": "Revenue dropped 15% in March", "severity": "high" }
-  ],
-  "prescriptive_actions": [
-    { "action": "Investigate Q1 marketing spend" }
-  ],
-  "missing_data": ["customer_satisfaction_scores"]
+  "insights": {
+    "diagnostic_insights": [
+      {
+        "finding": "Conversion rate dropped by 12% in the last 7 days.",
+        "evidence": "Conversion rate: 3.2% -> 2.8% — period change -12.4% (W2 signals).",
+        "widget_ref": "W2",
+        "business_impact": "Direct revenue loss of approximately $5,000 per day.",
+        "confidence": 0.95
+      }
+    ],
+    "prescriptive_actions": [
+      {
+        "recommended_action": "Audit the checkout page for layout changes or errors.",
+        "expected_impact": "Stabilization of conversion rates to baseline (3.2%).",
+        "owner": "UX Design Team",
+        "priority": "high"
+      }
+    ],
+    "missing_data": ["Attribution data for paid traffic is missing."]
+  },
+  "source": "cache",
+  "cacheHit": true,
+  "insightId": "7eb09ae7-a801-40f0-b9f9-fbd97c52dc16",
+  "generatedAt": "2026-06-09T00:00:00+00:00"
 }
 ```
 
@@ -1853,9 +1911,9 @@ All routes under `/api/latest/billingAdmin/`. Auth via `verifyBillingAdmin` (req
 
 ### 12.5 `POST /api/latest/billingAdmin/credits/force-reset?resetUsage={true|false}`
 
-Recompute credit quotas for all users from `credits.json` and flush Redis credit hashes.
+Recompute `monthly_token_quota` for all users from `credits.json` and flush Redis credit hashes.
 
-**Query Params:** `resetUsage` (bool, default `false`)
+**Query Params:** `resetUsage` (bool, default `false`) — when `true`, also zero `used_tokens` and restore `remaining_tokens` to the full quota for every user, giving everyone a fresh monthly bucket immediately. The billing period is left untouched.
 
 **Response (200):**
 ```json
@@ -1906,53 +1964,69 @@ All routes under `/api/latest/credits/`. Auth via `verifyUser`.
 
 ### 14.1 `GET /api/latest/credits/balance`
 
-Get the current credit balance snapshot.
+Get the current balance snapshot. Balances are tracked in raw LLM tokens; credit
+fields are derived at 10,000 tokens per credit and returned as floats (2 dp).
 
 **Response (200):**
 ```json
 {
   "status": "SUCCESS",
   "data": {
-    "remainingCredits": 8500,
-    "usedCredits": 1500,
-    "monthlyQuota": 10000,
-    "periodStart": "2025-01-01T00:00:00Z",
-    "periodEnd": "2025-01-31T23:59:59Z",
-    "planTier": "pro"
+    "planTier": "pro",
+    "monthlyTokenQuota": 10000000,
+    "usedTokens": 480000,
+    "remainingTokens": 9520000,
+    "monthlyCredits": 1000.0,
+    "usedCredits": 48.0,
+    "remainingCredits": 952.0,
+    "usagePercentage": 4.8,
+    "periodStart": "2026-07-01T00:00:00Z",
+    "periodEnd": "2026-08-01T00:00:00Z",
+    "lastResetAt": "2026-07-01T00:00:00Z",
+    "initialized": true
   }
 }
 ```
+
+`initialized` is `false` with all counters at zero when the user has no
+`credit_balances` row yet.
 
 ---
 
 ### 14.2 `GET /api/latest/credits/usage`
 
-Get credit usage summary with optional Langfuse breakdown by operation and model.
+Get token usage summary with optional Langfuse breakdown by operation and model.
 
 **Response (200):**
 ```json
 {
   "status": "SUCCESS",
   "data": {
-    "totalUsedCredits": 1500,
-    "monthlyQuota": 10000,
-    "remainingCredits": 8500,
-    "usagePercentage": 15.0,
-    "periodStart": "2025-01-01T00:00:00Z",
-    "periodEnd": "2025-01-31T23:59:59Z",
+    "totalUsedTokens": 480000,
+    "monthlyTokenQuota": 10000000,
+    "remainingTokens": 9520000,
+    "totalUsedCredits": 48.0,
+    "monthlyCredits": 1000.0,
+    "remainingCredits": 952.0,
+    "usagePercentage": 4.8,
+    "periodStart": "2026-07-01T00:00:00Z",
+    "periodEnd": "2026-08-01T00:00:00Z",
     "planTier": "pro",
     "langfuseAvailable": true,
     "breakdown": {
       "byOperation": [
-        { "operation": "reporting_query", "credits": 800, "calls": 12 }
+        { "tag": "reporting_query", "totalTokens": 260000, "callCount": 12 }
       ],
       "byModel": [
-        { "model": "gemini-2.0-flash", "credits": 600, "calls": 20 }
+        { "model": "gemini-2.0-flash", "totalTokens": 180000, "callCount": 20 }
       ]
     }
   }
 }
 ```
+
+`breakdown` arrays are empty and `langfuseAvailable` is `false` when Langfuse is
+unconfigured or its metrics endpoint returns an unexpected shape.
 
 ---
 

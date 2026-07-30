@@ -1,36 +1,53 @@
 {
-  "version": "2.0.0",
-  "token_to_credit_ratio": 100,
-  "daily_credit_percent": 0.10,
+  "version": "3.1.0",
+  "token_to_credit_ratio": 10000,
   "quotas": {
     "free": {
-      "monthly_credits": 5000,
-      "daily_exempt": true,
-      "description": "Free-tier and trial users (12-day trial period) — full quota across the trial, no daily throttle"
+      "monthly_tokens": 1000000,
+      "description": "Free-tier and trial users (12-day trial period) — 100 credits"
     },
     "pro": {
-      "monthly_credits": 50000,
-      "description": "Pro monthly subscribers"
+      "monthly_tokens": 10000000,
+      "description": "Pro monthly subscribers — 1,000 credits"
     },
     "annual": {
-      "monthly_credits": 50000,
-      "description": "Annual prepaid subscribers"
+      "monthly_tokens": 10000000,
+      "description": "Annual prepaid subscribers — 1,000 credits"
     },
     "none": {
-      "monthly_credits": 0,
-      "daily_exempt": true,
+      "monthly_tokens": 0,
       "description": "No active plan"
     }
   },
   "operation_minimums": {
-    "reporting_query": 5,
-    "transformation_message": 10,
-    "image_to_insights": 10,
-    "metadata_generation": 3,
-    "pdf_extraction_per_page": 5,
-    "kpi_mapping": 3,
-    "dashboard_naming": 1,
-    "insight_generation": 5,
-    "speech_to_text": 2
+    "reporting_query": 5000,
+    "transformation_message": 10000,
+    "image_to_insights": 10000,
+    "metadata_generation": 3000,
+    "pdf_extraction_per_page": 5000,
+    "kpi_mapping": 3000,
+    "dashboard_naming": 1000,
+    "insight_generation": 5000,
+    "speech_to_text": 2000
+  },
+  "topup_packs": {
+    "small": {
+      "tokens": 1000000,
+      "amount": 49900,
+      "active": true,
+      "description": "100 credits — placeholder pricing, pending sign-off"
+    },
+    "medium": {
+      "tokens": 5000000,
+      "amount": 199900,
+      "active": true,
+      "description": "500 credits — placeholder pricing, pending sign-off"
+    },
+    "large": {
+      "tokens": 10000000,
+      "amount": 349900,
+      "active": true,
+      "description": "1,000 credits — placeholder pricing, pending sign-off"
+    }
   }
 }

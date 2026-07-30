@@ -403,7 +403,7 @@ class SubscriptionService:
 
         try:
             from api.services.credits.creditService import creditService
-            creditService.resetMonthlyCredits(userId)
+            creditService.resetMonthlyTokens(userId)
         except Exception as creditErr:
             logger.warning(f"Credit reset failed for annual renewal userId={userId}: {creditErr}")
 

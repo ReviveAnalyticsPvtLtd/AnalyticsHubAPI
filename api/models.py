@@ -59,10 +59,11 @@ class SpeechToTextModel(BaseModel):
     b64String: str
 
 class ImageToInsightsModel(BaseModel):
-    b64String: str
     projectId: str
+    b64String: str | None = None
     pageId: str | None = None
     refresh: bool = False
+    mode: Literal["data", "hybrid"] = "data"
 
 class DeleteTable(BaseModel):
     projectId: str
@@ -215,6 +216,14 @@ class MarkReconciliationInvestigatedRequest(BaseModel):
 class RefundRequest(BaseModel):
     paymentId: str
     amount: int | None = None
+
+class CreateTopupOrderRequest(BaseModel):
+    packId: str
+
+class VerifyTopupPaymentRequest(BaseModel):
+    razorpayOrderId: str
+    razorpayPaymentId: str
+    razorpaySignature: str
 
 class SaveQuery(BaseModel):
     projectId: str

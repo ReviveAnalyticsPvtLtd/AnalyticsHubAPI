@@ -1,9 +1,11 @@
 """
 UtilityService module provides utility functions such as speech-to-text transcription,
-hybrid image-to-insights generation, insight persistence, and sending forecasts for NubrixAI.
+data-driven dashboard insight generation, insight persistence, and sending forecasts
+for NubrixAI.
 """
 
 from nubrix.components.insightContextBuilder import InsightContextBuilder
+from nubrix.components.dashboardPayloadBuilder import DashboardPayloadBuilder
 from nubrix.components.imageToInsights import ImageToInsights
 from nubrix.components.signalEngine import SignalEngine
 from nubrix.components.speechToText import SpeechToText
@@ -16,6 +18,7 @@ from utils.logger import logger
 from api.commons import client
 from datetime import datetime, timezone
 import pandas as pd
+import hashlib
 import json
 import uuid
 import time
@@ -36,13 +39,18 @@ class UtilityService:
         self.imageToInsightsModule = ImageToInsights()
         self.insightContextBuilder = InsightContextBuilder()
         self.signalEngine = SignalEngine()
+        self.payloadBuilder = DashboardPayloadBuilder(
+            fullRowLimit=self.imageToInsightsModule.fullRowLimit,
+            compactRowLimit=self.imageToInsightsModule.compactRowLimit,
+            tokenBudget=self.imageToInsightsModule.payloadTokenBudget,
+        )
         self.speechToTextModule = SpeechToText()
         self.client = client
     
     # ~50 estimated tokens per second of audio for billing purposes (covers
     # input processing overhead on top of output token generation).
     _STT_TOKENS_PER_SECOND = 50
-    _STT_MIN_TOKENS = 200
+    _STT_MIN_TOKENS = 2000
 
     def getSpeechTranscript(self, speechToText: SpeechToTextModel, userId: str | None = None) -> str:
         """
@@ -68,7 +76,7 @@ class UtilityService:
                         estimatedTokens = max(self._STT_MIN_TOKENS, int(audioDuration * self._STT_TOKENS_PER_SECOND))
                     else:
                         estimatedTokens = self._STT_MIN_TOKENS
-                    creditService.deductCredits(userId=userId, tokensUsed=estimatedTokens, operationType="speech_to_text")
+                    creditService.deductTokens(userId=userId, tokensUsed=estimatedTokens, operationType="speech_to_text")
                 except Exception as e:
                     logger.warning(f"STT credit deduction failed: {e}")
                 try:
@@ -93,27 +101,41 @@ class UtilityService:
         
     def getInsightsFromImage(self, imageToInsights: ImageToInsightsModel, userId: str | None = None) -> dict:
         """
-        Extracts structured, evidence-backed insights from a base64-encoded dashboard image
-        using the hybrid data + statistics + domain + LLM pipeline.
+        Extracts structured, evidence-backed insights from a dashboard page's own data.
 
-        Returns the cached project-level dashboard insight unless refresh is requested
-        or no cached insight exists. Cache misses orchestrate context building,
-        statistical signal extraction, LLM inference, and persistence.
+        Builds a serialized data payload from the page's widgets, statistics, schema,
+        and domain profile, and sends that to the LLM. The screenshot is only attached
+        when mode is "hybrid". Results are cached per page against a hash of the
+        payload, so the cache invalidates exactly when the underlying data changes.
 
         Args:
-            imageToInsights (ImageToInsightsModel): Model containing image, project context,
-                and user objectives.
+            imageToInsights (ImageToInsightsModel): Project, page, mode, refresh flag,
+                and optional base64 image.
+            userId (str | None): Caller, used for credit tracking and tracing.
 
         Returns:
-            dict: Structured insights with diagnostic_insights, prescriptive_actions, missing_data.
+            dict: Structured insights with diagnostic_insights, prescriptive_actions,
+                missing_data, plus cache metadata.
 
         Raises:
             CustomException: If insight generation fails.
         """
         try:
+            context = self.insightContextBuilder.buildContext(
+                projectId=imageToInsights.projectId,
+                pageId=imageToInsights.pageId,
+            )
+            context["statisticalSummary"] = self.signalEngine.buildStatisticalSummary(
+                chartData=context.get("chartData", [])
+            )
+            payloadText = self.payloadBuilder.build(context)
+            cacheKey = self._computeCacheKey(imageToInsights.pageId, payloadText)
+
             if not imageToInsights.refresh:
-                cachedRecord = self._getLatestDashboardInsightRecord(
-                    self._loadDashboardInsightsFile(imageToInsights.projectId)
+                cachedRecord = self._findCachedRecord(
+                    records=self._loadDashboardInsightsFile(imageToInsights.projectId),
+                    pageId=imageToInsights.pageId,
+                    cacheKey=cacheKey,
                 )
                 if cachedRecord:
                     return self._formatDashboardInsightResponse(
@@ -122,24 +144,17 @@ class UtilityService:
                         cacheHit=True,
                     )
 
-            context = self.insightContextBuilder.buildContext(
-                projectId=imageToInsights.projectId,
-                pageId=imageToInsights.pageId,
-            )
-
-            statisticalSummary = self.signalEngine.buildStatisticalSummary(
-                chartData=context.get("chartData", [])
-            )
-            context["statisticalSummary"] = statisticalSummary
-
             context["projectId"] = imageToInsights.projectId
             if userId:
                 context["userId"] = userId
+
             imgCallbacks = []
             if userId:
                 imgCallbacks.append(CreditTrackingCallback(userId=userId, operationType="image_to_insights"))
+
             insights = self.imageToInsightsModule.getInsights(
-                b64String=imageToInsights.b64String,
+                payloadText=payloadText,
+                b64String=imageToInsights.b64String if imageToInsights.mode == "hybrid" else None,
                 context=context,
                 callbacks=imgCallbacks if imgCallbacks else None,
             )
@@ -148,6 +163,7 @@ class UtilityService:
                 projectId=imageToInsights.projectId,
                 pageId=imageToInsights.pageId,
                 insights=insights,
+                cacheKey=cacheKey,
             )
 
             return self._formatDashboardInsightResponse(
@@ -160,12 +176,30 @@ class UtilityService:
             logger.error(exception)
             raise exception
 
-    def _getLatestDashboardInsightRecord(self, records: list) -> dict | None:
+    @staticmethod
+    def _computeCacheKey(pageId: str | None, payloadText: str) -> str:
         """
-        Returns the latest valid insight record from a dashboardInsights.json list.
+        Derives the cache key for a page's insights from its serialized payload.
+
+        Hashing the payload rather than timestamping means the cache invalidates
+        precisely when the dashboard's data, filters, or widget set change.
+        """
+        digest = hashlib.sha256(f"{pageId or ''}|{payloadText}".encode("utf-8"))
+        return digest.hexdigest()
+
+    def _findCachedRecord(self, records: list, pageId: str | None, cacheKey: str) -> dict | None:
+        """
+        Returns the stored insight for this page whose payload hash still matches.
+
+        Records written before the content-hash cache (cacheVersion 1) carry no
+        cacheKey and are never served.
         """
         for record in reversed(records):
-            if isinstance(record, dict) and "insights" in record:
+            if not isinstance(record, dict) or "insights" not in record:
+                continue
+            if record.get("pageId") != pageId:
+                continue
+            if record.get("cacheKey") == cacheKey:
                 return record
         return None
 
@@ -181,38 +215,47 @@ class UtilityService:
             "generatedAt": record.get("generatedAt"),
         }
 
-    def _persistDashboardInsight(self, projectId: str, pageId: str | None, insights: dict) -> dict:
+    def _persistDashboardInsight(self, projectId: str, pageId: str | None, insights: dict, cacheKey: str) -> dict:
         """
-        Persists the latest generated insight record to dashboardInsights.json in project storage.
+        Persists the generated insight to dashboardInsights.json, replacing only
+        the record for this page and leaving other pages' records intact.
 
         Args:
             projectId (str): The project identifier.
             pageId (str | None): The dashboard page the insight was generated for.
             insights (dict): The structured insight payload.
+            cacheKey (str): Hash of the payload this insight was generated from.
 
         Returns:
-            dict: The persisted latest insight record.
+            dict: The persisted insight record.
         """
         try:
             record = {
                 "id": str(uuid.uuid4()),
-                "scope": "project",
-                "pageId": None,
+                "scope": "page",
+                "pageId": pageId,
+                "cacheKey": cacheKey,
                 "generatedAt": datetime.now(timezone.utc).isoformat(),
                 "insights": insights,
                 "status": "new",
-                "cacheVersion": 1,
+                "cacheVersion": 2,
             }
 
+            existing = [
+                item for item in self._loadDashboardInsightsFile(projectId)
+                if isinstance(item, dict) and item.get("pageId") != pageId
+            ]
+            records = existing + [record]
+
             with io.BytesIO() as buffer:
-                buffer.write(json.dumps([record], indent=4).encode("utf-8"))
+                buffer.write(json.dumps(records, indent=4).encode("utf-8"))
                 buffer.seek(0)
                 self.client.storage.from_("AnalyticsHub").upload(
                     path=f"{projectId}/dashboardInsights.json",
                     file=buffer.getvalue(),
                     file_options={"upsert": "true"},
                 )
-            logger.info(f"Dashboard insight persisted for project {projectId}.")
+            logger.info(f"Dashboard insight persisted for project {projectId}, page {pageId}.")
             return record
         except Exception as e:
             logger.warning(f"Failed to persist dashboard insight: {e}")

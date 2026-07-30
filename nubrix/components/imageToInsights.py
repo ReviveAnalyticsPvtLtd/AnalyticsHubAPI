@@ -1,10 +1,10 @@
 """
 imageToInsights.py
 
-This module provides the ImageToInsights class for analyzing base64-encoded dashboard images
-and extracting meaningful, structured insights using a vision-capable model.
-Supports a hybrid mode where chart data, statistical signals, and domain context are injected
-alongside the image to produce evidence-backed, structured JSON insights.
+This module provides the ImageToInsights class for extracting structured, evidence-backed
+insights from a dashboard page. The serialized dashboard data payload built by
+DashboardPayloadBuilder is the authoritative input and is sent first; a screenshot is
+attached only in hybrid mode, as supplementary layout context.
 """
 
 __version__ = "1.0.0"
@@ -18,7 +18,6 @@ from utils.exceptionHandler import CustomException
 from nubrix.utils import readYaml, getConfig
 from dataclasses import dataclass
 from utils.logger import logger
-import json
 import os
 
 @dataclass
@@ -35,11 +34,12 @@ class ImageToInsightsConfig:
 
 class ImageToInsights:
     """
-    ImageToInsights provides functionality to analyze base64-encoded dashboard images and extract
-    crisp, business-relevant insights using a language model.
+    ImageToInsights analyses a serialized dashboard data payload and extracts crisp,
+    business-relevant insights using a language model.
 
     The analysis is guided by a custom system prompt defined in a YAML configuration file.
-    When context is provided, the component operates in hybrid mode producing structured JSON output.
+    Output is always structured JSON. Row and token limits for the payload are read from
+    config and exposed for the payload builder to consume.
     """
     def __init__(self):
         """
@@ -61,84 +61,61 @@ class ImageToInsights:
             max_tokens=self.config.getint("IMAGETOINSIGHTS", "maxTokens", fallback=4096)
         )
 
-    def _buildContextMessage(self, context: dict) -> str:
+        self.payloadTokenBudget = self.config.getint("IMAGETOINSIGHTS", "payloadTokenBudget", fallback=12000)
+        self.fullRowLimit = self.config.getint("IMAGETOINSIGHTS", "fullRowLimit", fallback=40)
+        self.compactRowLimit = self.config.getint("IMAGETOINSIGHTS", "compactRowLimit", fallback=10)
+
+    def getInsights(
+        self,
+        payloadText: str,
+        b64String: str | None = None,
+        context: dict | None = None,
+        callbacks: list | None = None,
+    ) -> dict:
         """
-        Serializes the context payload into a compact text block for the user message.
+        Generates structured insights from a serialized dashboard data payload.
+
+        The payload text is sent first and is authoritative. An image, when
+        supplied, is attached afterwards as supplementary layout context only.
 
         Args:
-            context (dict): Context payload from InsightContextBuilder + SignalEngine.
+            payloadText (str): Serialized dashboard payload from DashboardPayloadBuilder.
+            b64String (str | None): Optional base64 PNG for hybrid mode.
+            context (dict | None): Context dict, read only for tracing identifiers.
+            callbacks (list | None): LangChain callbacks, e.g. credit tracking.
 
         Returns:
-            str: Formatted context string for LLM consumption.
-        """
-        sections = []
-
-        chartData = context.get("chartData", [])
-        if chartData:
-            sections.append(f"## chart_json_data\n{json.dumps(chartData, default=str, indent=2)}")
-
-        stats = context.get("statisticalSummary", {})
-        if stats:
-            sections.append(f"## statistical_summary\n{json.dumps(stats, default=str, indent=2)}")
-
-        domain = context.get("domainContext", {})
-        if domain:
-            sections.append(f"## domain_context\n{json.dumps(domain, default=str, indent=2)}")
-
-        metadata = context.get("metadata", {})
-        if metadata:
-            sections.append(f"## database_metadata\n{json.dumps(metadata, default=str, indent=2)}")
-
-        return "\n\n".join(sections)
-
-    def getInsights(self, b64String: str, context: dict | None = None, callbacks: list | None = None) -> dict | str:
-        """
-        Processes a base64-encoded image string (e.g., a dashboard screenshot)
-        and returns extracted insights based on the model's interpretation.
-
-        When context is provided, operates in hybrid mode: injects chart data,
-        statistical signals, and domain context into the prompt and returns
-        structured JSON output parsed into a dict.
-
-        Args:
-            b64String (str): A base64-encoded PNG image string representing a dashboard.
-            context (dict | None): Optional context payload containing chartData,
-                statisticalSummary, domainContext, and objectiveContext.
-
-        Returns:
-            dict: Structured insights (when context is provided) with keys
-                diagnostic_insights, prescriptive_actions, missing_data.
-            str: Raw insight text (legacy mode, when context is None).
+            dict: Structured insights with keys diagnostic_insights,
+                prescriptive_actions, missing_data.
 
         Raises:
-            CustomException: If insight generation fails or any error occurs during processing.
+            CustomException: If insight generation fails.
         """
         try:
-            logger.info("Generating insights from image.")
+            logger.info("Generating insights from dashboard data payload.")
 
-            userContent = [
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": "data:image/png;base64," + b64String
-                    }
-                }
-            ]
+            userContent = [{
+                "type": "text",
+                "text": payloadText + (
+                    "\n\nCRITICAL: You MUST output ONLY raw, valid JSON. Your response must be "
+                    "immediately parseable by `json.loads`. DO NOT wrap the output in markdown "
+                    "code blocks like ```json."
+                ),
+            }]
 
-            if context:
-                contextText = self._buildContextMessage(context)
+            if b64String:
                 userContent.append({
-                    "type": "text",
-                    "text": contextText + "\n\nCRITICAL: You MUST output ONLY raw, valid JSON. Your response must be immediately parseable by `json.loads`. DO NOT wrap the output in markdown code blocks like ```json."
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64," + b64String},
                 })
 
             messages = [
                 SystemMessage(content=self.prompt),
-                HumanMessage(content=userContent)
+                HumanMessage(content=userContent),
             ]
 
             stopSequence = self.config.get("IMAGETOINSIGHTS", "stop", fallback="").strip()
-            
+
             from utils.llm import getLangfuseConfig
             projectId = context.get("projectId") if isinstance(context, dict) else None
             userId = context.get("userId") if isinstance(context, dict) else None
@@ -152,12 +129,7 @@ class ImageToInsights:
             else:
                 response = self.llm.invoke(messages, config=invokeConfig)
 
-            rawOutput = response.content
-
-            if context:
-                return parseModelJsonOutput(rawOutput, "Image-to-insights")
-
-            return rawOutput
+            return parseModelJsonOutput(response.content, "Image-to-insights")
         except Exception as e:
             exception = CustomException(e)
             logger.error(exception)

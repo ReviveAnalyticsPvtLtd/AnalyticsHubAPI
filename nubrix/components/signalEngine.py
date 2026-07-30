@@ -1,17 +1,21 @@
 """
 signalEngine.py
 
-Deterministic statistical signal extraction for the hybrid insight pipeline.
+Deterministic statistical signal extraction for the dashboard insight pipeline.
 Computes period deltas, anomaly detection, concentration indices, top contributors,
-and pairwise correlations from chart data, producing a compact statistical summary
-consumed by the LLM prompt.
+and pairwise correlations for each widget individually, producing signals the
+payload builder inlines beneath the widget they describe.
+
+Signals are always scoped to a single widget. Rows of different widgets share no
+index, so no statistic is ever computed across widget boundaries.
 """
 
 __version__ = "1.0.0"
 __author__ = "Rohit Mishra"
-__all__ = ["SignalEngine"]
+__all__ = ["SignalEngine", "formatWidgetSignals"]
 
 
+from nubrix.components.widgetSerializer import normalizeWidgetData
 from utils.exceptionHandler import CustomException
 from utils.logger import logger
 import pandas as pd
@@ -229,102 +233,23 @@ class SignalEngine:
         except Exception:
             return {"skipped": True, "reason": "correlation computation failed"}
 
-    def buildStatisticalSummary(self, chartData: list[dict]) -> dict:
-        """
-        Orchestrates all signal computations over the provided chart data.
-
-        Infers DataFrame structure from widget chart data dicts and runs
-        applicable statistical functions.
-
-        Args:
-            chartData (list[dict]): List of widget chart data dicts from InsightContextBuilder.
-
-        Returns:
-            dict: Compact statistical summary for LLM consumption.
-        """
-        try:
-            logger.info(f"Building statistical summary for {len(chartData)} widgets.")
-            summary = {
-                "periodDeltas": [],
-                "anomalies": [],
-                "concentration": [],
-                "topContributors": [],
-                "correlations": {},
-                "widgetCount": len(chartData),
-            }
-
-            allNumericCols = []
-            for widget in chartData:
-                data = widget.get("data")
-                if not data:
-                    continue
-
-                df = self._chartDataToDataFrame(data, widget)
-                if df is None or df.empty:
-                    continue
-
-                numericCols = df.select_dtypes(include=[np.number]).columns.tolist()
-                categoricalCols = df.select_dtypes(include=["object", "category"]).columns.tolist()
-                dateCol = self._inferDateColumn(df)
-
-                if dateCol and numericCols:
-                    deltas = self.computePeriodDeltas(df, dateCol, numericCols)
-                    summary["periodDeltas"].extend(deltas)
-
-                if numericCols:
-                    anomalies = self.detectAnomalies(df, numericCols)
-                    summary["anomalies"].extend(anomalies)
-                    allNumericCols.extend(numericCols)
-
-                if categoricalCols and numericCols:
-                    groupCol = categoricalCols[0]
-                    valueCol = numericCols[0]
-                    concentration = self.computeConcentration(df, groupCol, valueCol)
-                    if concentration:
-                        summary["concentration"].append(concentration)
-                    contributors = self.computeTopContributors(df, groupCol, valueCol)
-                    if contributors:
-                        summary["topContributors"].append({
-                            "widgetTitle": widget.get("title", "unknown"),
-                            "contributors": contributors,
-                        })
-
-            if allNumericCols and len(set(allNumericCols)) >= 2:
-                mergedDf = self._mergeAllWidgetData(chartData)
-                if mergedDf is not None and not mergedDf.empty:
-                    uniqueNumeric = list(dict.fromkeys(allNumericCols))
-                    summary["correlations"] = self.computeCorrelations(mergedDf, uniqueNumeric)
-
-            logger.info("Statistical summary built successfully.")
-            return summary
-        except Exception as e:
-            logger.warning(f"SignalEngine summary partially failed: {e}")
-            return {"periodDeltas": [], "anomalies": [], "concentration": [], "topContributors": [], "correlations": {}, "widgetCount": len(chartData)}
-
     @staticmethod
-    def _chartDataToDataFrame(data: dict | list | str, widget: dict) -> pd.DataFrame | None:
-        """Attempts to convert widget chart data into a DataFrame."""
-        try:
-            if isinstance(data, list):
-                return pd.DataFrame(data)
-            if isinstance(data, dict):
-                datasets = data.get("datasets")
-                labels = widget.get("xLabels") or data.get("labels")
-                if datasets and labels:
-                    records = {}
-                    records["label"] = labels
-                    for ds in datasets:
-                        dsLabel = ds.get("label", "value")
-                        dsData = ds.get("data", [])
-                        records[dsLabel] = dsData
-                    return pd.DataFrame(records)
-                return pd.DataFrame([data])
-            if isinstance(data, str):
-                parsed = pd.read_json(data)
-                return parsed
-        except Exception:
-            pass
-        return None
+    def _coerceNumeric(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Converts columns that are predominantly numeric into numeric dtype.
+
+        Widget payloads arrive as JSON, so numeric columns often carry strings.
+        A column converts only when at least 80% of its values parse, which
+        keeps genuinely categorical columns categorical.
+        """
+        converted = df.copy()
+        for column in converted.columns:
+            if pd.api.types.is_numeric_dtype(converted[column]):
+                continue
+            numeric = pd.to_numeric(converted[column], errors="coerce")
+            if numeric.notna().sum() >= max(1, int(len(converted) * 0.8)):
+                converted[column] = numeric
+        return converted
 
     @staticmethod
     def _inferDateColumn(df: pd.DataFrame) -> str | None:
@@ -342,22 +267,120 @@ class SignalEngine:
                     continue
         return None
 
-    @staticmethod
-    def _mergeAllWidgetData(chartData: list[dict]) -> pd.DataFrame | None:
-        """Collects all numeric columns from all widgets into a single DataFrame (column-wise concat)."""
-        frames = []
-        for widget in chartData:
-            data = widget.get("data")
-            if not data:
-                continue
-            df = SignalEngine._chartDataToDataFrame(data, widget)
-            if df is not None and not df.empty:
-                numericOnly = df.select_dtypes(include=[np.number])
-                if not numericOnly.empty:
-                    frames.append(numericOnly)
-        if not frames:
-            return None
+    def buildWidgetSignals(self, widget: dict) -> dict:
+        """
+        Computes statistical signals for a single widget.
+
+        All signals are scoped to this widget's own data. Correlations are only
+        computed between columns of the same widget, never across widgets, since
+        rows of different widgets share no index.
+
+        Args:
+            widget (dict): Widget config with `chartType` and `data`.
+
+        Returns:
+            dict: Signals with keys periodDeltas, anomalies, concentration,
+                topContributors, correlations. Empty dict when the widget
+                carries no tabular data.
+        """
+        normalized = normalizeWidgetData(widget)
+        if normalized.get("kind") not in ("series", "records", "matrix", "points"):
+            return {}
+        rows = normalized.get("rows") or []
+        if not rows:
+            return {}
+
         try:
-            return pd.concat(frames, axis=1)
+            df = self._coerceNumeric(pd.DataFrame(rows, columns=normalized["columns"]))
         except Exception:
-            return None
+            return {}
+        if df.empty:
+            return {}
+
+        numericCols = df.select_dtypes(include=[np.number]).columns.tolist()
+        categoricalCols = df.select_dtypes(include=["object", "category"]).columns.tolist()
+        dateCol = self._inferDateColumn(df)
+
+        signals = {
+            "periodDeltas": [],
+            "anomalies": [],
+            "concentration": {},
+            "topContributors": [],
+            "correlations": {},
+        }
+
+        if dateCol and numericCols:
+            signals["periodDeltas"] = self.computePeriodDeltas(df, dateCol, numericCols)
+        if numericCols:
+            signals["anomalies"] = self.detectAnomalies(df, numericCols)
+            signals["correlations"] = self.computeCorrelations(df, numericCols)
+        if categoricalCols and numericCols:
+            groupCol, valueCol = categoricalCols[0], numericCols[0]
+            signals["concentration"] = self.computeConcentration(df, groupCol, valueCol)
+            signals["topContributors"] = self.computeTopContributors(df, groupCol, valueCol)
+
+        return signals
+
+    def buildStatisticalSummary(self, chartData: list[dict]) -> dict:
+        """
+        Computes per-widget statistical signals for every widget on the page.
+
+        Args:
+            chartData (list[dict]): Widget dicts from InsightContextBuilder.
+
+        Returns:
+            dict: `{"widgetCount": int, "perWidget": {ref: signals}}` where ref
+                is the widget's `ref`, falling back to `id`, then position.
+        """
+        try:
+            logger.info(f"Building per-widget signals for {len(chartData)} widgets.")
+            perWidget = {}
+            for index, widget in enumerate(chartData):
+                ref = widget.get("ref") or widget.get("id") or f"W{index + 1}"
+                signals = self.buildWidgetSignals(widget)
+                if signals:
+                    perWidget[str(ref)] = signals
+            return {"widgetCount": len(chartData), "perWidget": perWidget}
+        except Exception as e:
+            logger.warning(f"SignalEngine summary partially failed: {e}")
+            return {"widgetCount": len(chartData), "perWidget": {}}
+
+
+def formatWidgetSignals(signals: dict) -> str | None:
+    """
+    Renders a widget's signals as one compact line for the LLM payload.
+
+    Args:
+        signals (dict): Output of `SignalEngine.buildWidgetSignals`.
+
+    Returns:
+        str | None: e.g. "change +50.0% on revenue; top3Share=0.96, HHI=0.53",
+            or None when there is nothing worth stating.
+    """
+    if not signals:
+        return None
+
+    parts = []
+    for delta in signals.get("periodDeltas") or []:
+        if delta.get("pctChange") is not None:
+            parts.append(f"change {delta['pctChange']:+}% on {delta['column']}")
+
+    for anomaly in signals.get("anomalies") or []:
+        parts.append(
+            f"{anomaly['outlierCount']} anomalies in {anomaly['column']} "
+            f"of {anomaly['totalRows']} rows (median {anomaly['median']})"
+        )
+
+    concentration = signals.get("concentration") or {}
+    if concentration:
+        parts.append(
+            f"top3Share={concentration['top3Share']}, HHI={concentration['herfindahlIndex']} "
+            f"across {concentration['numGroups']} groups"
+        )
+
+    correlations = signals.get("correlations") or {}
+    for pair in correlations.get("pairs") or []:
+        if abs(pair["pearsonR"]) >= 0.5:
+            parts.append(f"r({pair['columnA']},{pair['columnB']})={pair['pearsonR']}")
+
+    return "; ".join(parts) if parts else None

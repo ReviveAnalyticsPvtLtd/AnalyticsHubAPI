@@ -1,57 +1,25 @@
 """
 creditMath.py
 
-Pure, dependency-light math for the two-bucket credit system.
+Pure, dependency-light math for the single-bucket monthly token system.
 
 No Redis, no DB, no logging — every function is deterministic given its
-inputs so the reset/effective/roll logic can be unit-tested in isolation.
-Both the Redis Lua hot path and the DB fallback path mirror this logic.
+inputs so the billing-period and conversion logic can be unit-tested in
+isolation. The Redis Lua roll and the Python rebuild path both derive their
+period boundaries from these helpers.
 """
 
 __version__ = "1.0.0"
 __author__ = "Rohit Mishra"
 __all__ = [
-    "computeDailyCap",
-    "dayStamp",
-    "applyDailyReset",
-    "effectiveRemaining",
     "rollMonthly",
-    "nextUtcMidnight",
-    "secondsUntilNextUtcMidnight",
+    "nextPeriodEnd",
+    "tokensToCredits",
 ]
 
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from dateutil.relativedelta import relativedelta
-import math
-
-
-def computeDailyCap(monthlyQuota: int, percent: float, exempt: bool) -> int:
-    """Daily cap for a plan. Exempt plans get the full monthly quota (no throttle)."""
-    if monthlyQuota <= 0:
-        return 0
-    if exempt:
-        return monthlyQuota
-    return max(1, math.ceil(monthlyQuota * percent))
-
-
-def dayStamp(now: datetime) -> int:
-    """UTC calendar day encoded as YYYYMMDD (e.g. 20260713)."""
-    u = now.astimezone(timezone.utc)
-    return u.year * 10000 + u.month * 100 + u.day
-
-
-def applyDailyReset(dailyUsed: int, storedStamp: int, todayStamp: int) -> tuple[int, int]:
-    """Return (dailyUsed, stamp) after a hard daily reset when the day changed."""
-    if storedStamp != todayStamp:
-        return 0, todayStamp
-    return dailyUsed, storedStamp
-
-
-def effectiveRemaining(monthlyRemaining: int, dailyCap: int, dailyUsed: int) -> int:
-    """Spendable-right-now = min(monthly remaining, daily remaining), clamped >= 0."""
-    dailyRemaining = max(0, dailyCap - dailyUsed)
-    return max(0, min(monthlyRemaining, dailyRemaining))
 
 
 def rollMonthly(periodEnd: datetime, now: datetime) -> tuple[datetime, datetime]:
@@ -68,13 +36,18 @@ def rollMonthly(periodEnd: datetime, now: datetime) -> tuple[datetime, datetime]
     return ps, pe
 
 
-def nextUtcMidnight(now: datetime) -> datetime:
-    """The next 00:00:00 UTC strictly after `now`."""
-    u = now.astimezone(timezone.utc)
-    return (u + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+def nextPeriodEnd(periodEnd: datetime) -> datetime:
+    """The billing period end one calendar month after `periodEnd`."""
+    return periodEnd + relativedelta(months=1)
 
 
-def secondsUntilNextUtcMidnight(now: datetime) -> int:
-    """Whole seconds from `now` until the next 00:00 UTC (used for Redis TTL / display)."""
-    u = now.astimezone(timezone.utc)
-    return int((nextUtcMidnight(u) - u).total_seconds())
+def tokensToCredits(tokens: int, ratio: int) -> float:
+    """
+    Display conversion: raw tokens -> credits, rounded to 2 decimal places.
+
+    Returns 0.0 for a non-positive token count or a non-positive ratio, so a
+    malformed config can never produce a negative or infinite balance.
+    """
+    if ratio <= 0 or tokens <= 0:
+        return 0.0
+    return round(tokens / ratio, 2)
