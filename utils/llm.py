@@ -1,17 +1,32 @@
 import os
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-# Singleton cache: (model, temperature, max_tokens) -> ChatGoogleGenerativeAI.
+# Singleton cache: (model, max_tokens) -> ChatGoogleGenerativeAI.
 # A reporting-workflow build constructs 3 LLM clients (rephraser/codegen/debugger);
 # caching them avoids repeated HTTP-client + credential setup per request.
 # ChatGoogleGenerativeAI is stateless and thread-safe for invocation.
+#
+# NOTE: temperature is intentionally NOT passed to the model. Per Google's latest
+# documentation, sampling parameters (temperature, top_p, top_k) should not be
+# used with the latest Gemini models. The models use deterministic defaults.
 _LLM_CACHE: dict = {}
 
 
-def getGenaiLlm(model: str, temperature: float, max_tokens: int = None) -> ChatGoogleGenerativeAI:
+def getGenaiLlm(model: str, temperature: float = None, max_tokens: int = None) -> ChatGoogleGenerativeAI:
     """
     Factory that returns a cached ChatGoogleGenerativeAI instance, enforcing the
     use of API keys and disabling GCE metadata check.
+
+    Args:
+        model: The Gemini model name (e.g. "gemini-3.5-flash-lite").
+        temperature: **Deprecated/ignored.** Retained only for backward-compat
+            with existing call sites. Per Google's latest documentation, sampling
+            parameters must not be set for the latest Gemini models. Passing a
+            value has no effect — it is never forwarded to the model.
+        max_tokens: Optional maximum output tokens.
+
+    Returns:
+        A cached (or newly created) ChatGoogleGenerativeAI instance.
     """
     import warnings
     warnings.filterwarnings("ignore", message=".*non-text parts.*")
@@ -19,7 +34,8 @@ def getGenaiLlm(model: str, temperature: float, max_tokens: int = None) -> ChatG
     os.environ["NO_GCE_CHECK"] = "true"
     os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "false"
 
-    cache_key = (model, temperature, max_tokens)
+    # Cache key excludes temperature (it is never forwarded to the model).
+    cache_key = (model, max_tokens)
     cached = _LLM_CACHE.get(cache_key)
     if cached is not None:
         return cached
@@ -32,7 +48,6 @@ def getGenaiLlm(model: str, temperature: float, max_tokens: int = None) -> ChatG
 
     kwargs = {
         "model": model,
-        "temperature": temperature,
         "api_key": api_key,
     }
     if max_tokens is not None:

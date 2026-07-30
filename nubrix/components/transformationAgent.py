@@ -63,7 +63,6 @@ class TransformationAgent:
         self.systemPrompt = readYaml(self.transformationAgentConfig.yamlPath).get("transformationAgentPrompt")
         self.llm = getGenaiLlm(
             model=self.config.get("TRANSFORMATIONAGENT", "model"),
-            temperature=self.config.getfloat("TRANSFORMATIONAGENT", "temperature"),
             max_tokens=self.config.getint("TRANSFORMATIONAGENT", "maxTokens", fallback=8192),
         )
         # LRU cache for raw LLM summaries (keyed by message-id chain)

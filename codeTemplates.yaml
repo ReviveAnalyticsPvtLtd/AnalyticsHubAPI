@@ -140,6 +140,7 @@ panelChartWithBlend: |
             response = {
                 "chartType": "table",
                 "title": f"{dataSourceName} Data",
+                "columns": selectedColumns,
                 "data": finalResult[selectedColumns].to_dict(orient="records")
             }
         elif chartType == "pivot":
@@ -370,6 +371,7 @@ panelChartWithoutBlend: |
             response = {
                 "chartType": "table",
                 "title": f"{dataSourceName} Data",
+                "columns": selectedColumns,
                 "data": finalResult[selectedColumns].to_dict(orient="records")
             }
         elif chartType == "pivot":

@@ -258,10 +258,12 @@ class ReportingService:
                 }
             elif chartType == "table":
                 cols = kwargs.get("selectedColumns") or finalResult.columns
+                tableData = finalResult.select(cols).to_dicts()
                 return {
                     "chartType": "table",
                     "title": f"{dataSourceName} Data",
-                    "data": finalResult.select(cols).to_dicts(),
+                    "columns": list(cols) if not isinstance(cols, list) else cols,
+                    "data": tableData,
                 }
             else:
                 # Fall through to pandas path for unsupported chart types
@@ -391,6 +393,7 @@ class ReportingService:
             response = {
                 "chartType": "table",
                 "title": f"{dataSourceName} Data",
+                "columns": selectedColumns,
                 "data": finalResult[selectedColumns].to_dict(orient="records")
             }
         elif chartType == "pivot":

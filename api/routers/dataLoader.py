@@ -27,48 +27,50 @@ Router for data loading-related endpoints.
 """
 
 @router.post("/loadCsvData")
-async def loadCsvData(projectId: Annotated[str, Form()], files: list[UploadFile], token = Depends(verifyToken)):
+async def loadCsvData(projectId: Annotated[str, Form()], files: list[UploadFile], user: UserContext = Depends(requireCredits("metadata_generation"))):
     """
-    Load data from a CSV file into the specified project.
+    Load data from CSV file(s) into the specified project and generate metadata
+    for the newly added tables.
 
     Args:
         projectId (str): The ID of the project to load data into.
         files (list[UploadFile]): The CSV files to upload.
-        token: Authorization token dependency.
+        user: UserContext injected after credit validation.
 
     Returns:
-        ORJSONResponse: Success or error message.
+        ORJSONResponse: Success with generated metadata for the new tables.
     """
     try:
-        await dataLoadService.loadCsvData(projectId=projectId, files=files)
-        return ORJSONResponse(status_code=200, content={"status": "SUCCESS"})
+        metadata = await dataLoadService.loadCsvData(projectId=projectId, files=files, userId=user.userId)
+        return ORJSONResponse(status_code=200, content={"status": "SUCCESS", "metadata": metadata})
     except CustomException as e:
         raiseHttpException(e)
     
 @router.post("/loadExcelData")
-async def loadExcelData(projectId: Annotated[str, Form()], files: list[UploadFile], token = Depends(verifyToken)):
+async def loadExcelData(projectId: Annotated[str, Form()], files: list[UploadFile], user: UserContext = Depends(requireCredits("metadata_generation"))):
     """
-    Load data from an Excel file into the specified project.
+    Load data from Excel file(s) into the specified project and generate metadata
+    for the newly added tables.
 
     Args:
         projectId (str): The ID of the project to load data into.
         files (list[UploadFile]): The Excel files to upload.
-        token: Authorization token dependency.
+        user: UserContext injected after credit validation.
 
     Returns:
-        ORJSONResponse: Success or error message.
+        ORJSONResponse: Success with generated metadata for the new tables.
     """
     try:
-        await dataLoadService.loadExcelData(projectId=projectId, files=files)
-        return ORJSONResponse(status_code=200, content={"status": "SUCCESS"})
+        metadata = await dataLoadService.loadExcelData(projectId=projectId, files=files, userId=user.userId)
+        return ORJSONResponse(status_code=200, content={"status": "SUCCESS", "metadata": metadata})
     except CustomException as e:
         raiseHttpException(e)
 
 @router.post("/loadPdfData")
 async def loadPdfData(projectId: Annotated[str, Form()], files: list[UploadFile], user: UserContext = Depends(requireCredits("pdf_extraction_per_page"))):
     """
-    Load data from PDF files into the specified project.
-    Extracts tables and text content from the PDF.
+    Load data from PDF files into the specified project and generate metadata
+    for the extracted tables.
 
     Args:
         projectId (str): The ID of the project to load data into.
@@ -76,65 +78,68 @@ async def loadPdfData(projectId: Annotated[str, Form()], files: list[UploadFile]
         user: UserContext injected after credit validation.
 
     Returns:
-        ORJSONResponse: Success or error message.
+        ORJSONResponse: Success with generated metadata for the new tables.
     """
     try:
-        await dataLoadService.loadPdfData(projectId=projectId, files=files, userId=user.userId)
-        return ORJSONResponse(status_code=200, content={"status": "SUCCESS"})
+        metadata = await dataLoadService.loadPdfData(projectId=projectId, files=files, userId=user.userId)
+        return ORJSONResponse(status_code=200, content={"status": "SUCCESS", "metadata": metadata})
     except CustomException as e:
         raiseHttpException(e)
 
 @router.post("/loadMySql")
-async def loadMySql(connection: LoadMySQLorPostgreSQL, token = Depends(verifyToken)):
+async def loadMySql(connection: LoadMySQLorPostgreSQL, user: UserContext = Depends(requireCredits("metadata_generation"))):
     """
-    Load data from a MySQL database connection.
+    Load data from a MySQL database connection and generate metadata for the
+    loaded table.
 
     Args:
         connection (LoadMySQLorPostgreSQL): Connection details for MySQL.
-        token: Authorization token dependency.
+        user: UserContext injected after credit validation.
 
     Returns:
-        ORJSONResponse: Success or error message.
+        ORJSONResponse: Success with generated metadata for the new table.
     """
     try:
-        dataLoadService.loadMySql(connection=connection)
-        return ORJSONResponse(status_code=200, content={"status": "SUCCESS"})
+        metadata = dataLoadService.loadMySql(connection=connection, userId=user.userId)
+        return ORJSONResponse(status_code=200, content={"status": "SUCCESS", "metadata": metadata})
     except CustomException as e:
         raiseHttpException(e)
     
 @router.post("/loadPostgreSQL")
-async def loadPostgreSQL(connection: LoadMySQLorPostgreSQL, token = Depends(verifyToken)):
+async def loadPostgreSQL(connection: LoadMySQLorPostgreSQL, user: UserContext = Depends(requireCredits("metadata_generation"))):
     """
-    Load data from a PostgreSQL database connection.
+    Load data from a PostgreSQL database connection and generate metadata for the
+    loaded table.
 
     Args:
         connection (LoadMySQLorPostgreSQL): Connection details for PostgreSQL.
-        token: Authorization token dependency.
+        user: UserContext injected after credit validation.
 
     Returns:
-        ORJSONResponse: Success or error message.
+        ORJSONResponse: Success with generated metadata for the new table.
     """
     try:
-        dataLoadService.loadPostgreSQL(connection=connection)
-        return ORJSONResponse(status_code=200, content={"status": "SUCCESS"})
+        metadata = dataLoadService.loadPostgreSQL(connection=connection, userId=user.userId)
+        return ORJSONResponse(status_code=200, content={"status": "SUCCESS", "metadata": metadata})
     except CustomException as e:
         raiseHttpException(e)
     
 @router.post("/loadMongoDB")
-async def loadMongoDB(connection: LoadMongoDB, token = Depends(verifyToken)):
+async def loadMongoDB(connection: LoadMongoDB, user: UserContext = Depends(requireCredits("metadata_generation"))):
     """
-    Load data from a MongoDB database connection.
+    Load data from a MongoDB database connection and generate metadata for the
+    loaded collection.
 
     Args:
         connection (LoadMongoDB): Connection details for MongoDB.
-        token: Authorization token dependency.
+        user: UserContext injected after credit validation.
 
     Returns:
-        ORJSONResponse: Success or error message.
+        ORJSONResponse: Success with generated metadata for the new table.
     """
     try:
-        dataLoadService.loadMongoDB(connection=connection)
-        return ORJSONResponse(status_code=200, content={"status": "SUCCESS"})
+        metadata = dataLoadService.loadMongoDB(connection=connection, userId=user.userId)
+        return ORJSONResponse(status_code=200, content={"status": "SUCCESS", "metadata": metadata})
     except CustomException as e:
         raiseHttpException(e)
 
