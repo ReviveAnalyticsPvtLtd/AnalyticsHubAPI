@@ -47,12 +47,12 @@ async def getSpeechTranscript(speechToText: SpeechToTextModel, user: UserContext
 @router.post("/getInsightsFromImage")
 async def getInsightsFromImage(imageToInsights: ImageToInsightsModel, user: UserContext = Depends(requireCredits("image_to_insights"))):
     """
-    Extract structured, evidence-backed business insights from a base64-encoded
-    dashboard image using the hybrid data + statistics + domain + LLM pipeline.
+    Extract structured, evidence-backed business insights from a dashboard page's
+    underlying data using the data + statistics + domain + LLM pipeline.
 
     Args:
-        imageToInsights (ImageToInsightsModel): Input model containing the base64 image,
-            project context, and user objectives.
+        imageToInsights (ImageToInsightsModel): Input model containing the project,
+            page, and refresh flag.
         user: UserContext injected after credit validation.
 
     Returns:

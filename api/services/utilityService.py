@@ -104,13 +104,12 @@ class UtilityService:
         Extracts structured, evidence-backed insights from a dashboard page's own data.
 
         Builds a serialized data payload from the page's widgets, statistics, schema,
-        and domain profile, and sends that to the LLM. The screenshot is only attached
-        when mode is "hybrid". Results are cached per page against a hash of the
-        payload, so the cache invalidates exactly when the underlying data changes.
+        and domain profile, and sends that to the LLM. Results are cached per page
+        against a hash of the payload, so the cache invalidates exactly when the
+        underlying data changes.
 
         Args:
-            imageToInsights (ImageToInsightsModel): Project, page, mode, refresh flag,
-                and optional base64 image.
+            imageToInsights (ImageToInsightsModel): Project, page, and refresh flag.
             userId (str | None): Caller, used for credit tracking and tracing.
 
         Returns:
@@ -148,15 +147,14 @@ class UtilityService:
             if userId:
                 context["userId"] = userId
 
-            imgCallbacks = []
+            insightCallbacks = []
             if userId:
-                imgCallbacks.append(CreditTrackingCallback(userId=userId, operationType="image_to_insights"))
+                insightCallbacks.append(CreditTrackingCallback(userId=userId, operationType="image_to_insights"))
 
             insights = self.imageToInsightsModule.getInsights(
                 payloadText=payloadText,
-                b64String=imageToInsights.b64String if imageToInsights.mode == "hybrid" else None,
                 context=context,
-                callbacks=imgCallbacks if imgCallbacks else None,
+                callbacks=insightCallbacks if insightCallbacks else None,
             )
 
             record = self._persistDashboardInsight(
