@@ -175,17 +175,17 @@ class UtilityService:
             raise exception
 
     @staticmethod
-    def _computeCacheKey(pageId: str | None, payloadText: str) -> str:
+    def _computeCacheKey(pageId: str, payloadText: str) -> str:
         """
         Derives the cache key for a page's insights from its serialized payload.
 
         Hashing the payload rather than timestamping means the cache invalidates
         precisely when the dashboard's data, filters, or widget set change.
         """
-        digest = hashlib.sha256(f"{pageId or ''}|{payloadText}".encode("utf-8"))
+        digest = hashlib.sha256(f"{pageId}|{payloadText}".encode("utf-8"))
         return digest.hexdigest()
 
-    def _findCachedRecord(self, records: list, pageId: str | None, cacheKey: str) -> dict | None:
+    def _findCachedRecord(self, records: list, pageId: str, cacheKey: str) -> dict | None:
         """
         Returns the stored insight for this page whose payload hash still matches.
 
@@ -213,14 +213,14 @@ class UtilityService:
             "generatedAt": record.get("generatedAt"),
         }
 
-    def _persistDashboardInsight(self, projectId: str, pageId: str | None, insights: dict, cacheKey: str) -> dict:
+    def _persistDashboardInsight(self, projectId: str, pageId: str, insights: dict, cacheKey: str) -> dict:
         """
         Persists the generated insight to dashboardInsights.json, replacing only
         the record for this page and leaving other pages' records intact.
 
         Args:
             projectId (str): The project identifier.
-            pageId (str | None): The dashboard page the insight was generated for.
+            pageId (str): The dashboard page the insight was generated for.
             insights (dict): The structured insight payload.
             cacheKey (str): Hash of the payload this insight was generated from.
 

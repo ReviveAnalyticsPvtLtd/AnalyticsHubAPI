@@ -60,7 +60,7 @@ class SpeechToTextModel(BaseModel):
 
 class ImageToInsightsModel(BaseModel):
     projectId: str
-    pageId: str | None = None
+    pageId: str
     refresh: bool = False
 
 class DeleteTable(BaseModel):
