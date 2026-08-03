@@ -190,16 +190,31 @@ class UtilityService:
         Returns the stored insight for this page whose payload hash still matches.
 
         Records written before the content-hash cache (cacheVersion 1) carry no
-        cacheKey and are never served.
+        cacheKey and are never served. Records whose insights do not carry the
+        documented schema are also skipped, so a page cached while the payload
+        was malformed regenerates instead of serving the bad shape forever.
         """
         for record in reversed(records):
             if not isinstance(record, dict) or "insights" not in record:
                 continue
             if record.get("pageId") != pageId:
                 continue
+            if not self._isValidInsightsPayload(record.get("insights")):
+                continue
             if record.get("cacheKey") == cacheKey:
                 return record
         return None
+
+    @staticmethod
+    def _isValidInsightsPayload(insights: object) -> bool:
+        """
+        Returns whether an insights payload carries the schema the client expects:
+        diagnostic_insights, prescriptive_actions, and missing_data.
+        """
+        return isinstance(insights, dict) and all(
+            key in insights
+            for key in ("diagnostic_insights", "prescriptive_actions", "missing_data")
+        )
 
     def _formatDashboardInsightResponse(self, record: dict, source: str, cacheHit: bool) -> dict:
         """

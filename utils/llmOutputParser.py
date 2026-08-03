@@ -7,11 +7,48 @@ Handles code fences, language tags, and extra prose around JSON.
 
 __version__ = "1.0.0"
 __author__ = "Rohit Mishra"
-__all__ = ["parseModelJsonOutput", "extractBetween", "stripFenceLanguage"]
+__all__ = ["parseModelJsonOutput", "extractBetween", "stripFenceLanguage", "flattenContentBlocks"]
 
 
 from langchain_experimental.utilities import PythonREPL
 import orjson
+
+
+def flattenContentBlocks(rawOutput: object) -> object:
+    """
+    Flatten LangChain multi-part message content into plain text.
+
+    Recent Gemini models return `message.content` as a list of content blocks
+    (e.g. ``[{"type": "text", "text": "...", "extras": {"signature": "..."}}]``)
+    instead of a bare string. Without flattening, the parser stringifies the
+    block's Python repr and then happily parses the *wrapper* back out, so
+    callers receive ``{"type": ..., "text": ..., "extras": ...}`` instead of the
+    model's JSON. Non-text blocks (reasoning/thought parts) are dropped.
+
+    Args:
+        rawOutput (object): Raw model output, possibly multi-part content.
+
+    Returns:
+        object: Concatenated text when the input was multi-part content,
+            otherwise the input unchanged.
+    """
+    if isinstance(rawOutput, dict):
+        if rawOutput.get("type") == "text" and isinstance(rawOutput.get("text"), str):
+            return rawOutput["text"]
+        return rawOutput
+    if isinstance(rawOutput, list):
+        parts: list[str] = []
+        for block in rawOutput:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                if block.get("type") not in (None, "text"):
+                    continue
+                text = block.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "".join(parts)
+    return rawOutput
 
 
 def extractBetween(text: str, opening: str, closing: str) -> str | None:
@@ -45,7 +82,8 @@ def parseModelJsonOutput(rawOutput: object, stage: str) -> dict:
     Handles code fences, language tags, and extra prose around JSON.
 
     Args:
-        rawOutput (object): Raw model output (str, dict, or None).
+        rawOutput (object): Raw model output (str, dict, list of content
+            blocks, or None).
         stage (str): Label for error messages identifying the calling context.
 
     Returns:
@@ -54,6 +92,8 @@ def parseModelJsonOutput(rawOutput: object, stage: str) -> dict:
     Raises:
         ValueError: If the output cannot be parsed into a JSON dict.
     """
+    rawOutput = flattenContentBlocks(rawOutput)
+
     if isinstance(rawOutput, dict):
         return rawOutput
     if rawOutput is None:
