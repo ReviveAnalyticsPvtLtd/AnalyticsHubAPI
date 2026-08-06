@@ -95,18 +95,31 @@ TOKEN_TO_CREDIT_RATIO = CREDIT_CONFIG.get("token_to_credit_ratio", 10000)
 TOPUP_PACKS = CREDIT_CONFIG.get("topup_packs", {})
 
 
-def getTokenQuotaForPlan(planType: str) -> int:
+def getTokenQuotaForPlan(planType: str, domainCount: int = 1) -> int:
     """
     Return the monthly token quota for the given plan tier.
 
+    Paid tiers carry an allowance per subscribed domain, granted as one pooled
+    balance rather than a per-domain bucket — four domains means one combined
+    balance spendable on any of them. Tiers with 'scales_with_domains': false
+    (free, none) return a flat figure and ignore domainCount.
+
     Args:
         planType: One of 'none', 'free', 'pro', 'annual'.
+        domainCount: Number of subscribed domains. Clamped to a minimum of 1,
+            so a malformed count can never zero out a paying subscriber.
 
     Returns:
         int: Monthly token quota. Defaults to 0 for unknown plans.
     """
     quotas = _getCreditConfig().get("quotas", {})
     planInfo = quotas.get(planType, quotas.get("none", {}))
+    if planInfo.get("scales_with_domains", False):
+        try:
+            domains = max(1, int(domainCount))
+        except (TypeError, ValueError):
+            domains = 1
+        return planInfo.get("tokens_per_domain", 0) * domains
     return planInfo.get("monthly_tokens", 0)
 
 

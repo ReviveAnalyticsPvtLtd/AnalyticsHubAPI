@@ -1,0 +1,31 @@
+{
+  "version": "1.0.0",
+  "currency": "INR",
+  "fx_reference": {
+    "source": "frankfurter.dev (ECB reference rates)",
+    "rate_date": "2026-08-04",
+    "usd_to_inr": 95.38,
+    "note": "Provenance for the INR amounts below. Not read at runtime."
+  },
+  "plans": {
+    "pro": {
+      "plan_id": "pro_monthly_v1",
+      "billing_mode": "monthly_recurring",
+      "amount_per_domain": 199900,
+      "usd_per_domain_cents": 2000,
+      "active": true,
+      "description": "Pro monthly - per domain, per month"
+    },
+    "annual": {
+      "plan_id": "annual_prepaid_v1",
+      "billing_mode": "annual_prepaid",
+      "amount_per_domain": 1999000,
+      "usd_per_domain_cents": 20000,
+      "active": true,
+      "description": "Annual prepaid - per domain, per year"
+    }
+  },
+  "limits": {
+    "max_domains": 4
+  }
+}

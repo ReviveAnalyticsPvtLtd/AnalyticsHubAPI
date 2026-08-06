@@ -59,9 +59,6 @@ class DailyBillingTask:
     """
 
     _CHARGE_LOCK_TTL_SECONDS = 72 * 60 * 60
-    _PRICE_CACHE_KEY = "billing:base_price_amount"
-    _PRICE_CACHE_TTL = 24 * 60 * 60
-    _PRICE_FETCH_RETRIES = 3
     _TOKEN_USABLE_STATUSES = {"confirmed", "activated", "active"}
 
     def __init__(self):
@@ -72,7 +69,6 @@ class DailyBillingTask:
                 os.environ.get("RAZORPAY_KEY_SECRET", ""),
             )
         )
-        self.BASE_PLAN_ID = os.environ.get("RAZORPAY_PRO_PLAN_ID", "")
         self.redis = redis.Redis(
             host=os.environ.get("REDIS_HOST", "localhost"),
             port=int(os.environ.get("REDIS_PORT", 6379)),
@@ -94,44 +90,6 @@ class DailyBillingTask:
             f"{results['skipped']} skipped, {results['errors']} errors"
         )
         return results
-
-    def _getBasePriceAmount(self) -> int:
-        """
-        Fetch the per-domain price in paise from the Razorpay plan.
-        Retries with backoff and falls back to a Redis-cached value
-        if the API is unreachable.
-
-        Returns:
-            int: Amount in paise per domain per cycle.
-
-        Raises:
-            RuntimeError: If the API fails and no cached price exists.
-        """
-        lastError = None
-        for attempt in range(1, self._PRICE_FETCH_RETRIES + 1):
-            try:
-                plan = self.razorpayClient.plan.fetch(self.BASE_PLAN_ID)
-                amount = plan["item"]["amount"]
-                self.redis.set(
-                    self._PRICE_CACHE_KEY, str(amount), ex=self._PRICE_CACHE_TTL
-                )
-                return amount
-            except Exception as e:
-                lastError = e
-                logger.warning(
-                    f"Plan fetch attempt {attempt}/{self._PRICE_FETCH_RETRIES} failed: {e}"
-                )
-                if attempt < self._PRICE_FETCH_RETRIES:
-                    time.sleep(2**attempt)
-
-        cached = self.redis.get(self._PRICE_CACHE_KEY)
-        if cached:
-            logger.warning(f"Using cached base price: {cached}")
-            return int(cached)
-
-        raise RuntimeError(
-            f"Cannot fetch base price and no cached value available: {lastError}"
-        )
 
     def _auditLog(self, userId: str, eventType: str, **kwargs) -> None:
         """

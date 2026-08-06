@@ -1606,7 +1606,45 @@ All routes under `/api/latest/subscriptions/`. Auth via `verifyToken`.
 
 ---
 
-### 11.2 `POST /api/latest/subscriptions/createSubscription`
+### 11.2 `GET /api/latest/subscriptions/plans`
+
+List the purchasable subscription plans. Prices are per domain, in paise, and pre-tax.
+
+**Response (200):**
+```json
+{
+  "status": "SUCCESS",
+  "data": {
+    "plans": [
+      {
+        "planKey": "pro",
+        "planId": "pro_monthly_v1",
+        "billingMode": "monthly_recurring",
+        "amountPerDomain": 199900,
+        "currency": "INR",
+        "includedCreditsPerDomain": 1000,
+        "description": "Pro monthly - per domain, per month"
+      },
+      {
+        "planKey": "annual",
+        "planId": "annual_prepaid_v1",
+        "billingMode": "annual_prepaid",
+        "amountPerDomain": 1999000,
+        "currency": "INR",
+        "includedCreditsPerDomain": 1000,
+        "description": "Annual prepaid - per domain, per year"
+      }
+    ],
+    "currency": "INR",
+    "maxDomains": 4,
+    "configVersion": "1.0.0"
+  }
+}
+```
+
+---
+
+### 11.3 `POST /api/latest/subscriptions/createSubscription`
 
 **Request Body:**
 ```json
@@ -1629,7 +1667,7 @@ All routes under `/api/latest/subscriptions/`. Auth via `verifyToken`.
 
 ---
 
-### 11.3 `POST /api/latest/subscriptions/verifySubscription`
+### 11.4 `POST /api/latest/subscriptions/verifySubscription`
 
 **Request Body:**
 ```json
@@ -1650,7 +1688,7 @@ All routes under `/api/latest/subscriptions/`. Auth via `verifyToken`.
 
 ---
 
-### 11.4 `POST /api/latest/subscriptions/addDomains`
+### 11.5 `POST /api/latest/subscriptions/addDomains`
 
 **Request Body:**
 ```json
@@ -1670,7 +1708,7 @@ All routes under `/api/latest/subscriptions/`. Auth via `verifyToken`.
 
 ---
 
-### 11.5 `POST /api/latest/subscriptions/verifyDomainUpgrade`
+### 11.6 `POST /api/latest/subscriptions/verifyDomainUpgrade`
 
 **Request Body:**
 ```json
@@ -1692,7 +1730,7 @@ All routes under `/api/latest/subscriptions/`. Auth via `verifyToken`.
 
 ---
 
-### 11.6 `POST /api/latest/subscriptions/removeDomain`
+### 11.7 `POST /api/latest/subscriptions/removeDomain`
 
 **Request Body:**
 ```json
@@ -1712,7 +1750,7 @@ All routes under `/api/latest/subscriptions/`. Auth via `verifyToken`.
 
 ---
 
-### 11.7 `POST /api/latest/subscriptions/cancelPendingAddition`
+### 11.8 `POST /api/latest/subscriptions/cancelPendingAddition`
 
 **Request Body:**
 ```json
@@ -1731,7 +1769,7 @@ All routes under `/api/latest/subscriptions/`. Auth via `verifyToken`.
 
 ---
 
-### 11.8 `POST /api/latest/subscriptions/cancelSubscription`
+### 11.9 `POST /api/latest/subscriptions/cancelSubscription`
 
 **Request Body:**
 ```json
@@ -1750,7 +1788,7 @@ All routes under `/api/latest/subscriptions/`. Auth via `verifyToken`.
 
 ---
 
-### 11.9 `POST /api/latest/subscriptions/refund`
+### 11.10 `POST /api/latest/subscriptions/refund`
 
 **Request Body:**
 ```json
@@ -1771,7 +1809,7 @@ All routes under `/api/latest/subscriptions/`. Auth via `verifyToken`.
 
 ---
 
-### 11.10 `GET /api/latest/subscriptions/invoices`
+### 11.11 `GET /api/latest/subscriptions/invoices`
 
 **Response (200):**
 ```json
@@ -1791,7 +1829,7 @@ All routes under `/api/latest/subscriptions/`. Auth via `verifyToken`.
 
 ---
 
-### 11.11 `POST /api/latest/subscriptions/createAnnualRenewalPaymentSession`
+### 11.12 `POST /api/latest/subscriptions/createAnnualRenewalPaymentSession`
 
 **Request Body:**
 ```json
@@ -1811,7 +1849,7 @@ All routes under `/api/latest/subscriptions/`. Auth via `verifyToken`.
 
 ---
 
-### 11.12 `POST /api/latest/subscriptions/verifyAnnualRenewalPayment`
+### 11.13 `POST /api/latest/subscriptions/verifyAnnualRenewalPayment`
 
 **Request Body:**
 ```json

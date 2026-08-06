@@ -47,6 +47,34 @@ async def activateFreeTrial(token=Depends(verifyToken)):
         raiseHttpException(e)
 
 
+@router.get("/plans")
+async def getSubscriptionPlans(token=Depends(verifyToken)):
+    """
+    List the purchasable subscription plans.
+
+    Prices are per domain, in paise, and pre-tax — tax is computed at invoice
+    time from the customer's place of supply. The client never sends an amount;
+    it sends a billing mode and the backend resolves the price.
+
+    Args:
+        token: Authorization token dependency.
+
+    Returns:
+        ORJSONResponse: Plans with per-domain price and included credits.
+    """
+    try:
+        from api.services.billing.planConfig import buildPlanCatalogue
+
+        return ORJSONResponse(
+            status_code=200,
+            content={"status": "SUCCESS", "data": buildPlanCatalogue()},
+        )
+    except CustomException as e:
+        raiseHttpException(e)
+    except Exception as e:
+        raiseHttpException(CustomException(e))
+
+
 @router.post("/createSubscription")
 async def createSubscription(request: CreateSubscriptionRequest, token=Depends(verifyToken)):
     """

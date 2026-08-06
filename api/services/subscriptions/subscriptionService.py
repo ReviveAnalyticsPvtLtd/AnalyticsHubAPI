@@ -74,7 +74,6 @@ class SubscriptionService:
                 os.environ.get("RAZORPAY_KEY_SECRET", "")
             )
         )
-        self.BASE_PLAN_ID = os.environ.get("RAZORPAY_PRO_PLAN_ID", "")
         self.VALID_DOMAINS = {"banking", "manufacturing", "supplychain", "telecom"}
 
     def _getCanonicalSubscription(self, userId: str, required: bool = False) -> dict | None:
@@ -758,6 +757,18 @@ class SubscriptionService:
             "domain_count": updatedDomainCount,
             "pending_additions": pendingAdditions,
         }).eq("id", subscription["id"]).execute()
+        try:
+            from api.services.credits.creditService import creditService
+            creditService.applyDomainCountChange(
+                userId=userId,
+                domainCount=updatedDomainCount,
+                grantImmediately=True,
+            )
+        except Exception as creditErr:
+            logger.warning(
+                f"Credit allowance update failed after domain activation "
+                f"for userId={userId}: {creditErr}"
+            )
         for domain in activatedDomains:
             self._auditLog(
                 userId, "domain.add_activated",
@@ -769,6 +780,58 @@ class SubscriptionService:
                 }
             )
         logger.info(f"Activated domains {activatedDomains} for user {userId} via {referenceId}")
+
+    def _wasDomainActivatedThisPeriod(self, userId: str, domain: str, currentPeriodStart) -> bool:
+        """
+        Check whether `domain` has a `domain.add_activated` billing_events
+        row for this user timestamped at or after currentPeriodStart --
+        i.e. it was added mid-cycle during the *current* billing period,
+        as opposed to being part of the initial purchase or an addition
+        carried over from an earlier cycle.
+
+        The event's domain name lives inside metadata_json (a JSONB
+        column), so rather than relying on a PostgREST JSON-path filter
+        we fetch this user's add_activated rows since the period start
+        and filter on the metadata key in Python.
+
+        Fails open: if the billing_events query itself errors (e.g. a
+        transient DB blip), this logs a warning and returns False so a
+        legitimate domain removal on a billing endpoint is never blocked
+        by an unrelated monitoring/read failure.
+
+        Args:
+            userId (str): The user ID.
+            domain (str): The domain expert name being removed.
+            currentPeriodStart: The subscription's current_period_start
+                (str/ISO or datetime).
+
+        Returns:
+            bool: True if the domain was activated during this period.
+        """
+        try:
+            periodStartIso = currentPeriodStart
+            if isinstance(currentPeriodStart, datetime.datetime):
+                periodStartIso = currentPeriodStart.isoformat()
+            result = (
+                self.client.table("billing_events")
+                .select("metadata_json, occurred_at")
+                .eq("user_id", userId)
+                .eq("event_type", "domain.add_activated")
+                .gte("occurred_at", periodStartIso)
+                .execute()
+            )
+            rows = result.data or []
+            for row in rows:
+                metadata = row.get("metadata_json") or {}
+                if metadata.get("domain") == domain:
+                    return True
+            return False
+        except Exception as e:
+            logger.warning(
+                f"billing_events lookup failed for userId={userId} domain={domain}; "
+                f"failing open and allowing removal: {e}"
+            )
+            return False
 
     @staticmethod
     def _sendFreeTrialEmail(email: str, name: str) -> None:
@@ -848,7 +911,9 @@ class SubscriptionService:
             self._auditLog(userId, "free_trial.activated", status="TRIAL")
             try:
                 from api.services.credits.creditService import creditService
-                creditService.initializeCreditBalance(userId=userId, planTier="free")
+                creditService.initializeCreditBalance(
+                    userId=userId, planTier="free", domainCount=4
+                )
             except Exception as creditErr:
                 logger.warning(f"Credit initialization failed for trial user {userId}: {creditErr}")
             newToken = self._reissueTokenWithUpdatedClaims(token, "trial", "free")
@@ -1182,7 +1247,11 @@ class SubscriptionService:
             planType = "pro" if billingMode == "monthly_recurring" else "annual"
             try:
                 from api.services.credits.creditService import creditService
-                creditService.initializeCreditBalance(userId=userId, planTier=planType)
+                creditService.initializeCreditBalance(
+                    userId=userId,
+                    planTier=planType,
+                    domainCount=len(normalizedDomains),
+                )
             except Exception as creditErr:
                 logger.warning(f"Credit initialization failed for paid user {userId}: {creditErr}")
             newToken = self._reissueTokenWithUpdatedClaims(token, "active", planType)
@@ -1630,9 +1699,24 @@ class SubscriptionService:
                 raise Exception("Subscription must be active to remove a domain")
             currentExperts = subscriptionExperts(subscription)
             pendingRemovals = subscriptionPendingRemovals(subscription)
+            currentPeriodStart = subscription.get("current_period_start")
             for domain in normalizedDomains:
                 if domain not in currentExperts:
                     raise Exception(f"Domain '{domain}' is not in your active domains")
+                if currentPeriodStart and self._wasDomainActivatedThisPeriod(
+                    userId, domain, currentPeriodStart
+                ):
+                    raise CustomException(
+                        ValueError(
+                            f"Domain '{domain}' was activated during the current billing period"
+                        ),
+                        statusCode=409,
+                        uiMessage=(
+                            f"Domain '{domain}' was added during the current billing period "
+                            f"and can be removed once the period ends on "
+                            f"{subscription.get('current_period_end')}."
+                        )
+                    )
                 if domain in pendingRemovals:
                     raise CustomException(
                         ValueError(f"Domain '{domain}' is already scheduled for removal"),

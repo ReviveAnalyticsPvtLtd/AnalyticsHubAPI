@@ -3,13 +3,12 @@ billingEngine.py
 
 Centralized backend price and tax computation for all billing flows.
 
-Sources base prices from Razorpay reference plans (monthly via
-RAZORPAY_PRO_PLAN_ID, annual via RAZORPAY_ANNUAL_PLAN_ID) with Redis
-fallback cache. Computes final invoice-ready amounts by combining
-domain count, billing mode, tax engine output, and proration windows.
+Base prices are per domain and come from config/plans.json via planConfig.
+Final invoice-ready amounts combine that base with domain count, billing mode,
+tax engine output, and proration windows.
 
-Credit top-up packs are the one exception: they are not Razorpay plans, so
-their prices come from config/credits.json instead.
+Credit top-up packs follow the same shape but read config/credits.json, since
+a pack is priced as one unit rather than per domain.
 
 All outputs are immutable value objects (PricingSnapshot) suitable for
 direct persistence to invoice columns. Clients cannot override any
@@ -21,38 +20,16 @@ __author__ = "Rohit Mishra"
 __all__ = ["computeInvoiceSnapshot", "computeTopupSnapshot"]
 
 
-from api.services.billing.billingConfig import RAZORPAY_ANNUAL_PLAN_ID
-from api.services.billing.billingClient import getBillingRedisClient
+from api.services.billing.planConfig import (
+    PLAN_CURRENCY,
+    getConfigVersion,
+    getPlanForBillingMode,
+)
 from api.services.billing.taxEngine import computeTax, TaxBreakdown
 from utils.logger import logger
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from dateutil.relativedelta import relativedelta
-import razorpay
-import redis
-import time
-import os
-
-
-_PRICE_CACHE_TTL = 24 * 60 * 60
-_PRICE_FETCH_RETRIES = 3
-
-
-def _getRazorpayClient() -> razorpay.Client:
-    """
-    Create a Razorpay client using environment credentials.
-
-    Returns:
-        razorpay.Client: Authenticated Razorpay client.
-    """
-    return razorpay.Client(
-        auth=(
-            os.environ.get("RAZORPAY_KEY_ID", ""),
-            os.environ.get("RAZORPAY_KEY_SECRET", ""),
-        )
-    )
-
-
 
 
 @dataclass(frozen=True)
@@ -74,7 +51,7 @@ class PricingSnapshot:
         total_amount: Final payable amount in paise.
         currency: ISO currency code.
         pricing_version: Snapshot identifier for audit trail.
-        plan_id: Razorpay plan ID used as price source.
+        plan_id: Internal plan identifier used as price source.
         pricing_reference_snapshot_json: Price-source metadata snapshot.
         period_start: Billing period start (ISO string).
         period_end: Billing period end (ISO string).
@@ -101,92 +78,6 @@ class PricingSnapshot:
         result["place_of_supply_snapshot"] = self.tax.place_of_supply_snapshot
         result["tax_breakdown_json"] = self.tax.to_dict()
         return result
-
-
-def _fetchPlanAmount(planId: str, cacheKey: str) -> dict:
-    """
-    Fetch the per-domain price in paise from a Razorpay reference plan.
-
-    Retries with exponential backoff and falls back to the Redis-cached
-    value if the Razorpay API is unreachable.
-
-    Args:
-        planId: Razorpay plan ID to fetch.
-        cacheKey: Redis key for caching the amount.
-
-    Returns:
-        dict: Snapshot containing amount/currency/fetched_at/source.
-
-    Raises:
-        RuntimeError: If the API fails and no cached value exists.
-    """
-    razorpayClient = _getRazorpayClient()
-    redisClient = getBillingRedisClient()
-    lastError = None
-
-    for attempt in range(1, _PRICE_FETCH_RETRIES + 1):
-        try:
-            plan = razorpayClient.plan.fetch(planId)
-            amount = plan["item"]["amount"]
-            redisClient.set(cacheKey, str(amount), ex=_PRICE_CACHE_TTL)
-            fetchedAt = datetime.now(timezone.utc).isoformat()
-            currency = plan["item"].get("currency", "INR")
-            logger.info(
-                f"Plan fetched — planId={planId}, amount={amount}, "
-                f"currency={currency}"
-            )
-            return {
-                "plan_id": planId,
-                "amount": amount,
-                "currency": currency,
-                "fetched_at": fetchedAt,
-                "source": "razorpay_plan_fetch",
-            }
-        except Exception as e:
-            lastError = e
-            logger.warning(
-                f"Plan fetch attempt {attempt}/{_PRICE_FETCH_RETRIES} "
-                f"failed for {planId}: {e}"
-            )
-            if attempt < _PRICE_FETCH_RETRIES:
-                time.sleep(2 ** attempt)
-
-    cached = redisClient.get(cacheKey)
-    if cached:
-        fetchedAt = datetime.now(timezone.utc).isoformat()
-        logger.warning(f"Using cached plan amount for {planId}: {cached}")
-        return {
-            "plan_id": planId,
-            "amount": int(cached),
-            "currency": "INR",
-            "fetched_at": fetchedAt,
-            "source": "cache_fallback",
-        }
-
-    raise RuntimeError(
-        f"Cannot fetch plan {planId} and no cached value available: {lastError}"
-    )
-
-
-def _getMonthlyBasePrice() -> dict:
-    """
-    Fetch the monthly per-domain price from the Razorpay reference plan.
-
-    Returns:
-        dict: Monthly plan metadata snapshot.
-    """
-    planId = os.environ.get("RAZORPAY_PRO_PLAN_ID", "")
-    return _fetchPlanAmount(planId, "billing:monthly_base_price")
-
-
-def _getAnnualBasePrice() -> dict:
-    """
-    Fetch the annual per-domain price from the Razorpay reference plan.
-
-    Returns:
-        dict: Annual plan metadata snapshot.
-    """
-    return _fetchPlanAmount(RAZORPAY_ANNUAL_PLAN_ID, "billing:annual_base_price")
 
 
 def computeInvoiceSnapshot(billingMode: str, billingReason: str,
@@ -224,24 +115,29 @@ def computeInvoiceSnapshot(billingMode: str, billingReason: str,
     """
     now = datetime.now(timezone.utc)
 
-    if billingMode == "monthly_recurring":
-        priceRef = _getMonthlyBasePrice()
-        basePrice = priceRef["amount"]
-        planId = os.environ.get("RAZORPAY_PRO_PLAN_ID", "")
-        if periodStart is None:
-            periodStart = now
-        if periodEnd is None:
-            periodEnd = periodStart + relativedelta(months=1)
-    elif billingMode == "annual_prepaid":
-        priceRef = _getAnnualBasePrice()
-        basePrice = priceRef["amount"]
-        planId = RAZORPAY_ANNUAL_PLAN_ID
-        if periodStart is None:
-            periodStart = now
-        if periodEnd is None:
-            periodEnd = periodStart + relativedelta(years=1)
-    else:
+    if billingMode not in ("monthly_recurring", "annual_prepaid"):
         raise ValueError(f"Unsupported billing mode: {billingMode}")
+
+    plan = getPlanForBillingMode(billingMode)
+    basePrice = plan["amount_per_domain"]
+    planId = plan["plan_id"]
+    priceRef = {
+        "source": "config_plans_json",
+        "configVersion": getConfigVersion(),
+        "planKey": plan["planKey"],
+        "planId": planId,
+        "amount": basePrice,
+        "currency": PLAN_CURRENCY,
+        "fetched_at": now.isoformat(),
+    }
+
+    if periodStart is None:
+        periodStart = now
+    if periodEnd is None:
+        if billingMode == "monthly_recurring":
+            periodEnd = periodStart + relativedelta(months=1)
+        else:
+            periodEnd = periodStart + relativedelta(years=1)
 
     if billingReason in ("initial_purchase", "renewal"):
         amountBeforeTax = domainCount * basePrice

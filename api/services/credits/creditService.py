@@ -45,6 +45,13 @@ _ROLL_FALLBACK_SECONDS = 2678400
 
 _ROLL_MAX_ITERATIONS = 120
 
+# Subscription statuses that still entitle a user to their domain_count's
+# credit allowance. Excludes 'none' (never subscribed), 'cancelled', and
+# 'expired' — a lapsed subscription must not keep driving the quota upward.
+_ACTIVE_LIKE_SUBSCRIPTION_STATUSES = (
+    "trial", "active", "renewal_upcoming", "payment_pending", "past_due", "suspended",
+)
+
 _PEEK_LUA = """
 local h = redis.call('HGETALL', KEYS[1])
 if #h == 0 then return {-1, -1, -1} end
@@ -153,7 +160,7 @@ class CreditService:
             self.supabase.table("credit_balances")
             .select(
                 "plan_tier, monthly_token_quota, used_tokens, remaining_tokens, "
-                "topup_tokens, period_start, period_end, last_reset_at"
+                "topup_tokens, domain_count, period_start, period_end, last_reset_at"
             )
             .eq("user_id", userId)
             .limit(1)
@@ -336,15 +343,19 @@ class CreditService:
 
     # ---- public API -----------------------------------------------------------
 
-    def initializeCreditBalance(self, userId, planTier, subscriptionId=None) -> dict:
+    def initializeCreditBalance(self, userId, planTier, subscriptionId=None,
+                                domainCount=1) -> dict:
         """
         Create or reset a user's balance on activation / trial start / renewal.
 
         The purchased bucket survives: the upsert payload omits topup_tokens so
         PostgREST leaves the column untouched on conflict, and the Redis mapping
         reseeds it from the existing row.
+
+        The allowance scales with domainCount for paid tiers; free and none
+        ignore it.
         """
-        quota = getTokenQuotaForPlan(planTier)
+        quota = getTokenQuotaForPlan(planTier, domainCount)
         now = datetime.now(timezone.utc)
         periodEnd = now + relativedelta(months=1)
 
@@ -355,6 +366,7 @@ class CreditService:
             "user_id": userId,
             "subscription_id": str(subscriptionId) if subscriptionId else None,
             "plan_tier": planTier,
+            "domain_count": domainCount,
             "monthly_token_quota": quota,
             "used_tokens": 0,
             "remaining_tokens": quota,
@@ -382,8 +394,123 @@ class CreditService:
                 f"monthlyTokens={quota}, topupTokens={topup}"
             )
         except Exception as e:
-            logger.warning(f"Redis credit init failed for {userId}: {e}")
+            logger.warning(
+                f"Redis credit init failed for {userId}, dropping hash so the "
+                f"next read rebuilds from Supabase: {e}"
+            )
+            try:
+                self._redis().delete(self._redisKey(userId))
+            except Exception:
+                pass
         return result.data[0] if result.data else payload
+
+    def applyDomainCountChange(self, userId: str, domainCount: int,
+                               grantImmediately: bool) -> dict:
+        """
+        Resize the monthly allowance after a domain is added or removed.
+
+        The allowance is 1,000 credits per subscribed domain, held as one
+        pooled balance. `grantImmediately` distinguishes the two callers:
+        an activation makes the new domain's allowance spendable at once,
+        while a removal at the period boundary only lowers the ceiling and
+        clamps what is left underneath it.
+
+        Clamping on removal is correct in either order against the Lua roll.
+        If this runs first, `trem` still holds the old higher remainder and is
+        brought down; if the roll ran first, `trem` was set to the old quota
+        and is brought down. Either way the subscriber cannot spend an
+        allowance for a domain they no longer have.
+
+        The purchased bucket (`ttop`) is never touched — it was paid for
+        separately and does not belong to any domain.
+
+        `domainCount` is clamped to a minimum of 1 before it is used for the
+        quota computation or persisted, so a caller passing 0 (e.g. a user
+        removing their last domain) cannot desync the stored count from the
+        floored quota `getTokenQuotaForPlan` would have returned anyway.
+
+        A failed Redis write drops the hash rather than leaving it stale,
+        because `_ensureHash` only rebuilds on a cache *miss* — a hash that is
+        present but now disagrees with Supabase is never revisited otherwise,
+        and the user would keep spending against the old quota indefinitely.
+
+        Args:
+            userId (str): The user whose allowance to resize.
+            domainCount (int): The new number of subscribed domains. Clamped
+                to a minimum of 1.
+            grantImmediately (bool): Whether an increase should also raise the
+                spendable remainder, rather than only the ceiling.
+
+        Returns:
+            dict: {"applied": bool, "quota": int, "delta": int, "remaining": int}.
+        """
+        try:
+            domainCount = max(1, int(domainCount))
+        except (TypeError, ValueError):
+            domainCount = 1
+
+        row = self._dbRow(userId)
+        if not row:
+            logger.warning(
+                f"No credit_balances row for userId={userId}, "
+                f"skipping domain count change to {domainCount}"
+            )
+            return {"applied": False, "quota": 0, "delta": 0, "remaining": 0}
+
+        planTier = row.get("plan_tier", "none")
+        oldQuota = row.get("monthly_token_quota", 0) or 0
+        newQuota = getTokenQuotaForPlan(planTier, domainCount)
+        delta = newQuota - oldQuota
+
+        self._ensureHash(userId)
+        state = self._peek(userId)
+        currentRemaining = (
+            state["trem"] if state is not None
+            else (row.get("remaining_tokens", 0) or 0)
+        )
+
+        if delta > 0 and grantImmediately:
+            newRemaining = currentRemaining + delta
+        else:
+            newRemaining = min(currentRemaining, newQuota)
+
+        now = datetime.now(timezone.utc)
+        try:
+            self.supabase.table("credit_balances").update({
+                "monthly_token_quota": newQuota,
+                "domain_count": domainCount,
+                "remaining_tokens": newRemaining,
+                "used_tokens": max(0, newQuota - newRemaining),
+                "updated_at": now.isoformat(),
+            }).eq("user_id", userId).execute()
+        except Exception as e:
+            logger.error(
+                f"Domain count quota write failed for userId={userId}: {e}"
+            )
+            return {"applied": False, "quota": oldQuota, "delta": 0,
+                    "remaining": currentRemaining}
+
+        try:
+            self._redis().hset(self._redisKey(userId), mapping={
+                "tquota": newQuota,
+                "trem": newRemaining,
+            })
+        except Exception as e:
+            logger.warning(
+                f"Redis quota update failed for {userId}, dropping hash: {e}"
+            )
+            try:
+                self._redis().delete(self._redisKey(userId))
+            except Exception:
+                pass
+
+        logger.info(
+            f"Domain count applied — userId={userId}, domains={domainCount}, "
+            f"quota={oldQuota}->{newQuota}, remaining={newRemaining}, "
+            f"granted={grantImmediately}"
+        )
+        return {"applied": True, "quota": newQuota, "delta": delta,
+                "remaining": newRemaining}
 
     def deductTokens(self, userId, tokensUsed, operationType) -> int:
         """
@@ -693,8 +820,9 @@ class CreditService:
         """
         Admin-triggered bulk reset.
 
-        Always: recompute monthly_token_quota from config for every
-        credit_balances row, then flush all Redis credit hashes.
+        Always: recompute monthly_token_quota from config and the stored
+        domain_count for every credit_balances row, then flush all Redis
+        credit hashes.
 
         When resetUsage=True: also zero used_tokens and restore remaining_tokens
         to the full quota — equivalent to giving every user a fresh monthly
@@ -708,7 +836,7 @@ class CreditService:
         try:
             rows = (
                 self.supabase.table("credit_balances")
-                .select("user_id, plan_tier")
+                .select("user_id, plan_tier, domain_count")
                 .execute()
             )
             if not rows.data:
@@ -719,7 +847,8 @@ class CreditService:
             for row in rows.data:
                 userId = row["user_id"]
                 planTier = row.get("plan_tier", "none")
-                newQuota = getTokenQuotaForPlan(planTier)
+                domainCount = row.get("domain_count", 1) or 1
+                newQuota = getTokenQuotaForPlan(planTier, domainCount)
 
                 payload = {
                     "monthly_token_quota": newQuota,
@@ -767,6 +896,28 @@ class CreditService:
     def syncQuotaFromConfig(self, userId: str) -> None:
         """
         Ensure a single user's monthly_token_quota matches the current config.
+
+        Also repairs domain_count drift against `subscriptions`, which is the
+        canonical entitlement record — the credit row is a denormalised copy
+        kept so quota reads and the monthly roll never need a join. Only rows
+        in an active-like status (see _ACTIVE_LIKE_SUBSCRIPTION_STATUSES) are
+        eligible to drive that repair: a cancelled or expired subscription
+        must not keep inflating the quota. When no such row exists for the
+        user, domain_count is left untouched rather than forced down to 1 —
+        note that nothing currently sets plan_tier back to 'none' on
+        cancellation either, which is a separate, already-escalated gap this
+        function does not attempt to close.
+
+        When the corrected quota is lower than what is stored, remaining_tokens
+        is clamped to it in the same update (and used_tokens recomputed), and
+        the Redis hash is dropped rather than partially patched — consistent
+        with the drop-on-write-failure convention used elsewhere in this file,
+        and simpler than trying to patch two fields atomically in two stores.
+        When the corrected quota is higher, the ceiling is raised but the
+        remainder is deliberately NOT auto-granted — a missed grant is a
+        support ticket, an accidental double grant is lost revenue — so a
+        loud warning is logged instead for a human to investigate.
+
         Called during reconcile to prevent long-term drift.
         """
         try:
@@ -774,22 +925,87 @@ class CreditService:
             if not row:
                 return
             planTier = row.get("plan_tier", "none")
-            expectedQuota = getTokenQuotaForPlan(planTier)
-            currentQuota = row.get("monthly_token_quota", 0)
-            if currentQuota != expectedQuota:
-                self.supabase.table("credit_balances").update({
-                    "monthly_token_quota": expectedQuota,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }).eq("user_id", userId).execute()
-                try:
-                    r = self._redis()
-                    r.hset(self._redisKey(userId), "tquota", expectedQuota)
-                except Exception:
-                    pass
-                logger.info(
-                    f"Quota drift corrected for userId={userId}: "
-                    f"{currentQuota} -> {expectedQuota}"
+            storedDomains = row.get("domain_count", 1) or 1
+
+            canonicalDomains = storedDomains
+            try:
+                subRow = (
+                    self.supabase.table("subscriptions")
+                    .select("domain_count")
+                    .eq("user_id", userId)
+                    .in_("status", _ACTIVE_LIKE_SUBSCRIPTION_STATUSES)
+                    .order("updated_at", desc=True)
+                    .limit(1)
+                    .execute()
                 )
+                if subRow.data and subRow.data[0].get("domain_count") is not None:
+                    canonicalDomains = max(1, int(subRow.data[0]["domain_count"]))
+                else:
+                    logger.debug(
+                        f"No active-like subscription found for userId={userId}; "
+                        f"leaving domain_count at {storedDomains}"
+                    )
+            except Exception as e:
+                logger.warning(f"Domain count lookup failed for {userId}: {e}")
+
+            expectedQuota = getTokenQuotaForPlan(planTier, canonicalDomains)
+            currentQuota = row.get("monthly_token_quota", 0) or 0
+            if currentQuota == expectedQuota and canonicalDomains == storedDomains:
+                return
+
+            updatePayload = {
+                "monthly_token_quota": expectedQuota,
+                "domain_count": canonicalDomains,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+            if expectedQuota < currentQuota:
+                currentRemaining = row.get("remaining_tokens", 0) or 0
+                clampedRemaining = min(currentRemaining, expectedQuota)
+                if clampedRemaining != currentRemaining:
+                    updatePayload["remaining_tokens"] = clampedRemaining
+                    updatePayload["used_tokens"] = max(0, expectedQuota - clampedRemaining)
+            elif expectedQuota > currentQuota:
+                logger.warning(
+                    f"syncQuotaFromConfig is raising the ceiling for "
+                    f"userId={userId}: {currentQuota} -> {expectedQuota}. The "
+                    f"difference is NOT auto-granted; verify whether a grant "
+                    f"was missed for this user."
+                )
+
+            self.supabase.table("credit_balances").update(updatePayload).eq("user_id", userId).execute()
+
+            if "remaining_tokens" in updatePayload:
+                # The balance also moved, not just the ceiling. Rather than
+                # patch two Redis fields (tquota, trem) and risk one write
+                # landing without the other, drop the hash outright so the
+                # next read rebuilds both from the Supabase row just written
+                # — the same convention this file uses whenever a repair
+                # cannot be trusted to land atomically.
+                try:
+                    self._redis().delete(self._redisKey(userId))
+                except Exception as e:
+                    logger.warning(
+                        f"Redis hash drop after quota clamp failed for "
+                        f"{userId}: {e}"
+                    )
+            else:
+                try:
+                    self._redis().hset(self._redisKey(userId), "tquota", expectedQuota)
+                except Exception as e:
+                    logger.warning(
+                        f"Redis quota sync failed for {userId}, dropping hash "
+                        f"so the next read rebuilds from Supabase: {e}"
+                    )
+                    try:
+                        self._redis().delete(self._redisKey(userId))
+                    except Exception:
+                        pass
+            logger.info(
+                f"Quota drift corrected for userId={userId}: "
+                f"{currentQuota} -> {expectedQuota} "
+                f"(domains {storedDomains} -> {canonicalDomains})"
+            )
         except Exception as e:
             logger.warning(f"syncQuotaFromConfig failed for userId={userId}: {e}")
 
