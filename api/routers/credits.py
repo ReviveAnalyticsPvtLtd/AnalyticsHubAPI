@@ -42,11 +42,15 @@ async def getCreditBalance(user: UserContext = Depends(verifyUser)):
     """
     try:
         from api.services.credits.creditService import creditService
+        from api.services.credits.creditPresentation import buildCreditBalanceView
 
         snapshot = creditService.getBalanceSnapshot(user.userId)
         return ORJSONResponse(
             status_code=200,
-            content={"status": "SUCCESS", "data": snapshot},
+            content={
+                "status": "SUCCESS",
+                "data": buildCreditBalanceView(snapshot),
+            },
         )
     except CustomException:
         raise
@@ -71,6 +75,7 @@ async def getCreditUsage(user: UserContext = Depends(verifyUser)):
     """
     try:
         from api.services.credits.creditService import creditService
+        from api.services.credits.creditPresentation import buildCreditBalanceView
         from api.services.credits.langfuseUsageService import getUsageBreakdown
         from datetime import datetime, timezone
 
@@ -100,24 +105,14 @@ async def getCreditUsage(user: UserContext = Depends(verifyUser)):
         if breakdown is not None:
             langfuseAvailable = breakdown.get("langfuseAvailable", False)
 
+        balanceView = buildCreditBalanceView(snapshot)
+
         return ORJSONResponse(
             status_code=200,
             content={
                 "status": "SUCCESS",
                 "data": {
-                    "totalUsedTokens": snapshot.get("usedTokens", 0),
-                    "monthlyTokenQuota": snapshot.get("monthlyTokenQuota", 0),
-                    "monthlyRemainingTokens": snapshot.get("monthlyRemainingTokens", 0),
-                    "topupTokens": snapshot.get("topupTokens", 0),
-                    "remainingTokens": snapshot.get("remainingTokens", 0),
-                    "totalUsedCredits": snapshot.get("usedCredits", 0.0),
-                    "monthlyCredits": snapshot.get("monthlyCredits", 0.0),
-                    "topupCredits": snapshot.get("topupCredits", 0.0),
-                    "remainingCredits": snapshot.get("remainingCredits", 0.0),
-                    "usagePercentage": snapshot.get("usagePercentage", 0.0),
-                    "periodStart": periodStart,
-                    "periodEnd": periodEnd,
-                    "planTier": snapshot.get("planTier", "none"),
+                    **balanceView,
                     "langfuseAvailable": langfuseAvailable,
                     "breakdown": {
                         "byOperation": breakdown.get("byOperation", []) if breakdown else [],

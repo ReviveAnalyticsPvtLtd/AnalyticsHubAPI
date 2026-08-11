@@ -758,6 +758,18 @@ class SubscriptionService:
             "domain_count": updatedDomainCount,
             "pending_additions": pendingAdditions,
         }).eq("id", subscription["id"]).execute()
+        try:
+            from api.services.credits.creditService import creditService
+            creditService.applyDomainCountChange(
+                userId=userId,
+                domainCount=updatedDomainCount,
+                grantImmediately=True,
+            )
+        except Exception as creditErr:
+            logger.warning(
+                f"Credit allowance update failed after domain activation "
+                f"for userId={userId}: {creditErr}"
+            )
         for domain in activatedDomains:
             self._auditLog(
                 userId, "domain.add_activated",
@@ -848,7 +860,11 @@ class SubscriptionService:
             self._auditLog(userId, "free_trial.activated", status="TRIAL")
             try:
                 from api.services.credits.creditService import creditService
-                creditService.initializeCreditBalance(userId=userId, planTier="free")
+                creditService.initializeCreditBalance(
+                    userId=userId,
+                    planTier="free",
+                    domainCount=4,
+                )
             except Exception as creditErr:
                 logger.warning(f"Credit initialization failed for trial user {userId}: {creditErr}")
             newToken = self._reissueTokenWithUpdatedClaims(token, "trial", "free")
@@ -1182,7 +1198,11 @@ class SubscriptionService:
             planType = "pro" if billingMode == "monthly_recurring" else "annual"
             try:
                 from api.services.credits.creditService import creditService
-                creditService.initializeCreditBalance(userId=userId, planTier=planType)
+                creditService.initializeCreditBalance(
+                    userId=userId,
+                    planTier=planType,
+                    domainCount=len(normalizedDomains),
+                )
             except Exception as creditErr:
                 logger.warning(f"Credit initialization failed for paid user {userId}: {creditErr}")
             newToken = self._reissueTokenWithUpdatedClaims(token, "active", planType)

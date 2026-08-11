@@ -25,13 +25,19 @@ Tokens are the unit of record everywhere; credits are derived for display only.
 
 __version__ = "1.0.0"
 __author__ = "Rohit Mishra"
-__all__ = ["CreditService", "creditService"]
+__all__ = [
+    "CreditService",
+    "creditService",
+    "calculateQuotaResizeTargets",
+    "preserveDurableUsedTokens",
+]
 
 
 from api.services.credits.creditConfig import (
     TOKEN_TO_CREDIT_RATIO,
     getTokenQuotaForPlan,
 )
+from api.services.credits.creditPresentation import deriveActiveTopupWindow
 from api.services.credits import creditMath
 from datetime import datetime, timezone
 from dateutil.relativedelta import relativedelta
@@ -44,6 +50,13 @@ import os
 _ROLL_FALLBACK_SECONDS = 2678400
 
 _ROLL_MAX_ITERATIONS = 120
+
+# Subscription statuses that still entitle a user to their domain_count's
+# credit allowance. Excludes 'none' (never subscribed), 'cancelled', and
+# 'expired' — a lapsed subscription must not keep driving the quota upward.
+_ACTIVE_LIKE_SUBSCRIPTION_STATUSES = (
+    "trial", "active", "renewal_upcoming", "payment_pending", "past_due", "suspended",
+)
 
 _PEEK_LUA = """
 local h = redis.call('HGETALL', KEYS[1])
@@ -111,7 +124,85 @@ redis.call('HSET', KEYS[1], 'trem', trem, 'ttop', ttop, 'pend', pend, 'pnext', p
 return {trem, ttop, spill, rolled}
 """
 
+_RESIZE_LUA = """
+local h = redis.call('HGETALL', KEYS[1])
+if #h == 0 then return {-1, -1, -1, -1} end
+local m = {}
+for i = 1, #h, 2 do m[h[i]] = h[i+1] end
+local trem = tonumber(m['trem'])
+local tquota = tonumber(m['tquota'])
+local pend = tonumber(m['pend'])
+local pnext = tonumber(m['pnext'])
+local newQuota = tonumber(ARGV[1])
+local grantImmediately = tonumber(ARGV[2])
+local usedFloor = tonumber(ARGV[3])
+local now = tonumber(ARGV[4])
+local fallback = tonumber(ARGV[5])
+local maxIter = tonumber(ARGV[6])
+local rolled = 0
+local guard = 0
+while now >= pend and guard < maxIter do
+  trem = tquota
+  pend = pnext
+  pnext = pnext + fallback
+  rolled = 1
+  guard = guard + 1
+end
+if trem < 0 then trem = 0 end
+if tquota < 0 then tquota = 0 end
+if newQuota < 0 then newQuota = 0 end
+local oldUsed = tquota - trem
+if oldUsed < 0 then oldUsed = 0 end
+if rolled == 0 and usedFloor > oldUsed then oldUsed = usedFloor end
+local newRemaining
+local used
+if newQuota > tquota and grantImmediately == 0 then
+  newRemaining = math.min(trem, newQuota)
+  used = math.max(oldUsed, newQuota - newRemaining)
+else
+  newRemaining = math.max(0, newQuota - oldUsed)
+  used = oldUsed
+end
+redis.call(
+  'HSET', KEYS[1],
+  'tquota', newQuota,
+  'trem', newRemaining,
+  'pend', pend,
+  'pnext', pnext
+)
+return {newRemaining, used, rolled, tquota}
+"""
+
 _redis_pool: redis.ConnectionPool | None = None
+
+
+def calculateQuotaResizeTargets(oldQuota: int, currentRemaining: int,
+                                newQuota: int, grantImmediately: bool,
+                                usedFloor: int = 0) -> dict:
+    """Calculate resize targets while preserving already-consumed usage."""
+    oldQuota = max(0, int(oldQuota or 0))
+    currentRemaining = max(0, int(currentRemaining or 0))
+    newQuota = max(0, int(newQuota or 0))
+    oldUsed = max(0, oldQuota - currentRemaining, int(usedFloor or 0))
+
+    if newQuota > oldQuota and not grantImmediately:
+        remaining = min(currentRemaining, newQuota)
+        used = max(oldUsed, newQuota - remaining)
+    else:
+        remaining = max(0, newQuota - oldUsed)
+        used = oldUsed
+
+    return {"remaining": remaining, "used": used}
+
+
+def preserveDurableUsedTokens(storedUsed: int, quota: int,
+                              remaining: int, periodRolled: bool = False) -> int:
+    """Never let a Redis write-back forgive monthly usage stored durably."""
+    return max(
+        0,
+        0 if periodRolled else int(storedUsed or 0),
+        int(quota or 0) - int(remaining or 0),
+    )
 
 
 class CreditService:
@@ -153,13 +244,42 @@ class CreditService:
             self.supabase.table("credit_balances")
             .select(
                 "plan_tier, monthly_token_quota, used_tokens, remaining_tokens, "
-                "topup_tokens, period_start, period_end, last_reset_at"
+                "topup_tokens, domain_count, period_start, period_end, last_reset_at"
             )
             .eq("user_id", userId)
             .limit(1)
             .execute()
         )
         return row.data[0] if row.data else None
+
+    def _getPaidTopupLots(self, userId: str) -> list[int]:
+        """Return paid top-up lot sizes in newest-first purchase order."""
+        try:
+            result = (
+                self.supabase.table("Invoices")
+                .select("status, pricing_reference_snapshot_json, paidAt")
+                .eq("userId", userId)
+                .eq("billing_reason", "add_on")
+                .order("paidAt", desc=True)
+                .execute()
+            )
+            lots = []
+            for invoice in result.data or []:
+                if str(invoice.get("status", "")).lower() != "paid":
+                    continue
+                snapshot = invoice.get("pricing_reference_snapshot_json")
+                if not isinstance(snapshot, dict):
+                    continue
+                try:
+                    tokens = int(snapshot.get("tokens", 0))
+                except (TypeError, ValueError):
+                    continue
+                if tokens > 0:
+                    lots.append(tokens)
+            return lots
+        except Exception as e:
+            logger.warning(f"Top-up invoice history read failed for userId={userId}: {e}")
+            return []
 
     # ---- Redis hash lifecycle -------------------------------------------------
 
@@ -334,17 +454,44 @@ class CreditService:
             logger.warning(f"Redis deduct failed for {userId}: {e}")
             return None
 
+    def _resizeQuota(self, userId: str, newQuota: int,
+                     grantImmediately: bool, usedFloor: int = 0) -> dict | None:
+        """Atomically roll the period and resize the monthly Redis bucket."""
+        try:
+            r = self._redis()
+            now = int(datetime.now(timezone.utc).timestamp())
+            res = r.eval(
+                _RESIZE_LUA, 1, self._redisKey(userId),
+                newQuota, int(grantImmediately), usedFloor, now,
+                _ROLL_FALLBACK_SECONDS, _ROLL_MAX_ITERATIONS,
+            )
+            if not res or int(res[0]) == -1:
+                return None
+            return {
+                "trem": int(res[0]),
+                "used": int(res[1]),
+                "rolled": int(res[2]),
+                "oldQuota": int(res[3]),
+            }
+        except Exception as e:
+            logger.warning(f"Redis quota resize failed for {userId}: {e}")
+            return None
+
     # ---- public API -----------------------------------------------------------
 
-    def initializeCreditBalance(self, userId, planTier, subscriptionId=None) -> dict:
+    def initializeCreditBalance(self, userId, planTier, subscriptionId=None,
+                                domainCount=1) -> dict:
         """
         Create or reset a user's balance on activation / trial start / renewal.
 
         The purchased bucket survives: the upsert payload omits topup_tokens so
         PostgREST leaves the column untouched on conflict, and the Redis mapping
         reseeds it from the existing row.
+
+        The allowance scales with domainCount for paid tiers; free and none
+        ignore it.
         """
-        quota = getTokenQuotaForPlan(planTier)
+        quota = getTokenQuotaForPlan(planTier, domainCount)
         now = datetime.now(timezone.utc)
         periodEnd = now + relativedelta(months=1)
 
@@ -355,6 +502,7 @@ class CreditService:
             "user_id": userId,
             "subscription_id": str(subscriptionId) if subscriptionId else None,
             "plan_tier": planTier,
+            "domain_count": domainCount,
             "monthly_token_quota": quota,
             "used_tokens": 0,
             "remaining_tokens": quota,
@@ -382,8 +530,116 @@ class CreditService:
                 f"monthlyTokens={quota}, topupTokens={topup}"
             )
         except Exception as e:
-            logger.warning(f"Redis credit init failed for {userId}: {e}")
+            logger.warning(
+                f"Redis credit init failed for {userId}, dropping hash so the "
+                f"next read rebuilds from Supabase: {e}"
+            )
+            try:
+                self._redis().delete(self._redisKey(userId))
+            except Exception:
+                pass
         return result.data[0] if result.data else payload
+
+    def applyDomainCountChange(self, userId: str, domainCount: int,
+                               grantImmediately: bool) -> dict:
+        """
+        Resize the monthly allowance after a domain is added or removed.
+
+        The allowance is 1,000 credits per subscribed domain, held as one
+        pooled balance. `grantImmediately` distinguishes the two callers:
+        an activation makes the new domain's allowance spendable at once,
+        while a removal at the period boundary only lowers the ceiling and
+        clamps what is left underneath it.
+
+        Resize and monthly roll are one Redis Lua operation. This prevents a
+        concurrent deduction from being overwritten by a later absolute HSET.
+        A reduction preserves the amount already consumed, even when usage is
+        above the new ceiling; in that case remaining becomes zero and
+        used_tokens legitimately remains greater than monthly_token_quota.
+
+        The purchased bucket (`ttop`) is never touched — it was paid for
+        separately and does not belong to any domain.
+
+        `domainCount` is clamped to a minimum of 1 before it is used for the
+        quota computation or persisted, so a caller passing 0 (e.g. a user
+        removing their last domain) cannot desync the stored count from the
+        floored quota `getTokenQuotaForPlan` would have returned anyway.
+
+        Redis is the atomic hot-path authority. If it cannot be resized, the
+        durable row is left unchanged. A later reconciliation retries any
+        durable write that fails after the atomic Redis resize.
+
+        Args:
+            userId (str): The user whose allowance to resize.
+            domainCount (int): The new number of subscribed domains. Clamped
+                to a minimum of 1.
+            grantImmediately (bool): Whether an increase should also raise the
+                spendable remainder, rather than only the ceiling.
+
+        Returns:
+            dict: {"applied": bool, "quota": int, "delta": int, "remaining": int}.
+        """
+        try:
+            domainCount = max(1, int(domainCount))
+        except (TypeError, ValueError):
+            domainCount = 1
+
+        row = self._dbRow(userId)
+        if not row:
+            logger.warning(
+                f"No credit_balances row for userId={userId}, "
+                f"skipping domain count change to {domainCount}"
+            )
+            return {"applied": False, "quota": 0, "delta": 0, "remaining": 0}
+
+        planTier = row.get("plan_tier", "none")
+        oldQuota = row.get("monthly_token_quota", 0) or 0
+        newQuota = getTokenQuotaForPlan(planTier, domainCount)
+        delta = newQuota - oldQuota
+
+        self._ensureHash(userId)
+        usedFloor = row.get("used_tokens", 0) or 0
+        state = self._resizeQuota(
+            userId, newQuota, grantImmediately, usedFloor=usedFloor
+        )
+        if state is None:
+            self._ensureHash(userId)
+            state = self._resizeQuota(
+                userId, newQuota, grantImmediately, usedFloor=usedFloor
+            )
+        if state is None:
+            currentRemaining = row.get("remaining_tokens", 0) or 0
+            return {"applied": False, "quota": oldQuota, "delta": 0,
+                    "remaining": currentRemaining}
+
+        newRemaining = state["trem"]
+        usedTokens = state["used"]
+
+        now = datetime.now(timezone.utc)
+        if state["rolled"]:
+            self._repairPeriod(userId, now)
+        try:
+            self.supabase.table("credit_balances").update({
+                "monthly_token_quota": newQuota,
+                "domain_count": domainCount,
+                "remaining_tokens": newRemaining,
+                "used_tokens": usedTokens,
+                "updated_at": now.isoformat(),
+            }).eq("user_id", userId).execute()
+        except Exception as e:
+            logger.error(
+                f"Domain count quota write failed for userId={userId}: {e}"
+            )
+            return {"applied": False, "quota": oldQuota, "delta": 0,
+                    "remaining": newRemaining}
+
+        logger.info(
+            f"Domain count applied — userId={userId}, domains={domainCount}, "
+            f"quota={oldQuota}->{newQuota}, remaining={newRemaining}, "
+            f"granted={grantImmediately}"
+        )
+        return {"applied": True, "quota": newQuota, "delta": delta,
+                "remaining": newRemaining}
 
     def deductTokens(self, userId, tokensUsed, operationType) -> int:
         """
@@ -435,9 +691,13 @@ class CreditService:
         try:
             row = self._dbRow(userId)
             tquota = row.get("monthly_token_quota", 0) if row else 0
+            storedUsed = row.get("used_tokens", 0) if row else 0
             self.supabase.table("credit_balances").update({
                 "remaining_tokens": state["trem"],
-                "used_tokens": max(0, tquota - state["trem"]),
+                "used_tokens": preserveDurableUsedTokens(
+                    storedUsed, tquota, state["trem"],
+                    periodRolled=bool(state["rolled"]),
+                ),
                 "updated_at": now.isoformat(),
             }).eq("user_id", userId).execute()
         except Exception as e:
@@ -461,7 +721,11 @@ class CreditService:
         if state is not None:
             if state["rolled"]:
                 self._repairPeriod(userId, datetime.now(timezone.utc))
-            return {"monthly": state["trem"], "topup": state["ttop"]}
+            return {
+                "monthly": state["trem"],
+                "topup": state["ttop"],
+                "rolled": bool(state["rolled"]),
+            }
 
         try:
             row = self._dbRow(userId)
@@ -471,8 +735,16 @@ class CreditService:
             topup = row.get("topup_tokens", 0) or 0
             periodEnd = row.get("period_end")
             if periodEnd and dateparser.parse(periodEnd) <= now:
-                return {"monthly": row.get("monthly_token_quota", 0), "topup": topup}
-            return {"monthly": row.get("remaining_tokens", 0), "topup": topup}
+                return {
+                    "monthly": row.get("monthly_token_quota", 0),
+                    "topup": topup,
+                    "rolled": True,
+                }
+            return {
+                "monthly": row.get("remaining_tokens", 0),
+                "topup": topup,
+                "rolled": False,
+            }
         except Exception as e:
             logger.warning(f"DB token read failed for {userId}: {e}")
             return {"monthly": -1, "topup": 0}
@@ -624,11 +896,17 @@ class CreditService:
                 return
             if state["rolled"]:
                 self._repairPeriod(userId, datetime.now(timezone.utc))
+                refreshedRow = self._dbRow(userId)
+                if refreshedRow:
+                    row = refreshedRow
             tquota = row.get("monthly_token_quota", 0)
             now = datetime.now(timezone.utc)
             self.supabase.table("credit_balances").update({
                 "remaining_tokens": state["trem"],
-                "used_tokens": max(0, tquota - state["trem"]),
+                "used_tokens": preserveDurableUsedTokens(
+                    row.get("used_tokens", 0), tquota, state["trem"],
+                    periodRolled=bool(state["rolled"]),
+                ),
                 "last_reconciled_at": now.isoformat(),
                 "updated_at": now.isoformat(),
             }).eq("user_id", userId).execute()
@@ -646,6 +924,7 @@ class CreditService:
         defaults = {
             "planTier": "none", "monthlyTokenQuota": 0, "usedTokens": 0,
             "monthlyRemainingTokens": 0, "topupTokens": 0,
+            "topupTotalTokens": 0, "topupUsedTokens": 0,
             "remainingTokens": 0, "monthlyCredits": 0.0, "usedCredits": 0.0,
             "topupCredits": 0.0, "remainingCredits": 0.0, "usagePercentage": 0.0,
             "periodStart": None, "periodEnd": None, "lastResetAt": None,
@@ -664,7 +943,19 @@ class CreditService:
             else:
                 monthlyRemaining = parts["monthly"]
                 topup = parts["topup"]
-            used = max(0, tquota - monthlyRemaining)
+                refreshedRow = self._dbRow(userId)
+                if refreshedRow:
+                    row = refreshedRow
+                    tquota = row.get("monthly_token_quota", 0)
+            topupWindow = (
+                deriveActiveTopupWindow(topup, self._getPaidTopupLots(userId))
+                if topup > 0
+                else {"total": 0, "used": 0}
+            )
+            used = preserveDurableUsedTokens(
+                row.get("used_tokens", 0), tquota, monthlyRemaining,
+                periodRolled=bool(parts.get("rolled", False)),
+            )
             remaining = monthlyRemaining + topup
             usagePercent = round((used / tquota) * 100, 2) if tquota > 0 else 0.0
 
@@ -674,6 +965,8 @@ class CreditService:
                 "usedTokens": used,
                 "monthlyRemainingTokens": monthlyRemaining,
                 "topupTokens": topup,
+                "topupTotalTokens": topupWindow["total"],
+                "topupUsedTokens": topupWindow["used"],
                 "remainingTokens": remaining,
                 "monthlyCredits": creditMath.tokensToCredits(tquota, TOKEN_TO_CREDIT_RATIO),
                 "usedCredits": creditMath.tokensToCredits(used, TOKEN_TO_CREDIT_RATIO),
@@ -693,8 +986,9 @@ class CreditService:
         """
         Admin-triggered bulk reset.
 
-        Always: recompute monthly_token_quota from config for every
-        credit_balances row, then flush all Redis credit hashes.
+        Always: recompute monthly_token_quota from config and the stored
+        domain_count for every credit_balances row, then flush all Redis
+        credit hashes.
 
         When resetUsage=True: also zero used_tokens and restore remaining_tokens
         to the full quota — equivalent to giving every user a fresh monthly
@@ -708,7 +1002,7 @@ class CreditService:
         try:
             rows = (
                 self.supabase.table("credit_balances")
-                .select("user_id, plan_tier")
+                .select("user_id, plan_tier, domain_count")
                 .execute()
             )
             if not rows.data:
@@ -719,7 +1013,8 @@ class CreditService:
             for row in rows.data:
                 userId = row["user_id"]
                 planTier = row.get("plan_tier", "none")
-                newQuota = getTokenQuotaForPlan(planTier)
+                domainCount = row.get("domain_count", 1) or 1
+                newQuota = getTokenQuotaForPlan(planTier, domainCount)
 
                 payload = {
                     "monthly_token_quota": newQuota,
@@ -767,6 +1062,23 @@ class CreditService:
     def syncQuotaFromConfig(self, userId: str) -> None:
         """
         Ensure a single user's monthly_token_quota matches the current config.
+
+        Also repairs domain_count drift against `subscriptions`, which is the
+        canonical entitlement record — the credit row is a denormalised copy
+        kept so quota reads and the monthly roll never need a join. Only rows
+        in an active-like status (see _ACTIVE_LIKE_SUBSCRIPTION_STATUSES) are
+        eligible to drive that repair: a cancelled or expired subscription
+        must not keep inflating the quota. When no such row exists for the
+        user, domain_count is left untouched rather than forced down to 1 —
+        note that nothing currently sets plan_tier back to 'none' on
+        cancellation either, which is a separate, already-escalated gap this
+        function does not attempt to close.
+
+        The same atomic resize used by domain lifecycle hooks repairs the drift.
+        Lowering a quota preserves consumed usage; raising it does not grant new
+        headroom because a missed grant is safer to investigate than an
+        accidental double grant.
+
         Called during reconcile to prevent long-term drift.
         """
         try:
@@ -774,22 +1086,58 @@ class CreditService:
             if not row:
                 return
             planTier = row.get("plan_tier", "none")
-            expectedQuota = getTokenQuotaForPlan(planTier)
-            currentQuota = row.get("monthly_token_quota", 0)
-            if currentQuota != expectedQuota:
-                self.supabase.table("credit_balances").update({
-                    "monthly_token_quota": expectedQuota,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }).eq("user_id", userId).execute()
-                try:
-                    r = self._redis()
-                    r.hset(self._redisKey(userId), "tquota", expectedQuota)
-                except Exception:
-                    pass
-                logger.info(
-                    f"Quota drift corrected for userId={userId}: "
-                    f"{currentQuota} -> {expectedQuota}"
+            storedDomains = row.get("domain_count", 1) or 1
+
+            canonicalDomains = storedDomains
+            try:
+                subRow = (
+                    self.supabase.table("subscriptions")
+                    .select("domain_count")
+                    .eq("user_id", userId)
+                    .in_("status", _ACTIVE_LIKE_SUBSCRIPTION_STATUSES)
+                    .order("updated_at", desc=True)
+                    .limit(1)
+                    .execute()
                 )
+                if subRow.data and subRow.data[0].get("domain_count") is not None:
+                    canonicalDomains = max(1, int(subRow.data[0]["domain_count"]))
+                else:
+                    logger.debug(
+                        f"No active-like subscription found for userId={userId}; "
+                        f"leaving domain_count at {storedDomains}"
+                    )
+            except Exception as e:
+                logger.warning(f"Domain count lookup failed for {userId}: {e}")
+
+            expectedQuota = getTokenQuotaForPlan(planTier, canonicalDomains)
+            currentQuota = row.get("monthly_token_quota", 0) or 0
+            if currentQuota == expectedQuota and canonicalDomains == storedDomains:
+                return
+
+            if expectedQuota > currentQuota:
+                logger.warning(
+                    f"syncQuotaFromConfig is raising the ceiling for "
+                    f"userId={userId}: {currentQuota} -> {expectedQuota}. The "
+                    f"difference is NOT auto-granted; verify whether a grant "
+                    f"was missed for this user."
+                )
+
+            result = self.applyDomainCountChange(
+                userId,
+                canonicalDomains,
+                grantImmediately=False,
+            )
+            if not result["applied"]:
+                logger.warning(
+                    f"Quota drift repair deferred for userId={userId}: "
+                    f"Redis resize was unavailable"
+                )
+                return
+            logger.info(
+                f"Quota drift corrected for userId={userId}: "
+                f"{currentQuota} -> {expectedQuota} "
+                f"(domains {storedDomains} -> {canonicalDomains})"
+            )
         except Exception as e:
             logger.warning(f"syncQuotaFromConfig failed for userId={userId}: {e}")
 
