@@ -1,3 +1,4 @@
+import json
 import re
 import sys
 from pathlib import Path
@@ -5,11 +6,12 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from api.adminErrors import AdminApiError
-from api.adminModels import AdminUserPatch
+from api.adminModels import AdminSubscriptionPatch, AdminUserPatch
 from api.services.adminAuthService import AdminContext
 from api.services.adminManagementService import (
     ADMIN_USER_SELECT,
@@ -30,6 +32,18 @@ EXPECTED_USER_FIELDS = {
     "onboarded", "currentWorkspaceId", "companyName", "role", "profileBio",
     "usage", "industryType", "companySize", "country", "goals", "source",
 }
+
+EXPECTED_SUBSCRIPTION_FIELD_ORDER = (
+    "id", "user_id", "billing_mode", "current_period_start",
+    "current_period_end", "renewal_due_at", "auto_renew_enabled",
+    "payment_collection_mode", "status", "default_currency",
+    "subscribed_experts", "domain_count", "pending_removals",
+    "pending_additions", "billing_state", "razorpay_customer_id",
+    "razorpay_token_id", "subscription_anchor_day", "recurring_failures",
+    "cancellation_reason", "version", "plan_type", "created_at", "updated_at",
+)
+EXPECTED_SUBSCRIPTION_FIELDS = set(EXPECTED_SUBSCRIPTION_FIELD_ORDER)
+EXPECTED_SUBSCRIPTION_SELECT = ",".join(EXPECTED_SUBSCRIPTION_FIELD_ORDER)
 
 
 def userRow(userId="user-1", email="old@example.com", **overrides):
@@ -52,6 +66,38 @@ def userRow(userId="user-1", email="old@example.com", **overrides):
         "source": "Referral",
         "password": "must-never-leave-storage",
         "internalFlag": "private",
+    }
+    row.update(overrides)
+    return row
+
+
+def subscriptionRow(subscriptionId="sub-1", **overrides):
+    row = {
+        "id": subscriptionId,
+        "user_id": "user-1",
+        "billing_mode": "monthly_recurring",
+        "current_period_start": None,
+        "current_period_end": "2026-09-01T00:00:00+00:00",
+        "renewal_due_at": None,
+        "auto_renew_enabled": True,
+        "payment_collection_mode": "authenticated_checkout",
+        "status": "active",
+        "default_currency": "INR",
+        "subscribed_experts": ["finance", "sales"],
+        "domain_count": 2,
+        "pending_removals": [],
+        "pending_additions": [],
+        "billing_state": {"z": 1, "lifecycle_snapshot": {}, "a": 2},
+        "razorpay_customer_id": "cust-1",
+        "razorpay_token_id": "token-1",
+        "subscription_anchor_day": 1,
+        "recurring_failures": 0,
+        "cancellation_reason": None,
+        "version": 7,
+        "plan_type": "pro",
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "updated_at": "2026-08-01T00:00:00+00:00",
+        "provider_secret": "must-never-leave-storage",
     }
     row.update(overrides)
     return row
@@ -120,6 +166,12 @@ class FakeQuery:
             row for row in self.client.rows[self.tableName]
             if self._matches(row)
         ]
+        if (
+            self.operation == "update"
+            and self.tableName == "subscriptions"
+            and self.client.forceEmptySubscriptionUpdate
+        ):
+            matching = []
         if self.orderColumn is not None:
             matching.sort(key=lambda row: str(row.get(self.orderColumn, "")))
         if self.rangeBounds is not None:
@@ -164,8 +216,12 @@ class FakeQuery:
 
 
 class FakeClient:
-    def __init__(self, users):
-        self.rows = {"Users": list(users), "Sessions": []}
+    def __init__(self, users, subscriptions=None):
+        self.rows = {
+            "Users": list(users),
+            "subscriptions": list(subscriptions or []),
+            "Sessions": [],
+        }
         self.selects = {}
         self.ranges = {}
         self.updates = []
@@ -173,6 +229,7 @@ class FakeClient:
         self.ilikePatterns = []
         self.failNextUsersUpdate = False
         self.failSessionDelete = False
+        self.forceEmptySubscriptionUpdate = False
         self.auth = SimpleNamespace(
             admin=SimpleNamespace(update_user_by_id=MagicMock())
         )
@@ -191,6 +248,12 @@ class FakeClient:
     def deletedFilters(self, tableName):
         return next(
             filters for table, filters in reversed(self.deletes)
+            if table == tableName
+        )
+
+    def lastUpdateFilters(self, tableName):
+        return next(
+            filters for table, _payload, filters in reversed(self.updates)
             if table == tableName
         )
 
@@ -498,3 +561,313 @@ def test_update_user_writes_redacted_success_audit_with_sorted_field_names():
     assert "New Name" not in renderedLogs
     assert "Owner" not in renderedLogs
     assert "secret-admin-token" not in renderedLogs
+
+
+def test_list_subscriptions_batches_selects_exact_fields_and_json_encodes_jsonb():
+    rows = [
+        subscriptionRow(
+            f"sub-{index:04d}",
+            billing_state={"lifecycle_snapshot": {}},
+        )
+        for index in range(1002)
+    ]
+    client = FakeClient([], rows)
+
+    subscriptions = AdminManagementService(client=client).listSubscriptions()
+
+    first = subscriptions[0]
+    assert len(subscriptions) == 1002
+    assert set(first) == EXPECTED_SUBSCRIPTION_FIELDS
+    assert tuple(first) == EXPECTED_SUBSCRIPTION_FIELD_ORDER
+    assert first["subscribed_experts"] == '["finance","sales"]'
+    assert first["pending_removals"] == "[]"
+    assert first["pending_additions"] == "[]"
+    assert first["billing_state"] == '{"lifecycle_snapshot":{}}'
+    assert first["current_period_start"] is None
+    assert client.selects["subscriptions"] == [
+        EXPECTED_SUBSCRIPTION_SELECT,
+        EXPECTED_SUBSCRIPTION_SELECT,
+    ]
+    assert client.ranges["subscriptions"] == [(0, 999), (1000, 1999)]
+
+
+def test_list_subscriptions_uses_compact_deterministic_json_and_excludes_secrets():
+    client = FakeClient([], [subscriptionRow()])
+
+    result = AdminManagementService(client=client).listSubscriptions()[0]
+
+    assert result["billing_state"] == (
+        '{"a":2,"lifecycle_snapshot":{},"z":1}'
+    )
+    assert "provider_secret" not in result
+
+
+@pytest.mark.parametrize("raw", ["not-json", "{}", '["", "sales"]', "[1, 2]"])
+def test_subscription_patch_rejects_malformed_experts(raw):
+    client = FakeClient([], [subscriptionRow()])
+    credits = MagicMock()
+
+    with pytest.raises(AdminApiError) as error:
+        AdminManagementService(client=client, creditService=credits).updateSubscription(
+            "sub-1",
+            AdminSubscriptionPatch.model_validate({"subscribed_experts": raw}),
+            ADMIN_CONTEXT,
+        )
+
+    assert error.value.statusCode == 422
+    assert "subscribed_experts" in error.value.errors
+    assert client.updates == []
+    credits.applyDomainCountChange.assert_not_called()
+
+
+def test_experts_are_trimmed_deduplicated_and_count_is_derived():
+    client = FakeClient([], [subscriptionRow()])
+    credits = MagicMock()
+    patchPayload = AdminSubscriptionPatch.model_validate({
+        "subscribed_experts": '[" Finance ", "finance", "Sales"]'
+    })
+
+    AdminManagementService(client=client, creditService=credits).updateSubscription(
+        "sub-1", patchPayload, ADMIN_CONTEXT
+    )
+
+    payload = client.lastUpdate("subscriptions")
+    assert payload["subscribed_experts"] == ["Finance", "Sales"]
+    assert payload["domain_count"] == 2
+    credits.applyDomainCountChange.assert_called_once_with(
+        userId="user-1", domainCount=2, grantImmediately=False
+    )
+
+
+@pytest.mark.parametrize(("experts", "expectedCount"), [([], 0), (["a", "b", "c", "d"], 4)])
+def test_subscription_expert_count_accepts_zero_through_four(experts, expectedCount):
+    client = FakeClient([], [subscriptionRow()])
+    credits = MagicMock()
+    rawExperts = json.dumps(experts)
+
+    AdminManagementService(client=client, creditService=credits).updateSubscription(
+        "sub-1",
+        AdminSubscriptionPatch.model_validate({"subscribed_experts": rawExperts}),
+        ADMIN_CONTEXT,
+    )
+
+    assert client.lastUpdate("subscriptions")["domain_count"] == expectedCount
+
+
+@pytest.mark.parametrize(("domainCount", "experts"), [(0, []), (4, ["a", "b", "c", "d"])])
+def test_subscription_domain_count_accepts_zero_and_four(domainCount, experts):
+    client = FakeClient([], [subscriptionRow(subscribed_experts=experts)])
+
+    AdminManagementService(client=client, creditService=MagicMock()).updateSubscription(
+        "sub-1",
+        AdminSubscriptionPatch.model_validate({"domain_count": domainCount}),
+        ADMIN_CONTEXT,
+    )
+
+    assert client.lastUpdate("subscriptions")["domain_count"] == domainCount
+
+
+@pytest.mark.parametrize("domainCount", [-1, 5])
+def test_subscription_domain_count_rejects_values_outside_zero_to_four(domainCount):
+    with pytest.raises(ValidationError):
+        AdminSubscriptionPatch.model_validate({"domain_count": domainCount})
+
+
+def test_subscription_expert_count_rejects_more_than_four_without_writes():
+    client = FakeClient([], [subscriptionRow()])
+    credits = MagicMock()
+
+    with pytest.raises(AdminApiError) as error:
+        AdminManagementService(client=client, creditService=credits).updateSubscription(
+            "sub-1",
+            AdminSubscriptionPatch.model_validate({
+                "subscribed_experts": '["a","b","c","d","e"]'
+            }),
+            ADMIN_CONTEXT,
+        )
+
+    assert error.value.statusCode == 422
+    assert "subscribed_experts" in error.value.errors
+    assert client.updates == []
+
+
+def test_conflicting_domain_count_returns_422_without_writes():
+    client = FakeClient([], [subscriptionRow()])
+    credits = MagicMock()
+    patchPayload = AdminSubscriptionPatch.model_validate({
+        "subscribed_experts": '["Finance", "Sales"]', "domain_count": 3
+    })
+
+    with pytest.raises(AdminApiError) as error:
+        AdminManagementService(client=client, creditService=credits).updateSubscription(
+            "sub-1", patchPayload, ADMIN_CONTEXT
+        )
+
+    assert error.value.statusCode == 422
+    assert "domain_count" in error.value.errors
+    assert client.updates == []
+    credits.applyDomainCountChange.assert_not_called()
+
+
+def test_domain_count_alone_repairs_stored_count_only_when_it_matches_experts():
+    client = FakeClient([], [subscriptionRow(domain_count=1)])
+    credits = MagicMock()
+
+    result = AdminManagementService(client=client, creditService=credits).updateSubscription(
+        "sub-1",
+        AdminSubscriptionPatch.model_validate({"domain_count": 2}),
+        ADMIN_CONTEXT,
+    )
+
+    assert client.lastUpdate("subscriptions")["domain_count"] == 2
+    assert result["domain_count"] == 2
+    credits.applyDomainCountChange.assert_called_once_with(
+        userId="user-1", domainCount=2, grantImmediately=False
+    )
+
+
+def test_domain_count_alone_rejects_mismatch_with_current_experts():
+    client = FakeClient([], [subscriptionRow()])
+    credits = MagicMock()
+
+    with pytest.raises(AdminApiError) as error:
+        AdminManagementService(client=client, creditService=credits).updateSubscription(
+            "sub-1",
+            AdminSubscriptionPatch.model_validate({"domain_count": 1}),
+            ADMIN_CONTEXT,
+        )
+
+    assert error.value.statusCode == 422
+    assert "domain_count" in error.value.errors
+    assert client.updates == []
+
+
+def test_subscription_update_returns_404_without_writes_or_side_effects():
+    client = FakeClient([], [])
+    credits = MagicMock()
+
+    with pytest.raises(AdminApiError) as error:
+        AdminManagementService(client=client, creditService=credits).updateSubscription(
+            "missing",
+            AdminSubscriptionPatch.model_validate({"status": "expired"}),
+            ADMIN_CONTEXT,
+        )
+
+    assert error.value.statusCode == 404
+    assert client.updates == []
+    credits.applyDomainCountChange.assert_not_called()
+
+
+def test_status_change_derives_plan_revokes_sessions_and_does_not_call_billing():
+    client = FakeClient([], [subscriptionRow()])
+    client.rows["Sessions"] = [
+        {"id": "session-1", "userId": "user-1"},
+        {"id": "session-2", "userId": "user-2"},
+    ]
+    credits = MagicMock()
+    razorpay = MagicMock()
+
+    result = AdminManagementService(client=client, creditService=credits).updateSubscription(
+        "sub-1",
+        AdminSubscriptionPatch.model_validate({"status": "expired"}),
+        ADMIN_CONTEXT,
+    )
+
+    assert client.lastUpdate("subscriptions")["plan_type"] == "pro"
+    assert client.deletedFilters("Sessions") == [("userId", "user-1")]
+    assert result["status"] == "expired"
+    assert razorpay.mock_calls == []
+
+
+def test_subscription_update_uses_id_and_version_and_increments_version():
+    client = FakeClient([], [subscriptionRow(version=12)])
+
+    result = AdminManagementService(
+        client=client, creditService=MagicMock()
+    ).updateSubscription(
+        "sub-1",
+        AdminSubscriptionPatch.model_validate({"status": "paused"}),
+        ADMIN_CONTEXT,
+    )
+
+    assert client.lastUpdateFilters("subscriptions") == [
+        ("id", "sub-1"), ("version", 12)
+    ]
+    assert client.lastUpdate("subscriptions")["version"] == 13
+    assert "updated_at" in client.lastUpdate("subscriptions")
+    assert set(client.lastUpdate("subscriptions")) == {
+        "status", "plan_type", "updated_at", "version"
+    }
+    assert client.selects["subscriptions"] == [EXPECTED_SUBSCRIPTION_SELECT]
+    assert result["version"] == 13
+
+
+def test_version_conflict_returns_409_without_side_effects():
+    client = FakeClient([], [subscriptionRow()])
+    client.forceEmptySubscriptionUpdate = True
+    credits = MagicMock()
+
+    with pytest.raises(AdminApiError) as error:
+        AdminManagementService(client=client, creditService=credits).updateSubscription(
+            "sub-1",
+            AdminSubscriptionPatch.model_validate({"status": "active"}),
+            ADMIN_CONTEXT,
+        )
+
+    assert error.value.statusCode == 409
+    assert client.deletes == []
+    credits.applyDomainCountChange.assert_not_called()
+
+
+def test_subscription_credit_failure_is_generic_redacted_and_retry_repairs_it():
+    client = FakeClient([], [subscriptionRow()])
+    credits = MagicMock()
+    credits.applyDomainCountChange.side_effect = RuntimeError(
+        "redis failed for user-1 with secret-credit-value"
+    )
+    auditLogger = FakeLogger()
+    service = AdminManagementService(client=client, creditService=credits)
+    patchPayload = AdminSubscriptionPatch.model_validate({
+        "subscribed_experts": '["Finance"]'
+    })
+
+    with patch("api.services.adminManagementService.logger", auditLogger):
+        with pytest.raises(AdminApiError) as firstAttempt:
+            service.updateSubscription("sub-1", patchPayload, ADMIN_CONTEXT)
+
+        assert firstAttempt.value.statusCode == 500
+        assert firstAttempt.value.message == "Failed to update subscription"
+        assert client.rows["subscriptions"][0]["domain_count"] == 1
+        assert any(record[2]["outcome"] == "side_effect_failed" for record in auditLogger.records)
+        assert "secret-credit-value" not in repr(auditLogger.records)
+
+        credits.applyDomainCountChange.side_effect = None
+        result = service.updateSubscription("sub-1", patchPayload, ADMIN_CONTEXT)
+
+    assert result["domain_count"] == 1
+    assert credits.applyDomainCountChange.call_count == 2
+
+
+def test_subscription_session_failure_is_generic_and_retry_repairs_it():
+    client = FakeClient([], [subscriptionRow()])
+    client.rows["Sessions"] = [{"id": "session-1", "userId": "user-1"}]
+    client.failSessionDelete = True
+    auditLogger = FakeLogger()
+    service = AdminManagementService(client=client, creditService=MagicMock())
+    patchPayload = AdminSubscriptionPatch.model_validate({"status": "expired"})
+
+    with patch("api.services.adminManagementService.logger", auditLogger):
+        with pytest.raises(AdminApiError) as firstAttempt:
+            service.updateSubscription("sub-1", patchPayload, ADMIN_CONTEXT)
+
+    assert firstAttempt.value.statusCode == 500
+    assert firstAttempt.value.message == "Failed to update subscription"
+    assert any(row["userId"] == "user-1" for row in client.rows["Sessions"])
+    assert any(record[2]["outcome"] == "side_effect_failed" for record in auditLogger.records)
+    assert "secret-session-value" not in repr(auditLogger.records)
+
+    client.failSessionDelete = False
+    result = service.updateSubscription("sub-1", patchPayload, ADMIN_CONTEXT)
+
+    assert result["status"] == "expired"
+    assert all(row["userId"] != "user-1" for row in client.rows["Sessions"])
