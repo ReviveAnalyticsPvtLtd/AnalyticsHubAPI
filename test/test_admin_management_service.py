@@ -80,6 +80,7 @@ class FakeQuery:
 
     def ilike(self, field, value):
         self.filters.append(("ilike", field, value))
+        self.client.ilikePatterns.append((self.tableName, field, value))
         return self
 
     def neq(self, field, value):
@@ -148,8 +149,7 @@ class FakeQuery:
             if operation == "neq" and actual == value:
                 return False
             if operation == "ilike":
-                pattern = re.escape(str(value)).replace(r"\%", ".*").replace(r"\_", ".")
-                if re.fullmatch(pattern, str(actual), re.IGNORECASE) is None:
+                if not postgresIlikeMatches(str(actual), str(value)):
                     return False
         return True
 
@@ -170,6 +170,7 @@ class FakeClient:
         self.ranges = {}
         self.updates = []
         self.deletes = []
+        self.ilikePatterns = []
         self.failNextUsersUpdate = False
         self.failSessionDelete = False
         self.auth = SimpleNamespace(
@@ -212,6 +213,26 @@ class FakeLogger:
 
     def bind(self, **context):
         return FakeBoundLogger(self, context)
+
+
+def postgresIlikeMatches(value, pattern):
+    regexParts = []
+    escaped = False
+    for character in pattern:
+        if escaped:
+            regexParts.append(re.escape(character))
+            escaped = False
+        elif character == "\\":
+            escaped = True
+        elif character == "%":
+            regexParts.append(".*")
+        elif character == "_":
+            regexParts.append(".")
+        else:
+            regexParts.append(re.escape(character))
+    if escaped:
+        raise AssertionError("Invalid trailing ILIKE escape")
+    return re.fullmatch("".join(regexParts), value, re.IGNORECASE) is not None
 
 
 def test_list_users_batches_and_never_selects_sensitive_fields():
@@ -288,6 +309,38 @@ def test_update_user_rejects_case_insensitive_duplicate_email():
     assert captured.value.message == "A user with this email already exists"
     client.auth.admin.update_user_by_id.assert_not_called()
     assert client.updates == []
+
+
+@pytest.mark.parametrize(("requestedEmail", "similarEmail", "expectedPattern"), [
+    (
+        "first_last@example.com",
+        "firstXlast@example.com",
+        r"first\_last@example.com",
+    ),
+    (
+        "sales%ops@example.com",
+        "sales-anything-ops@example.com",
+        r"sales\%ops@example.com",
+    ),
+])
+def test_update_user_treats_ilike_metacharacters_as_literal_email_characters(
+    requestedEmail,
+    similarEmail,
+    expectedPattern,
+):
+    client = FakeClient([
+        userRow(),
+        userRow("user-2", similarEmail),
+    ])
+
+    updated = AdminManagementService(client=client).updateUser(
+        "user-1",
+        AdminUserPatch.model_validate({"email": requestedEmail}),
+        ADMIN_CONTEXT,
+    )
+
+    assert updated["email"] == requestedEmail
+    assert client.ilikePatterns == [("Users", "email", expectedPattern)]
 
 
 def test_email_update_user_syncs_auth_confirms_and_revokes_product_sessions():
@@ -387,6 +440,32 @@ def test_update_user_returns_generic_500_when_session_deletion_fails():
         for record in auditLogger.records
     )
     assert "secret-session-value" not in repr(auditLogger.records)
+
+
+def test_update_user_retry_reattempts_session_deletion_without_repeating_auth_change():
+    client = FakeClient([userRow()])
+    client.rows["Sessions"] = [
+        {"id": "session-1", "userId": "user-1"},
+        {"id": "session-2", "userId": "user-2"},
+    ]
+    client.failSessionDelete = True
+    service = AdminManagementService(client=client)
+    patchPayload = AdminUserPatch.model_validate({"email": "new@example.com"})
+
+    with pytest.raises(AdminApiError) as firstAttempt:
+        service.updateUser("user-1", patchPayload, ADMIN_CONTEXT)
+
+    assert firstAttempt.value.statusCode == 500
+    assert client.auth.admin.update_user_by_id.call_count == 1
+    assert any(row["userId"] == "user-1" for row in client.rows["Sessions"])
+
+    client.failSessionDelete = False
+    updated = service.updateUser("user-1", patchPayload, ADMIN_CONTEXT)
+
+    assert updated["email"] == "new@example.com"
+    assert client.auth.admin.update_user_by_id.call_count == 1
+    assert client.deletedFilters("Sessions") == [("userId", "user-1")]
+    assert all(row["userId"] != "user-1" for row in client.rows["Sessions"])
 
 
 def test_update_user_writes_redacted_success_audit_with_sorted_field_names():

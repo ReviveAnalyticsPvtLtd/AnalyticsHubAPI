@@ -20,6 +20,10 @@ def _serializeUser(row: dict) -> dict:
     return result
 
 
+def _escapeIlikeLiteral(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 class AdminManagementService:
     def __init__(self, client=None):
         self._client = client
@@ -68,8 +72,9 @@ class AdminManagementService:
 
         existingUser = existingRows[0]
         oldEmail = existingUser["email"]
+        emailSupplied = "email" in updatePayload
         emailChanged = (
-            "email" in updatePayload
+            emailSupplied
             and updatePayload["email"] != str(oldEmail).strip().lower()
         )
 
@@ -78,7 +83,7 @@ class AdminManagementService:
                 duplicateRows = (
                     self.client.table("Users")
                     .select("userId")
-                    .ilike("email", updatePayload["email"])
+                    .ilike("email", _escapeIlikeLiteral(updatePayload["email"]))
                     .neq("userId", userId)
                     .execute().data
                 )
@@ -125,7 +130,7 @@ class AdminManagementService:
             self._auditUserUpdate(admin, userId, changedFields, "failed")
             raise AdminApiError(500, "Failed to update user") from exc
 
-        if emailChanged:
+        if emailSupplied:
             try:
                 (
                     self.client.table("Sessions")
