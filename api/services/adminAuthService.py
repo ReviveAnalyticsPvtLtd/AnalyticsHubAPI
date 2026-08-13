@@ -25,6 +25,33 @@ ADMIN_LAST_USED_WRITE_INTERVAL = timedelta(minutes=5)
 ADMIN_EMAIL_FAILURE_LIMIT = 5
 ADMIN_IP_FAILURE_LIMIT = 20
 ADMIN_THROTTLE_WINDOW_SECONDS = 15 * 60
+ADMIN_TOKEN_SECONDS = ADMIN_TOKEN_HOURS * 60 * 60
+
+_ADMIN_THROTTLE_ADMIT_SCRIPT = """-- admin-login-admit
+local count = redis.call('INCR', KEYS[1])
+local ttl = redis.call('TTL', KEYS[1])
+if ttl < 0 then
+    redis.call('EXPIRE', KEYS[1], ARGV[2])
+end
+if count > tonumber(ARGV[1]) then
+    redis.call('DECR', KEYS[1])
+    return 0
+end
+return 1
+"""
+
+_ADMIN_THROTTLE_RELEASE_SCRIPT = """-- admin-login-release
+local count = tonumber(redis.call('GET', KEYS[1]) or '0')
+if count <= 1 then
+    redis.call('DEL', KEYS[1])
+    return 1
+end
+redis.call('DECR', KEYS[1])
+if redis.call('TTL', KEYS[1]) < 0 then
+    redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+return 1
+"""
 
 
 def _tokenDigest(token: str) -> str:
@@ -129,8 +156,15 @@ class AdminAuthService:
         rateIp = str(clientIp).strip()
         emailRateKey = f"admin:login:email:{_rateIdentity(rateEmail)}"
         ipRateKey = f"admin:login:ip:{_rateIdentity(rateIp)}"
-        self._requireBelowThrottleLimit(emailRateKey, ADMIN_EMAIL_FAILURE_LIMIT)
-        self._requireBelowThrottleLimit(ipRateKey, ADMIN_IP_FAILURE_LIMIT)
+        emailReserved = self._admitLoginAttempt(
+            emailRateKey, ADMIN_EMAIL_FAILURE_LIMIT
+        )
+        try:
+            ipReserved = self._admitLoginAttempt(ipRateKey, ADMIN_IP_FAILURE_LIMIT)
+        except AdminApiError:
+            if emailReserved:
+                self._releaseLoginAttempt(emailRateKey)
+            raise
 
         secret = self._adminJwtSecret()
         try:
@@ -156,8 +190,6 @@ class AdminAuthService:
             passwordValid, replacementHash = False, None
 
         if not admin or not admin.get("is_active") or not passwordValid:
-            self._recordLoginFailure(emailRateKey)
-            self._recordLoginFailure(ipRateKey)
             raise AdminApiError(401, "Invalid credentials")
 
         now = _asUtc(self.nowProvider())
@@ -197,6 +229,10 @@ class AdminAuthService:
             logger.error("Admin login persistence failed: {}", type(exc).__name__)
             raise AdminApiError(500, "Admin authentication is unavailable") from exc
 
+        self._clearLoginFailures(emailRateKey)
+        if ipReserved:
+            self._releaseLoginAttempt(ipRateKey)
+
         return {
             "token": token,
             "admin": {
@@ -216,11 +252,32 @@ class AdminAuthService:
                 algorithms=["HS256"],
                 audience=ADMIN_TOKEN_AUDIENCE,
                 issuer=ADMIN_TOKEN_ISSUER,
+                options={
+                    "require_sub": True,
+                    "require_jti": True,
+                    "require_type": True,
+                    "require_iss": True,
+                    "require_aud": True,
+                    "require_iat": True,
+                    "require_exp": True,
+                },
             )
-            if payload.get("type") != "admin":
-                raise ValueError("wrong token type")
-            adminId = str(uuid.UUID(str(payload["sub"])))
-            sessionId = str(uuid.UUID(str(payload["jti"])))
+            if (
+                type(payload["sub"]) is not str
+                or type(payload["jti"]) is not str
+                or type(payload["type"]) is not str
+                or type(payload["iss"]) is not str
+                or type(payload["aud"]) is not str
+                or type(payload["iat"]) is not int
+                or type(payload["exp"]) is not int
+                or payload["type"] != "admin"
+                or payload["iss"] != ADMIN_TOKEN_ISSUER
+                or payload["aud"] != ADMIN_TOKEN_AUDIENCE
+                or payload["exp"] - payload["iat"] != ADMIN_TOKEN_SECONDS
+            ):
+                raise ValueError("invalid admin claims")
+            adminId = str(uuid.UUID(payload["sub"]))
+            sessionId = str(uuid.UUID(payload["jti"]))
         except (JWTError, KeyError, TypeError, ValueError) as exc:
             raise AdminApiError(401, "Invalid or expired admin session") from exc
 
@@ -250,7 +307,8 @@ class AdminAuthService:
         now = _asUtc(self.nowProvider())
         try:
             expiresAt = _parseTimestamp(session["expires_at"])
-            lastUsedAt = _parseTimestamp(session["last_used_at"])
+            observedLastUsedAt = session["last_used_at"]
+            lastUsedAt = _parseTimestamp(observedLastUsedAt)
         except (KeyError, TypeError, ValueError) as exc:
             raise AdminApiError(401, "Invalid or expired admin session") from exc
 
@@ -271,7 +329,9 @@ class AdminAuthService:
             try:
                 self.client.table("admin_sessions").update({
                     "last_used_at": now.isoformat()
-                }).eq("id", sessionId).execute()
+                }).eq("id", sessionId).eq(
+                    "last_used_at", observedLastUsedAt
+                ).execute()
             except Exception as exc:
                 logger.error("Admin session activity update failed: {}", type(exc).__name__)
 
@@ -308,22 +368,38 @@ class AdminAuthService:
             raise AdminApiError(500, "Admin authentication is unavailable")
         return secret
 
-    def _requireBelowThrottleLimit(self, key: str, limit: int) -> None:
+    def _admitLoginAttempt(self, key: str, limit: int) -> bool:
         try:
-            count = int(self.redisClient.get(key) or 0)
+            admitted = self.redisClient.eval(
+                _ADMIN_THROTTLE_ADMIT_SCRIPT,
+                1,
+                key,
+                limit,
+                ADMIN_THROTTLE_WINDOW_SECONDS,
+            )
         except Exception as exc:
-            logger.warning("Admin login throttle read failed: {}", type(exc).__name__)
-            return
-        if count >= limit:
+            logger.warning("Admin login throttle admission failed: {}", type(exc).__name__)
+            return False
+        if int(admitted) != 1:
             raise AdminApiError(429, "Too many login attempts. Try again later")
+        return True
 
-    def _recordLoginFailure(self, key: str) -> None:
+    def _releaseLoginAttempt(self, key: str) -> None:
         try:
-            count = self.redisClient.incr(key)
-            if count == 1:
-                self.redisClient.expire(key, ADMIN_THROTTLE_WINDOW_SECONDS)
+            self.redisClient.eval(
+                _ADMIN_THROTTLE_RELEASE_SCRIPT,
+                1,
+                key,
+                ADMIN_THROTTLE_WINDOW_SECONDS,
+            )
         except Exception as exc:
-            logger.warning("Admin login throttle write failed: {}", type(exc).__name__)
+            logger.warning("Admin login throttle release failed: {}", type(exc).__name__)
+
+    def _clearLoginFailures(self, key: str) -> None:
+        try:
+            self.redisClient.delete(key)
+        except Exception as exc:
+            logger.warning("Admin login throttle cleanup failed: {}", type(exc).__name__)
 
 
 def _isUniqueViolation(exception: Exception) -> bool:

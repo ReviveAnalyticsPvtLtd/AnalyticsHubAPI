@@ -1,6 +1,8 @@
 import hashlib
 import sys
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -108,8 +110,13 @@ class FakeAdminClient:
 class FakeRedis:
     def __init__(self):
         self.counters = {}
+        self.ttls = {}
         self.calls = []
         self.raiseOnAccess = False
+        self.raiseOnDelete = False
+        self.readBarrier = None
+        self.readBarrierKey = None
+        self._lock = threading.Lock()
 
     def _guard(self):
         if self.raiseOnAccess:
@@ -118,7 +125,10 @@ class FakeRedis:
     def get(self, key):
         self._guard()
         self.calls.append(("get", key))
-        return self.counters.get(key)
+        value = self.counters.get(key)
+        if self.readBarrier is not None and key == self.readBarrierKey:
+            self.readBarrier.wait(timeout=5)
+        return value
 
     def incr(self, key):
         self._guard()
@@ -129,7 +139,45 @@ class FakeRedis:
     def expire(self, key, seconds):
         self._guard()
         self.calls.append(("expire", key, seconds))
+        self.ttls[key] = seconds
         return True
+
+    def delete(self, key):
+        self._guard()
+        if self.raiseOnDelete:
+            raise ConnectionError("delete failed; secret=must-not-be-logged")
+        self.calls.append(("delete", key))
+        self.counters.pop(key, None)
+        self.ttls.pop(key, None)
+        return 1
+
+    def eval(self, script, keyCount, key, *arguments):
+        self._guard()
+        assert keyCount == 1
+        with self._lock:
+            self.calls.append(("eval", key, *arguments))
+            if script.startswith("-- admin-login-admit"):
+                limit, window = map(int, arguments)
+                count = self.counters.get(key, 0) + 1
+                self.counters[key] = count
+                if self.ttls.get(key, -1) < 0:
+                    self.ttls[key] = window
+                if count > limit:
+                    self.counters[key] -= 1
+                    return 0
+                return 1
+            if script.startswith("-- admin-login-release"):
+                window = int(arguments[0])
+                count = self.counters.get(key, 0)
+                if count <= 1:
+                    self.counters.pop(key, None)
+                    self.ttls.pop(key, None)
+                else:
+                    self.counters[key] = count - 1
+                    if self.ttls.get(key, -1) < 0:
+                        self.ttls[key] = window
+                return 1
+            raise AssertionError("Unexpected Lua script")
 
 
 @pytest.fixture(scope="module")
@@ -181,6 +229,36 @@ def assertUnauthorized(call):
     with pytest.raises(AdminApiError) as captured:
         call()
     assert captured.value.statusCode == 401
+
+
+def persistTokenSession(authFixture, claims):
+    token = jwt.encode(claims, ADMIN_SECRET, algorithm="HS256")
+    sessionId = claims.get("jti")
+    if isinstance(sessionId, str):
+        authFixture.client.rows["admin_sessions"].append({
+            "id": sessionId,
+            "admin_id": ADMIN_ID,
+            "token_hash": hashlib.sha256(token.encode("utf-8")).hexdigest(),
+            "created_at": FIXED_NOW.isoformat(),
+            "expires_at": (FIXED_NOW + timedelta(hours=8)).isoformat(),
+            "revoked_at": None,
+            "last_used_at": FIXED_NOW.isoformat(),
+        })
+    return token
+
+
+def validClaims(**overrides):
+    claims = {
+        "sub": ADMIN_ID,
+        "jti": str(uuid.uuid4()),
+        "type": "admin",
+        "iss": "nubrix-admin",
+        "aud": "nubrix-admin-api",
+        "iat": int(FIXED_NOW.timestamp()),
+        "exp": int((FIXED_NOW + timedelta(hours=8)).timestamp()),
+    }
+    claims.update(overrides)
+    return claims
 
 
 def test_login_issues_eight_hour_admin_token_and_persists_only_digest(authFixture):
@@ -271,6 +349,92 @@ def test_login_rehashes_and_persists_an_outdated_password(monkeypatch):
     replacement = admin["password_hash"]
     assert replacement != oldHash
     assert recommended.verify(VALID_PASSWORD, replacement)
+
+
+def test_successful_login_clears_only_the_email_failure_counter(authFixture):
+    emailKey = "admin:login:email:" + hashlib.sha256(
+        b"admin@example.com"
+    ).hexdigest()
+    ipKey = "admin:login:ip:" + hashlib.sha256(b"203.0.113.10").hexdigest()
+    authFixture.redis.counters[emailKey] = 3
+    authFixture.redis.counters[ipKey] = 3
+
+    authFixture.service.login(
+        "admin@example.com", VALID_PASSWORD, "203.0.113.10"
+    )
+
+    assert emailKey not in authFixture.redis.counters
+    assert authFixture.redis.counters[ipKey] == 3
+    assert ("delete", emailKey) in authFixture.redis.calls
+
+
+def test_successful_login_counter_cleanup_fails_open_with_redacted_log(authFixture):
+    authFixture.redis.raiseOnDelete = True
+    with patch("api.services.adminAuthService.logger.warning") as warning:
+        response = authFixture.service.login(
+            "admin@example.com", VALID_PASSWORD, "203.0.113.10"
+        )
+
+    assert response["token"]
+    assert warning.call_count == 1
+    loggedArguments = repr(warning.call_args_list)
+    assert "admin@example.com" not in loggedArguments
+    assert "203.0.113.10" not in loggedArguments
+    assert VALID_PASSWORD not in loggedArguments
+    assert "must-not-be-logged" not in loggedArguments
+
+
+@pytest.mark.parametrize("missingClaim", ["sub", "jti", "type", "iss", "aud", "iat", "exp"])
+def test_verify_requires_every_admin_claim(authFixture, missingClaim):
+    claims = validClaims()
+    del claims[missingClaim]
+    token = persistTokenSession(authFixture, claims)
+
+    assertUnauthorized(lambda: authFixture.service.verifyToken(token))
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"sub": 7},
+        {"jti": 7},
+        {"type": ["admin"]},
+        {"iss": ["nubrix-admin"]},
+        {"iat": str(int(FIXED_NOW.timestamp()))},
+        {"exp": float(int((FIXED_NOW + timedelta(hours=8)).timestamp()))},
+    ],
+)
+def test_verify_rejects_malformed_admin_claim_types(authFixture, overrides):
+    token = persistTokenSession(authFixture, validClaims(**overrides))
+    assertUnauthorized(lambda: authFixture.service.verifyToken(token))
+
+
+def test_verify_rejects_non_exact_lifetime_and_audience_list(authFixture):
+    oneHourToken = persistTokenSession(
+        authFixture,
+        validClaims(exp=int((FIXED_NOW + timedelta(hours=1)).timestamp())),
+    )
+    audienceListToken = persistTokenSession(
+        authFixture,
+        validClaims(aud=["nubrix-admin-api"]),
+    )
+
+    assertUnauthorized(lambda: authFixture.service.verifyToken(oneHourToken))
+    assertUnauthorized(lambda: authFixture.service.verifyToken(audienceListToken))
+
+
+def test_verify_rejects_genuinely_expired_jwt_with_matching_database_session(authFixture):
+    actualNow = datetime.now(timezone.utc)
+    token = persistTokenSession(authFixture, validClaims(
+        iat=int((actualNow - timedelta(hours=9)).timestamp()),
+        exp=int((actualNow - timedelta(hours=1)).timestamp()),
+    ))
+    assert any(
+        row["id"] == jwt.get_unverified_claims(token)["jti"]
+        for row in authFixture.client.rows["admin_sessions"]
+    )
+
+    assertUnauthorized(lambda: authFixture.service.verifyToken(token))
 
 
 def test_verify_rejects_product_expired_revoked_and_hash_mismatch_tokens(authFixture):
@@ -386,6 +550,10 @@ def test_verify_suppresses_last_used_writes_for_five_minutes(authFixture):
     assert sessionUpdates[0][1] == {
         "last_used_at": authFixture.clock.current.isoformat()
     }
+    assert sessionUpdates[0][2] == (
+        ("id", authFixture.client.rows["admin_sessions"][0]["id"]),
+        ("last_used_at", FIXED_NOW.isoformat()),
+    )
 
 
 def test_throttle_limits_email_and_ip_and_redis_failure_fails_open(authFixture):
@@ -423,13 +591,9 @@ def test_throttle_uses_expiring_redacted_keys_and_logs_no_identifiers(authFixtur
     with pytest.raises(AdminApiError):
         authFixture.service.login(email, password, ip)
 
-    incrementedKeys = [call[1] for call in authFixture.redis.calls if call[0] == "incr"]
-    expiredKeys = [call[1] for call in authFixture.redis.calls if call[0] == "expire"]
-    expiryWindows = [call[2] for call in authFixture.redis.calls if call[0] == "expire"]
-    assert len(incrementedKeys) == 2
-    assert set(expiredKeys) == set(incrementedKeys)
-    assert expiryWindows == [15 * 60, 15 * 60]
-    assert all(email not in key and ip not in key for key in incrementedKeys)
+    admittedKeys = [call[1] for call in authFixture.redis.calls if call[0] == "eval"]
+    assert len(admittedKeys) == 2
+    assert all(email not in key and ip not in key for key in admittedKeys)
 
     authFixture.redis.raiseOnAccess = True
     with patch("api.services.adminAuthService.logger.warning") as warning:
@@ -440,6 +604,45 @@ def test_throttle_uses_expiring_redacted_keys_and_logs_no_identifiers(authFixtur
     assert ip not in loggedArguments
     assert password not in loggedArguments
     assert "must-not-be-logged" not in loggedArguments
+
+
+def test_throttle_atomically_admits_only_five_concurrent_email_attempts(authFixture):
+    emailKey = "admin:login:email:" + hashlib.sha256(
+        b"admin@example.com"
+    ).hexdigest()
+    authFixture.redis.readBarrierKey = emailKey
+    authFixture.redis.readBarrier = threading.Barrier(6)
+
+    def attempt(offset):
+        try:
+            authFixture.service.login(
+                "admin@example.com", "wrong-password", f"203.0.113.{offset}"
+            )
+        except AdminApiError as exc:
+            return exc.statusCode
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        statuses = list(pool.map(attempt, range(1, 7)))
+
+    assert statuses.count(401) == 5
+    assert statuses.count(429) == 1
+    assert authFixture.redis.counters[emailKey] == 5
+
+
+def test_throttle_atomic_admission_repairs_a_missing_ttl(authFixture):
+    emailKey = "admin:login:email:" + hashlib.sha256(
+        b"admin@example.com"
+    ).hexdigest()
+    authFixture.redis.counters[emailKey] = 1
+    assert emailKey not in authFixture.redis.ttls
+
+    with pytest.raises(AdminApiError) as failure:
+        authFixture.service.login(
+            "admin@example.com", "wrong-password", "203.0.113.10"
+        )
+
+    assert failure.value.statusCode == 401
+    assert authFixture.redis.ttls[emailKey] == 15 * 60
 
 
 def test_client_ip_honors_forwarding_only_from_configured_trusted_proxy(monkeypatch):
