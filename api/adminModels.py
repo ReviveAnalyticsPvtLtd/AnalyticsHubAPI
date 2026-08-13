@@ -57,7 +57,7 @@ class AdminUserPatch(_StrictModel):
 class AdminSubscriptionPatch(_StrictModel):
     status: AdminSubscriptionStatus | None = None
     subscribed_experts: str | None = None
-    domain_count: int | None = Field(default=None, ge=0, le=4)
+    domain_count: int | None = Field(default=None, ge=1, le=4)
 
     @model_validator(mode="after")
     def validatePatch(self):

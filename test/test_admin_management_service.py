@@ -642,11 +642,10 @@ def test_experts_are_trimmed_deduplicated_and_count_is_derived():
     )
 
 
-@pytest.mark.parametrize(("experts", "expectedCount"), [([], 0), (["a", "b", "c", "d"], 4)])
-def test_subscription_expert_count_accepts_zero_through_four(experts, expectedCount):
+def test_subscription_expert_count_accepts_four():
     client = FakeClient([], [subscriptionRow()])
     credits = MagicMock()
-    rawExperts = json.dumps(experts)
+    rawExperts = json.dumps(["a", "b", "c", "d"])
 
     AdminManagementService(client=client, creditService=credits).updateSubscription(
         "sub-1",
@@ -654,26 +653,64 @@ def test_subscription_expert_count_accepts_zero_through_four(experts, expectedCo
         ADMIN_CONTEXT,
     )
 
-    assert client.lastUpdate("subscriptions")["domain_count"] == expectedCount
+    assert client.lastUpdate("subscriptions")["domain_count"] == 4
 
 
-@pytest.mark.parametrize(("domainCount", "experts"), [(0, []), (4, ["a", "b", "c", "d"])])
-def test_subscription_domain_count_accepts_zero_and_four(domainCount, experts):
-    client = FakeClient([], [subscriptionRow(subscribed_experts=experts)])
+def test_subscription_domain_count_accepts_four():
+    client = FakeClient(
+        [], [subscriptionRow(subscribed_experts=["a", "b", "c", "d"])]
+    )
 
     AdminManagementService(client=client, creditService=MagicMock()).updateSubscription(
         "sub-1",
-        AdminSubscriptionPatch.model_validate({"domain_count": domainCount}),
+        AdminSubscriptionPatch.model_validate({"domain_count": 4}),
         ADMIN_CONTEXT,
     )
 
-    assert client.lastUpdate("subscriptions")["domain_count"] == domainCount
+    assert client.lastUpdate("subscriptions")["domain_count"] == 4
 
 
-@pytest.mark.parametrize("domainCount", [-1, 5])
-def test_subscription_domain_count_rejects_values_outside_zero_to_four(domainCount):
+@pytest.mark.parametrize("domainCount", [-1, 0, 5])
+def test_subscription_domain_count_rejects_values_outside_one_to_four(domainCount):
     with pytest.raises(ValidationError):
         AdminSubscriptionPatch.model_validate({"domain_count": domainCount})
+
+
+def test_subscription_service_rejects_zero_domain_count_with_flat_error_and_no_writes():
+    client = FakeClient([], [subscriptionRow()])
+    credits = MagicMock()
+    patchPayload = AdminSubscriptionPatch.model_construct(
+        _fields_set={"domain_count"}, domain_count=0
+    )
+
+    with pytest.raises(AdminApiError) as error:
+        AdminManagementService(client=client, creditService=credits).updateSubscription(
+            "sub-1", patchPayload, ADMIN_CONTEXT
+        )
+
+    assert error.value.statusCode == 422
+    assert error.value.errors == {"domain_count": "Must be between 1 and 4"}
+    assert client.updates == []
+    credits.applyDomainCountChange.assert_not_called()
+
+
+def test_subscription_service_rejects_empty_experts_with_flat_error_and_no_writes():
+    client = FakeClient([], [subscriptionRow()])
+    credits = MagicMock()
+
+    with pytest.raises(AdminApiError) as error:
+        AdminManagementService(client=client, creditService=credits).updateSubscription(
+            "sub-1",
+            AdminSubscriptionPatch.model_validate({"subscribed_experts": "[]"}),
+            ADMIN_CONTEXT,
+        )
+
+    assert error.value.statusCode == 422
+    assert error.value.errors == {
+        "subscribed_experts": "At least one expert is required"
+    }
+    assert client.updates == []
+    credits.applyDomainCountChange.assert_not_called()
 
 
 def test_subscription_expert_count_rejects_more_than_four_without_writes():

@@ -26,7 +26,13 @@ class AdminModelTests(unittest.TestCase):
             AdminUserPatch.model_validate({"onboarded": None})
 
     def test_subscription_patch_rejects_unknown_empty_null_and_bad_count(self):
-        for payload in ({}, {"billing_mode": "annual"}, {"status": None}, {"domain_count": 5}):
+        for payload in (
+            {},
+            {"billing_mode": "annual"},
+            {"status": None},
+            {"domain_count": 0},
+            {"domain_count": 5},
+        ):
             with self.subTest(payload=payload), self.assertRaises(ValidationError):
                 AdminSubscriptionPatch.model_validate(payload)
 

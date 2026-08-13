@@ -84,6 +84,12 @@ def _parseSubscribedExperts(rawValue: str) -> list[str]:
             seen.add(key)
             experts.append(expert)
 
+    if not experts:
+        raise AdminApiError(
+            422,
+            "Invalid subscription patch",
+            {"subscribed_experts": "At least one expert is required"},
+        )
     if len(experts) > 4:
         raise AdminApiError(
             422,
@@ -165,6 +171,16 @@ class AdminManagementService:
         updatePayload = patch.model_dump(include=patch.model_fields_set)
         expertsSupplied = "subscribed_experts" in patch.model_fields_set
         countSupplied = "domain_count" in patch.model_fields_set
+
+        if countSupplied and not 1 <= updatePayload["domain_count"] <= 4:
+            self._auditSubscriptionUpdate(
+                admin, subscriptionId, changedFields, "invalid"
+            )
+            raise AdminApiError(
+                422,
+                "Invalid subscription patch",
+                {"domain_count": "Must be between 1 and 4"},
+            )
 
         if expertsSupplied:
             experts = _parseSubscribedExperts(updatePayload["subscribed_experts"])
