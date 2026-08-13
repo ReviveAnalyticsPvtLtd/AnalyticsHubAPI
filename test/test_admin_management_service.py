@@ -1,3 +1,5 @@
+import builtins
+import importlib.util
 import json
 import re
 import sys
@@ -623,6 +625,7 @@ def test_subscription_patch_rejects_malformed_experts(raw):
 def test_experts_are_trimmed_deduplicated_and_count_is_derived():
     client = FakeClient([], [subscriptionRow()])
     credits = MagicMock()
+    credits.applyDomainCountChange.return_value = None
     patchPayload = AdminSubscriptionPatch.model_validate({
         "subscribed_experts": '[" Finance ", "finance", "Sales"]'
     })
@@ -758,25 +761,43 @@ def test_subscription_update_returns_404_without_writes_or_side_effects():
     credits.applyDomainCountChange.assert_not_called()
 
 
-def test_status_change_derives_plan_revokes_sessions_and_does_not_call_billing():
+def test_status_change_derives_plan_and_revokes_sessions_without_loading_billing_lifecycle():
     client = FakeClient([], [subscriptionRow()])
     client.rows["Sessions"] = [
         {"id": "session-1", "userId": "user-1"},
         {"id": "session-2", "userId": "user-2"},
     ]
     credits = MagicMock()
-    razorpay = MagicMock()
+    forbiddenModules = {
+        "razorpay",
+        "api.services.billing.billingEngine",
+        "api.services.subscriptions.subscriptionService",
+    }
+    realImport = builtins.__import__
 
-    result = AdminManagementService(client=client, creditService=credits).updateSubscription(
-        "sub-1",
-        AdminSubscriptionPatch.model_validate({"status": "expired"}),
-        ADMIN_CONTEXT,
+    def guardedImport(name, *args, **kwargs):
+        if name in forbiddenModules:
+            raise AssertionError(f"Forbidden billing lifecycle import: {name}")
+        return realImport(name, *args, **kwargs)
+
+    modulePath = Path(__file__).resolve().parents[1] / "api/services/adminManagementService.py"
+    spec = importlib.util.spec_from_file_location(
+        "admin_management_without_billing_lifecycle", modulePath
     )
+    isolatedModule = importlib.util.module_from_spec(spec)
+    with patch("builtins.__import__", side_effect=guardedImport):
+        spec.loader.exec_module(isolatedModule)
+        result = isolatedModule.AdminManagementService(
+            client=client, creditService=credits
+        ).updateSubscription(
+            "sub-1",
+            AdminSubscriptionPatch.model_validate({"status": "expired"}),
+            ADMIN_CONTEXT,
+        )
 
     assert client.lastUpdate("subscriptions")["plan_type"] == "pro"
     assert client.deletedFilters("Sessions") == [("userId", "user-1")]
     assert result["status"] == "expired"
-    assert razorpay.mock_calls == []
 
 
 def test_subscription_update_uses_id_and_version_and_increments_version():
@@ -810,7 +831,7 @@ def test_version_conflict_returns_409_without_side_effects():
     with pytest.raises(AdminApiError) as error:
         AdminManagementService(client=client, creditService=credits).updateSubscription(
             "sub-1",
-            AdminSubscriptionPatch.model_validate({"status": "active"}),
+            AdminSubscriptionPatch.model_validate({"status": "paused"}),
             ADMIN_CONTEXT,
         )
 
@@ -845,6 +866,44 @@ def test_subscription_credit_failure_is_generic_redacted_and_retry_repairs_it():
         result = service.updateSubscription("sub-1", patchPayload, ADMIN_CONTEXT)
 
     assert result["domain_count"] == 1
+    assert credits.applyDomainCountChange.call_count == 2
+
+
+def test_subscription_credit_applied_false_is_failure_and_retry_only_repairs_credit():
+    client = FakeClient([], [subscriptionRow()])
+    credits = MagicMock()
+    credits.applyDomainCountChange.side_effect = [
+        {"applied": False, "quota": 0, "delta": 0, "remaining": 0},
+        {"applied": True, "quota": 1000, "delta": 0, "remaining": 1000},
+    ]
+    auditLogger = FakeLogger()
+    service = AdminManagementService(client=client, creditService=credits)
+    patchPayload = AdminSubscriptionPatch.model_validate({
+        "subscribed_experts": '["Finance"]'
+    })
+
+    with patch("api.services.adminManagementService.logger", auditLogger):
+        with pytest.raises(AdminApiError) as firstAttempt:
+            service.updateSubscription("sub-1", patchPayload, ADMIN_CONTEXT)
+
+    assert firstAttempt.value.statusCode == 500
+    assert firstAttempt.value.message == "Failed to update subscription"
+    storedAfterFailure = dict(client.rows["subscriptions"][0])
+    assert storedAfterFailure["subscribed_experts"] == ["Finance"]
+    assert storedAfterFailure["domain_count"] == 1
+    assert storedAfterFailure["version"] == 8
+    assert len(client.updates) == 1
+    assert any(
+        record[2]["outcome"] == "side_effect_failed"
+        for record in auditLogger.records
+    )
+
+    result = service.updateSubscription("sub-1", patchPayload, ADMIN_CONTEXT)
+
+    assert result["subscribed_experts"] == '["Finance"]'
+    assert result["domain_count"] == 1
+    assert client.rows["subscriptions"][0] == storedAfterFailure
+    assert len(client.updates) == 1
     assert credits.applyDomainCountChange.call_count == 2
 
 

@@ -197,39 +197,51 @@ class AdminManagementService:
                 current.get("billing_mode"), updatePayload["status"]
             )
 
-        oldVersion = current["version"]
-        updatePayload["updated_at"] = datetime.datetime.now(
-            datetime.timezone.utc
-        ).isoformat()
-        updatePayload["version"] = oldVersion + 1
+        hasDurableChanges = any(
+            current.get(field) != value
+            for field, value in updatePayload.items()
+        )
+        if hasDurableChanges:
+            oldVersion = current["version"]
+            updatePayload["updated_at"] = datetime.datetime.now(
+                datetime.timezone.utc
+            ).isoformat()
+            updatePayload["version"] = oldVersion + 1
 
-        try:
-            updatedRows = (
-                self.client.table("subscriptions")
-                .update(updatePayload)
-                .eq("id", subscriptionId)
-                .eq("version", oldVersion)
-                .execute().data
-            )
-        except Exception as exc:
-            self._auditSubscriptionUpdate(
-                admin, subscriptionId, changedFields, "failed"
-            )
-            raise AdminApiError(500, "Failed to update subscription") from exc
+            try:
+                updatedRows = (
+                    self.client.table("subscriptions")
+                    .update(updatePayload)
+                    .eq("id", subscriptionId)
+                    .eq("version", oldVersion)
+                    .execute().data
+                )
+            except Exception as exc:
+                self._auditSubscriptionUpdate(
+                    admin, subscriptionId, changedFields, "failed"
+                )
+                raise AdminApiError(500, "Failed to update subscription") from exc
 
-        if not updatedRows:
-            self._auditSubscriptionUpdate(
-                admin, subscriptionId, changedFields, "conflict"
-            )
-            raise AdminApiError(409, "Subscription changed; reload and try again")
+            if not updatedRows:
+                self._auditSubscriptionUpdate(
+                    admin, subscriptionId, changedFields, "conflict"
+                )
+                raise AdminApiError(409, "Subscription changed; reload and try again")
+        else:
+            updatedRows = [current]
 
         try:
             if expertsSupplied or countSupplied:
-                self.creditService.applyDomainCountChange(
+                creditResult = self.creditService.applyDomainCountChange(
                     userId=current["user_id"],
                     domainCount=updatePayload["domain_count"],
                     grantImmediately=False,
                 )
+                if (
+                    isinstance(creditResult, dict)
+                    and creditResult.get("applied") is False
+                ):
+                    raise RuntimeError("Credit domain count change was not applied")
             if "status" in patch.model_fields_set:
                 (
                     self.client.table("Sessions")
