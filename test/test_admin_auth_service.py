@@ -74,6 +74,8 @@ class FakeQuery:
         return self
 
     def execute(self):
+        if self.client.failureOperation == (self.tableName, self.operation):
+            raise RuntimeError("backend unavailable; secret=must-not-be-logged")
         if self.operation == "insert":
             row = dict(self.payload)
             self.client.rows[self.tableName].append(row)
@@ -100,6 +102,7 @@ class FakeAdminClient:
         self.rows = {"admin_users": adminUsers, "admin_sessions": []}
         self.insertCalls = []
         self.updateCalls = []
+        self.failureOperation = None
 
     def table(self, name):
         if name not in self.rows:
@@ -114,6 +117,7 @@ class FakeRedis:
         self.calls = []
         self.raiseOnAccess = False
         self.raiseOnDelete = False
+        self.raiseOnRelease = False
         self.readBarrier = None
         self.readBarrierKey = None
         self._lock = threading.Lock()
@@ -154,6 +158,8 @@ class FakeRedis:
     def eval(self, script, keyCount, key, *arguments):
         self._guard()
         assert keyCount == 1
+        if self.raiseOnRelease and script.startswith("-- admin-login-release"):
+            raise ConnectionError("release failed; secret=must-not-be-logged")
         with self._lock:
             self.calls.append(("eval", key, *arguments))
             if script.startswith("-- admin-login-admit"):
@@ -259,6 +265,20 @@ def validClaims(**overrides):
     }
     claims.update(overrides)
     return claims
+
+
+def throttleKeys(email="admin@example.com", ip="203.0.113.10"):
+    return (
+        "admin:login:email:" + hashlib.sha256(email.encode("utf-8")).hexdigest(),
+        "admin:login:ip:" + hashlib.sha256(ip.encode("utf-8")).hexdigest(),
+    )
+
+
+def assertThrottleReservationsReleased(authFixture, email="admin@example.com",
+                                       ip="203.0.113.10"):
+    emailKey, ipKey = throttleKeys(email, ip)
+    assert emailKey not in authFixture.redis.counters
+    assert ipKey not in authFixture.redis.counters
 
 
 def test_login_issues_eight_hour_admin_token_and_persists_only_digest(authFixture):
@@ -676,6 +696,69 @@ def test_fastapi_dependencies_use_injected_admin_service(authFixture):
     logoutContext = verifyAdminForLogout(credentials, authFixture.service)
     assert logoutContext.sessionId == context.sessionId
     assertUnauthorized(lambda: verifyAdmin(None, authFixture.service))
+
+
+def test_missing_secret_500_releases_both_throttle_reservations(
+    authFixture, monkeypatch
+):
+    monkeypatch.delenv("ADMIN_JWT_SECRET")
+
+    with pytest.raises(AdminApiError) as captured:
+        authFixture.service.login(
+            "admin@example.com", VALID_PASSWORD, "203.0.113.10"
+        )
+
+    assert captured.value.statusCode == 500
+    assert captured.value.message == "Admin authentication is unavailable"
+    assertThrottleReservationsReleased(authFixture)
+
+
+def test_lookup_500_releases_both_throttle_reservations(authFixture):
+    authFixture.client.failureOperation = ("admin_users", "select")
+
+    with pytest.raises(AdminApiError) as captured:
+        authFixture.service.login(
+            "admin@example.com", VALID_PASSWORD, "203.0.113.10"
+        )
+
+    assert captured.value.statusCode == 500
+    assert captured.value.message == "Admin authentication is unavailable"
+    assertThrottleReservationsReleased(authFixture)
+
+
+def test_persistence_500_releases_both_throttle_reservations(authFixture):
+    authFixture.client.failureOperation = ("admin_sessions", "insert")
+
+    with pytest.raises(AdminApiError) as captured:
+        authFixture.service.login(
+            "admin@example.com", VALID_PASSWORD, "203.0.113.10"
+        )
+
+    assert captured.value.statusCode == 500
+    assert captured.value.message == "Admin authentication is unavailable"
+    assertThrottleReservationsReleased(authFixture)
+
+
+def test_throttle_rollback_failure_does_not_mask_original_error_or_log_secrets(
+    authFixture
+):
+    authFixture.client.failureOperation = ("admin_users", "select")
+    authFixture.redis.raiseOnRelease = True
+
+    with patch("api.services.adminAuthService.logger.warning") as warning:
+        with pytest.raises(AdminApiError) as captured:
+            authFixture.service.login(
+                "admin@example.com", VALID_PASSWORD, "203.0.113.10"
+            )
+
+    assert captured.value.statusCode == 500
+    assert captured.value.message == "Admin authentication is unavailable"
+    assert warning.call_count == 2
+    loggedArguments = repr(warning.call_args_list)
+    assert "admin@example.com" not in loggedArguments
+    assert "203.0.113.10" not in loggedArguments
+    assert VALID_PASSWORD not in loggedArguments
+    assert "must-not-be-logged" not in loggedArguments
 
 
 def test_admin_secret_never_falls_back_to_product_secret(authFixture, monkeypatch):

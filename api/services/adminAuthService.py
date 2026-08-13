@@ -166,6 +166,28 @@ class AdminAuthService:
                 self._releaseLoginAttempt(emailRateKey)
             raise
 
+        try:
+            response = self._authenticateAndPersist(normalizedEmail, password)
+        except AdminApiError as exc:
+            if exc.statusCode != 401:
+                if emailReserved:
+                    self._releaseLoginAttempt(emailRateKey)
+                if ipReserved:
+                    self._releaseLoginAttempt(ipRateKey)
+            raise
+        except Exception:
+            if emailReserved:
+                self._releaseLoginAttempt(emailRateKey)
+            if ipReserved:
+                self._releaseLoginAttempt(ipRateKey)
+            raise
+
+        self._clearLoginFailures(emailRateKey)
+        if ipReserved:
+            self._releaseLoginAttempt(ipRateKey)
+        return response
+
+    def _authenticateAndPersist(self, normalizedEmail: str, password: str) -> dict:
         secret = self._adminJwtSecret()
         try:
             adminRows = (
@@ -228,10 +250,6 @@ class AdminAuthService:
         except Exception as exc:
             logger.error("Admin login persistence failed: {}", type(exc).__name__)
             raise AdminApiError(500, "Admin authentication is unavailable") from exc
-
-        self._clearLoginFailures(emailRateKey)
-        if ipReserved:
-            self._releaseLoginAttempt(ipRateKey)
 
         return {
             "token": token,
