@@ -64,6 +64,8 @@ dependencies = [
     "xlrd>=2.0.1",
     "ydata-profiling>=4.16.1",
     "polars>=1.42.1",
+    "pwdlib[argon2]>=0.3.1",
+    "email-validator>=2.3.0",
 ]
 
 [dependency-groups]
