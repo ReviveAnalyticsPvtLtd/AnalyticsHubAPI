@@ -21,7 +21,17 @@ import getpass
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPOSITORY_ROOT))
+
+# Nothing else in the codebase reads .env: the deployed app receives its
+# configuration from the container environment. This CLI is run by hand from a
+# developer machine, where those variables are only present in .env, so it loads
+# the file itself. Existing environment variables win, so an operator can
+# override a value for one invocation without editing the file.
+from dotenv import load_dotenv
+
+load_dotenv(REPOSITORY_ROOT / ".env", override=False)
 
 from api.adminErrors import AdminApiError
 from api.services.adminAuthService import getAdminAuthService

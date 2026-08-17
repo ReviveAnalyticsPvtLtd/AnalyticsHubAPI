@@ -720,6 +720,7 @@ def test_missing_secret_500_releases_both_throttle_reservations(
     authFixture, monkeypatch
 ):
     monkeypatch.delenv("ADMIN_JWT_SECRET")
+    monkeypatch.delenv("SECRET_KEY")
 
     with pytest.raises(AdminApiError) as captured:
         authFixture.service.login(
@@ -779,8 +780,53 @@ def test_throttle_rollback_failure_does_not_mask_original_error_or_log_secrets(
     assert "must-not-be-logged" not in loggedArguments
 
 
-def test_admin_secret_never_falls_back_to_product_secret(authFixture, monkeypatch):
+def test_admin_secret_falls_back_to_product_secret_with_a_warning(
+    authFixture, monkeypatch
+):
     monkeypatch.delenv("ADMIN_JWT_SECRET")
+
+    with patch("api.services.adminAuthService.logger.warning") as warnLog:
+        response = authFixture.service.login(
+            "admin@example.com", VALID_PASSWORD, "203.0.113.10"
+        )
+
+    assert response["admin"]["id"] == ADMIN_ID
+    assert warnLog.called
+    warning = repr(warnLog.call_args_list)
+    assert "ADMIN_JWT_SECRET" in warning
+    assert "product-secret-must-never-be-used" not in warning
+    assert VALID_PASSWORD not in warning
+    assert "admin@example.com" not in warning
+    assert "203.0.113.10" not in warning
+
+
+def test_token_signed_with_fallback_secret_verifies(authFixture, monkeypatch):
+    monkeypatch.delenv("ADMIN_JWT_SECRET")
+
+    response = authFixture.service.login(
+        "admin@example.com", VALID_PASSWORD, "203.0.113.10"
+    )
+    context = authFixture.service.verifyToken(response["token"])
+
+    assert context.adminId == ADMIN_ID
+
+
+def test_token_issued_under_admin_secret_is_rejected_after_switching_to_fallback(
+    authFixture, monkeypatch
+):
+    issued = authFixture.service.login(
+        "admin@example.com", VALID_PASSWORD, "203.0.113.10"
+    )["token"]
+
+    monkeypatch.delenv("ADMIN_JWT_SECRET")
+
+    assertUnauthorized(lambda: authFixture.service.verifyToken(issued))
+
+
+def test_missing_both_secrets_is_unavailable(authFixture, monkeypatch):
+    monkeypatch.delenv("ADMIN_JWT_SECRET")
+    monkeypatch.delenv("SECRET_KEY")
+
     with patch("api.services.adminAuthService.logger.error") as errorLog:
         with pytest.raises(AdminApiError) as missingSecret:
             authFixture.service.login(
@@ -793,6 +839,30 @@ def test_admin_secret_never_falls_back_to_product_secret(authFixture, monkeypatc
     assert VALID_PASSWORD not in loggedArguments
     assert "admin@example.com" not in loggedArguments
     assert "203.0.113.10" not in loggedArguments
+
+
+def test_product_token_cannot_be_replayed_on_admin_routes_under_shared_secret(
+    authFixture, monkeypatch
+):
+    """
+    A product token signed with SECRET_KEY must not authenticate an admin.
+
+    This is the property that makes the shared-secret fallback tolerable, so it
+    is asserted directly rather than assumed.
+    """
+    monkeypatch.delenv("ADMIN_JWT_SECRET")
+    productToken = jwt.encode(
+        {
+            "userId": ADMIN_ID,
+            "sub": ADMIN_ID,
+            "exp": int((FIXED_NOW + timedelta(hours=8)).timestamp()),
+            "iat": int(FIXED_NOW.timestamp()),
+        },
+        "product-secret-must-never-be-used",
+        algorithm="HS256",
+    )
+
+    assertUnauthorized(lambda: authFixture.service.verifyToken(productToken))
 
 
 @pytest.fixture(autouse=True)
