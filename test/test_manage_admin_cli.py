@@ -1,4 +1,5 @@
 import argparse
+import os
 import unittest
 import sys
 import subprocess
@@ -258,3 +259,58 @@ class AdminLifecycleCliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AdminCliEnvironmentTests(unittest.TestCase):
+    """
+    The CLI must reach Supabase when run by hand from a developer machine.
+
+    Nothing else in the codebase calls load_dotenv; the deployed app gets its
+    configuration from the container environment. Without the CLI loading .env
+    itself, provisioning dies on KeyError: 'SUPABASE_URL'.
+    """
+
+    def test_cli_loads_dotenv_before_importing_supabase_client(self):
+        source = (
+            Path(__file__).resolve().parents[1] / "scripts" / "manage_admin.py"
+        ).read_text(encoding="utf-8")
+
+        loadCall = source.index("load_dotenv(")
+        serviceImport = source.index("from api.services.adminAuthService")
+
+        self.assertLess(
+            loadCall,
+            serviceImport,
+            ".env must be loaded before the Supabase-backed service is imported",
+        )
+
+    def test_cli_does_not_override_existing_environment_variables(self):
+        source = (
+            Path(__file__).resolve().parents[1] / "scripts" / "manage_admin.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("override=False", source)
+
+    def test_cli_reads_supabase_url_from_dotenv_in_a_clean_process(self):
+        script = (
+            "import os, sys;"
+            "sys.argv = ['manage_admin.py', '--help'];"
+            "sys.path.insert(0, r'"
+            + str(Path(__file__).resolve().parents[1])
+            + "');"
+            "import scripts.manage_admin;"
+            "print('SUPABASE_URL' in os.environ)"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            env={
+                key: value for key, value in os.environ.items()
+                if key not in ("SUPABASE_URL", "SUPABASE_KEY")
+            },
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("True", result.stdout)

@@ -559,11 +559,33 @@ class AdminAuthService:
         return {"success": True}
 
     def _adminJwtSecret(self) -> str:
+        """
+        Resolve the admin token signing secret.
+
+        Prefers ADMIN_JWT_SECRET. Falls back to the product SECRET_KEY so the
+        admin API works without a dedicated secret being provisioned first.
+
+        The fallback is safe only because verifyToken does not trust the token
+        on its own: it looks the session up by jti and compares the stored
+        token_hash against sha256(token), so signing a token is not enough to
+        use one without service_role write access to admin_sessions. Keeping a
+        separate ADMIN_JWT_SECRET is still preferred, because SECRET_KEY is used
+        far more widely (including in password derivation) and rotating it would
+        invalidate every product session as well as every admin session.
+        """
         secret = os.environ.get("ADMIN_JWT_SECRET")
-        if not secret:
-            logger.error("ADMIN_JWT_SECRET is not configured")
-            raise AdminApiError(500, "Admin authentication is unavailable")
-        return secret
+        if secret:
+            return secret
+        fallback = os.environ.get("SECRET_KEY")
+        if fallback:
+            logger.warning(
+                "ADMIN_JWT_SECRET is not configured; falling back to SECRET_KEY. "
+                "Set a dedicated ADMIN_JWT_SECRET to decouple admin and product "
+                "session rotation."
+            )
+            return fallback
+        logger.error("Neither ADMIN_JWT_SECRET nor SECRET_KEY is configured")
+        raise AdminApiError(500, "Admin authentication is unavailable")
 
     def _admitLoginAttempt(self, key: str, limit: int) -> bool:
         try:
