@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 
 from api.adminModels import (
+    AdminAuditEventView,
     AdminLoginRequest,
     AdminLoginResponse,
     AdminLogoutResponse,
@@ -8,6 +9,11 @@ from api.adminModels import (
     AdminSubscriptionView,
     AdminUserPatch,
     AdminUserView,
+)
+from api.services.adminAuditService import (
+    ADMIN_AUDIT_MAX_PAGE_SIZE,
+    AdminAuditService,
+    getAdminAuditService,
 )
 from api.services.adminAuthService import (
     AdminAuthService,
@@ -62,6 +68,20 @@ async def updateUser(
     service: AdminManagementService = Depends(getAdminManagementService),
 ):
     return service.updateUser(userId, payload, admin)
+
+
+@router.get("/audit", response_model=list[AdminAuditEventView])
+async def listAuditEvents(
+    limit: int = Query(default=50, ge=1, le=ADMIN_AUDIT_MAX_PAGE_SIZE),
+    offset: int = Query(default=0, ge=0),
+    targetType: str | None = Query(default=None),
+    outcome: str | None = Query(default=None),
+    _admin: AdminContext = Depends(verifyAdmin),
+    service: AdminAuditService = Depends(getAdminAuditService),
+):
+    return service.listEvents(
+        limit=limit, offset=offset, targetType=targetType, outcome=outcome
+    )
 
 
 @router.get("/subscriptions", response_model=list[AdminSubscriptionView])

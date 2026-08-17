@@ -114,8 +114,7 @@ class AdminAuthService:
             errors["email"] = "Invalid email format"
         if not normalizedName:
             errors["name"] = "Name is required"
-        if not 12 <= len(passwordValue) <= 128:
-            errors["password"] = "Password must be between 12 and 128 characters"
+        errors.update(_passwordErrors(passwordValue))
         if errors:
             raise AdminApiError(422, "Validation failed", errors)
 
@@ -149,6 +148,186 @@ class AdminAuthService:
             raise AdminApiError(500, "Failed to create administrator")
         row = result[0]
         return {"id": row["id"], "email": row["email"], "name": row["name"]}
+
+    def listAdmins(self) -> list[dict]:
+        """
+        Return every administrator account, newest registration last.
+
+        Never selects password_hash. Operators reading this list have no reason
+        to see hashes, and not selecting them keeps them out of logs and shells.
+        """
+        try:
+            rows = (
+                self.client.table("admin_users")
+                .select("id,email,name,is_active,last_login_at,created_at")
+                .order("created_at")
+                .execute().data
+            ) or []
+        except Exception as exc:
+            logger.error("Admin list failed: {}", type(exc).__name__)
+            raise AdminApiError(500, "Failed to list administrators") from exc
+        return [
+            {
+                "id": row.get("id"),
+                "email": row.get("email"),
+                "name": row.get("name"),
+                "is_active": bool(row.get("is_active")),
+                "last_login_at": row.get("last_login_at"),
+                "created_at": row.get("created_at"),
+            }
+            for row in rows
+        ]
+
+    def setAdminActive(self, email: str, isActive: bool) -> dict:
+        """
+        Enable or disable an administrator account.
+
+        Deactivation also revokes every live session. verifyToken already
+        re-checks is_active on each request, so revocation is not what makes
+        deactivation effective — it is what makes the reason visible to anyone
+        later auditing admin_sessions.
+
+        Args:
+            email (str): Administrator email, matched case-insensitively.
+            isActive (bool): Target state.
+
+        Returns:
+            dict: id, email, name, and the applied is_active value.
+        """
+        admin = self._requireAdminByEmail(email)
+        now = _asUtc(self.nowProvider()).isoformat()
+        try:
+            self.client.table("admin_users").update({
+                "is_active": bool(isActive),
+                "updated_at": now,
+            }).eq("id", admin["id"]).execute()
+        except Exception as exc:
+            logger.error("Admin activation update failed: {}", type(exc).__name__)
+            raise AdminApiError(500, "Failed to update administrator") from exc
+
+        revoked = 0
+        if not isActive:
+            revoked = self.revokeAllSessions(admin["id"])
+
+        self._recordLifecycleAudit(
+            "admin.activate" if isActive else "admin.deactivate",
+            admin,
+            ["is_active"],
+        )
+        return {
+            "id": admin["id"],
+            "email": admin["email"],
+            "name": admin["name"],
+            "is_active": bool(isActive),
+            "revokedSessions": revoked,
+        }
+
+    def changeAdminPassword(self, email: str, newPassword: str) -> dict:
+        """
+        Replace an administrator password and revoke every live session.
+
+        Session revocation is mandatory, not optional. A password reset exists
+        because the old credential may be compromised; leaving the holder's
+        existing eight-hour token valid would make the reset cosmetic.
+
+        Args:
+            email (str): Administrator email, matched case-insensitively.
+            newPassword (str): Replacement password, 12-128 characters.
+
+        Returns:
+            dict: id, email, name, and the number of sessions revoked.
+        """
+        passwordValue = newPassword if isinstance(newPassword, str) else ""
+        errors = _passwordErrors(passwordValue)
+        if errors:
+            raise AdminApiError(422, "Validation failed", errors)
+
+        admin = self._requireAdminByEmail(email)
+        now = _asUtc(self.nowProvider()).isoformat()
+        try:
+            self.client.table("admin_users").update({
+                "password_hash": self.passwordHasher.hash(passwordValue),
+                "updated_at": now,
+            }).eq("id", admin["id"]).execute()
+        except Exception as exc:
+            logger.error("Admin password update failed: {}", type(exc).__name__)
+            raise AdminApiError(500, "Failed to update administrator") from exc
+
+        revoked = self.revokeAllSessions(admin["id"])
+        self._recordLifecycleAudit("admin.password_reset", admin, ["password_hash"])
+        return {
+            "id": admin["id"],
+            "email": admin["email"],
+            "name": admin["name"],
+            "revokedSessions": revoked,
+        }
+
+    def revokeAllSessions(self, adminId: str) -> int:
+        """
+        Revoke every session for one administrator that is not already revoked.
+
+        Returns:
+            int: Number of sessions revoked.
+        """
+        try:
+            revokedRows = (
+                self.client.table("admin_sessions")
+                .update({"revoked_at": _asUtc(self.nowProvider()).isoformat()})
+                .eq("admin_id", adminId)
+                .is_("revoked_at", "null")
+                .execute().data
+            ) or []
+        except Exception as exc:
+            logger.error("Admin session revocation failed: {}", type(exc).__name__)
+            raise AdminApiError(500, "Failed to revoke administrator sessions") from exc
+        return len(revokedRows)
+
+    def _requireAdminByEmail(self, email: str) -> dict:
+        normalizedEmail = _normalizeEmail(email)
+        if not normalizedEmail:
+            raise AdminApiError(
+                422, "Validation failed", {"email": "Invalid email format"}
+            )
+        try:
+            rows = (
+                self.client.table("admin_users")
+                .select("id,email,name,is_active")
+                .eq("email", normalizedEmail)
+                .limit(1)
+                .execute().data
+            ) or []
+        except Exception as exc:
+            logger.error("Admin lookup failed: {}", type(exc).__name__)
+            raise AdminApiError(500, "Failed to load administrator") from exc
+        if not rows:
+            raise AdminApiError(404, "Administrator not found")
+        return rows[0]
+
+    @staticmethod
+    def _recordLifecycleAudit(action: str, admin: dict, changedFields: list[str]) -> None:
+        """
+        Record a CLI lifecycle action, tolerating an unavailable audit backend.
+
+        Import is deferred because adminAuditService imports AdminContext from
+        this module; importing at module scope would be circular.
+        """
+        try:
+            from api.services.adminAuditService import getAdminAuditService
+
+            getAdminAuditService().record(
+                action=action,
+                targetType="admin",
+                targetId=str(admin.get("id")),
+                changedFields=changedFields,
+                outcome="success",
+                actorEmail=os.environ.get("ADMIN_CLI_ACTOR") or "cli",
+            )
+        except Exception as exc:
+            logger.error(
+                "Durable admin audit unavailable for {}: {}",
+                action,
+                type(exc).__name__,
+            )
 
     def login(self, email: str, password: str, clientIp: str) -> dict:
         normalizedEmail = _normalizeEmail(email)
@@ -418,6 +597,18 @@ class AdminAuthService:
             self.redisClient.delete(key)
         except Exception as exc:
             logger.warning("Admin login throttle cleanup failed: {}", type(exc).__name__)
+
+
+def _passwordErrors(password: str) -> dict[str, str]:
+    """
+    Single source of truth for the admin password rule.
+
+    Both createAdmin and changeAdminPassword call this so the accepted length
+    cannot drift between provisioning and rotation.
+    """
+    if not 12 <= len(password) <= 128:
+        return {"password": "Password must be between 12 and 128 characters"}
+    return {}
 
 
 def _isUniqueViolation(exception: Exception) -> bool:

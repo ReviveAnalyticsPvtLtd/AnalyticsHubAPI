@@ -88,6 +88,20 @@ class AdminUserView(_StrictModel):
     source: str | None = None
 
 
+class AdminAuditEventView(_StrictModel):
+    id: str
+    admin_id: str | None = None
+    admin_email: str
+    session_id: str | None = None
+    actor_type: str
+    action: str
+    target_type: str
+    target_id: str | None = None
+    changed_fields: str
+    outcome: str
+    created_at: str
+
+
 class AdminSubscriptionView(_StrictModel):
     id: str
     user_id: str

@@ -18,6 +18,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from api.adminErrors import AdminApiError
 from api.adminModels import (
+    AdminAuditEventView,
     AdminLoginRequest,
     AdminLoginResponse,
     AdminLogoutResponse,
@@ -32,6 +33,7 @@ from api.services.adminAuthService import (
     verifyAdmin,
     verifyAdminForLogout,
 )
+from api.services.adminAuditService import getAdminAuditService
 from api.services.adminManagementService import getAdminManagementService
 from main import (
     admin_exception_handler,
@@ -146,6 +148,34 @@ class FakeAdminManagementService:
         }
 
 
+AUDIT_EVENT_VIEW = {
+    "id": "audit-1",
+    "admin_id": "admin-1",
+    "admin_email": "admin@example.com",
+    "session_id": "session-1",
+    "actor_type": "admin",
+    "action": "user.update",
+    "target_type": "user",
+    "target_id": "user-1",
+    "changed_fields": '["email"]',
+    "outcome": "success",
+    "created_at": "2026-08-17T00:00:00+00:00",
+}
+
+
+class FakeAdminAuditService:
+    calls: list[dict] = []
+
+    def listEvents(self, limit, offset, targetType=None, outcome=None):
+        FakeAdminAuditService.calls.append({
+            "limit": limit,
+            "offset": offset,
+            "targetType": targetType,
+            "outcome": outcome,
+        })
+        return [AUDIT_EVENT_VIEW]
+
+
 async def fakeVerifyAdmin(request: Request) -> AdminContext:
     if request.headers.get("Authorization") != "Bearer admin-token":
         raise AdminApiError(401, "Authentication required")
@@ -178,6 +208,7 @@ async def productTestValidation(_payload: AdminLoginRequest):
 def client():
     app.dependency_overrides[getAdminAuthService] = FakeAdminAuthService
     app.dependency_overrides[getAdminManagementService] = FakeAdminManagementService
+    app.dependency_overrides[getAdminAuditService] = FakeAdminAuditService
     app.dependency_overrides[verifyAdmin] = fakeVerifyAdmin
     app.dependency_overrides[verifyAdminForLogout] = fakeVerifyAdminForLogout
     testClient = TestClient(app, raise_server_exceptions=False)
@@ -341,6 +372,7 @@ def test_admin_routes_declare_strict_response_allowlists():
     expectedModels = {
         ("/admin/auth/login", "POST"): AdminLoginResponse,
         ("/admin/auth/logout", "POST"): AdminLogoutResponse,
+        ("/admin/audit", "GET"): list[AdminAuditEventView],
         ("/admin/users", "GET"): list[AdminUserView],
         ("/admin/users/{userId}", "PATCH"): AdminUserView,
         ("/admin/subscriptions", "GET"): list[AdminSubscriptionView],
@@ -365,3 +397,60 @@ def test_billing_admin_routes_still_use_billing_admin_dependency():
         dependency.call is verifyBillingAdmin
         for dependency in route.dependant.dependencies
     )
+
+
+def test_audit_requires_authentication(client):
+    response = client.get("/admin/audit")
+
+    assert response.status_code == 401
+    assert response.json() == {"message": "Authentication required"}
+
+
+def test_audit_returns_events(client):
+    FakeAdminAuditService.calls.clear()
+
+    response = client.get("/admin/audit", headers=_adminHeaders())
+
+    assert response.status_code == 200
+    assert response.json() == [AUDIT_EVENT_VIEW]
+    assert FakeAdminAuditService.calls[-1]["limit"] == 50
+    assert FakeAdminAuditService.calls[-1]["offset"] == 0
+
+
+def test_audit_passes_pagination_and_filters(client):
+    FakeAdminAuditService.calls.clear()
+
+    response = client.get(
+        "/admin/audit?limit=25&offset=50&targetType=user&outcome=failed",
+        headers=_adminHeaders(),
+    )
+
+    assert response.status_code == 200
+    assert FakeAdminAuditService.calls[-1] == {
+        "limit": 25,
+        "offset": 50,
+        "targetType": "user",
+        "outcome": "failed",
+    }
+
+
+def test_audit_rejects_out_of_range_limit(client):
+    response = client.get("/admin/audit?limit=0", headers=_adminHeaders())
+
+    assert response.status_code == 422
+    assert response.json()["message"] == "Validation failed"
+    assert "limit" in response.json()["errors"]
+
+
+def test_audit_rejects_limit_above_maximum(client):
+    response = client.get("/admin/audit?limit=201", headers=_adminHeaders())
+
+    assert response.status_code == 422
+    assert "limit" in response.json()["errors"]
+
+
+def test_audit_rejects_negative_offset(client):
+    response = client.get("/admin/audit?offset=-1", headers=_adminHeaders())
+
+    assert response.status_code == 422
+    assert "offset" in response.json()["errors"]

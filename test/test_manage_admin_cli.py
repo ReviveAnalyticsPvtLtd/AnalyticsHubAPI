@@ -1,3 +1,4 @@
+import argparse
 import unittest
 import sys
 import subprocess
@@ -116,6 +117,143 @@ class AdminProvisioningTests(unittest.TestCase):
         )
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertNotIn("--password", result.stdout)
+
+
+class AdminLifecycleCliTests(unittest.TestCase):
+    @patch("scripts.manage_admin.getAdminAuthService")
+    def test_cli_list_prints_accounts(self, getService):
+        getService.return_value.listAdmins.return_value = [{
+            "id": "admin-1",
+            "email": "admin@example.com",
+            "name": "Admin Name",
+            "is_active": True,
+            "last_login_at": None,
+            "created_at": "2026-01-01T00:00:00+00:00",
+        }]
+
+        exitCode = manage_admin.main(["list"])
+
+        self.assertEqual(0, exitCode)
+        getService.return_value.listAdmins.assert_called_once_with()
+
+    @patch("scripts.manage_admin.getAdminAuthService")
+    def test_cli_list_handles_no_accounts(self, getService):
+        getService.return_value.listAdmins.return_value = []
+
+        self.assertEqual(0, manage_admin.main(["list"]))
+
+    @patch("scripts.manage_admin.getAdminAuthService")
+    def test_cli_deactivate_disables_account(self, getService):
+        getService.return_value.setAdminActive.return_value = {
+            "id": "admin-1", "email": "admin@example.com",
+            "name": "Admin", "is_active": False, "revokedSessions": 2,
+        }
+
+        exitCode = manage_admin.main(["deactivate", "--email", "admin@example.com"])
+
+        self.assertEqual(0, exitCode)
+        getService.return_value.setAdminActive.assert_called_once_with(
+            "admin@example.com", False
+        )
+
+    @patch("scripts.manage_admin.getAdminAuthService")
+    def test_cli_activate_enables_account(self, getService):
+        getService.return_value.setAdminActive.return_value = {
+            "id": "admin-1", "email": "admin@example.com",
+            "name": "Admin", "is_active": True, "revokedSessions": 0,
+        }
+
+        exitCode = manage_admin.main(["activate", "--email", "admin@example.com"])
+
+        self.assertEqual(0, exitCode)
+        getService.return_value.setAdminActive.assert_called_once_with(
+            "admin@example.com", True
+        )
+
+    @patch(
+        "scripts.manage_admin.getpass.getpass",
+        side_effect=["a valid password", "a valid password"],
+    )
+    @patch("scripts.manage_admin.getAdminAuthService")
+    def test_cli_reset_password_reads_hidden_confirmation(self, getService, _getpass):
+        getService.return_value.changeAdminPassword.return_value = {
+            "id": "admin-1", "email": "admin@example.com",
+            "name": "Admin", "revokedSessions": 1,
+        }
+
+        exitCode = manage_admin.main(
+            ["reset-password", "--email", "admin@example.com"]
+        )
+
+        self.assertEqual(0, exitCode)
+        getService.return_value.changeAdminPassword.assert_called_once_with(
+            "admin@example.com", "a valid password"
+        )
+
+    @patch(
+        "scripts.manage_admin.getpass.getpass",
+        side_effect=["password one!!", "password two!!"],
+    )
+    @patch("scripts.manage_admin.getAdminAuthService")
+    def test_cli_reset_password_rejects_mismatch_without_calling_service(
+        self, getService, _getpass
+    ):
+        exitCode = manage_admin.main(
+            ["reset-password", "--email", "admin@example.com"]
+        )
+
+        self.assertEqual(2, exitCode)
+        getService.return_value.changeAdminPassword.assert_not_called()
+
+    @patch("scripts.manage_admin.getAdminAuthService")
+    def test_cli_reports_admin_error_field_details(self, getService):
+        getService.return_value.setAdminActive.side_effect = AdminApiError(
+            404, "Administrator not found"
+        )
+
+        exitCode = manage_admin.main(["deactivate", "--email", "ghost@example.com"])
+
+        self.assertEqual(1, exitCode)
+
+    @patch("scripts.manage_admin.getAdminAuthService")
+    def test_cli_reports_validation_errors_per_field(self, getService):
+        getService.return_value.changeAdminPassword.side_effect = AdminApiError(
+            422, "Validation failed", {"password": "Password must be between 12 and 128 characters"}
+        )
+
+        with patch(
+            "scripts.manage_admin.getpass.getpass",
+            side_effect=["short", "short"],
+        ):
+            exitCode = manage_admin.main(
+                ["reset-password", "--email", "admin@example.com"]
+            )
+
+        self.assertEqual(1, exitCode)
+
+    def test_no_subcommand_accepts_a_password_argument(self):
+        parser = manage_admin.buildParser()
+        subparsersAction = next(
+            action for action in parser._actions
+            if isinstance(action, argparse._SubParsersAction)
+        )
+
+        self.assertEqual(
+            {"add", "list", "deactivate", "activate", "reset-password"},
+            set(subparsersAction.choices),
+        )
+        for name, subparser in subparsersAction.choices.items():
+            optionStrings = [
+                option
+                for action in subparser._actions
+                for option in action.option_strings
+            ]
+            self.assertNotIn("--password", optionStrings, f"{name} accepts --password")
+
+    def test_lifecycle_subcommands_require_email(self):
+        for command in ("deactivate", "activate", "reset-password"):
+            with self.assertRaises(SystemExit):
+                manage_admin.main([command])
 
 
 if __name__ == "__main__":

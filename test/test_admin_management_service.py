@@ -29,6 +29,33 @@ ADMIN_CONTEXT = AdminContext(
     token="secret-admin-token",
 )
 
+
+class RecordingAuditService:
+    """Captures durable audit calls so tests never touch a real backend."""
+
+    def __init__(self):
+        self.calls = []
+
+    def record(self, **kwargs):
+        self.calls.append(kwargs)
+
+
+@pytest.fixture(autouse=True)
+def stubDurableAudit():
+    """
+    Keep the lazily-resolved audit service off the network.
+
+    AdminManagementService resolves getAdminAuditService() on first use, which
+    would otherwise build a live Supabase client inside these unit tests.
+    """
+    recorder = RecordingAuditService()
+    with patch(
+        "api.services.adminAuditService.getAdminAuditService",
+        return_value=recorder,
+    ):
+        yield recorder
+
+
 EXPECTED_USER_FIELDS = {
     "userId", "email", "fullName", "phoneNumber", "profileImage",
     "onboarded", "currentWorkspaceId", "companyName", "role", "profileBio",
@@ -967,3 +994,90 @@ def test_subscription_session_failure_is_generic_and_retry_repairs_it():
 
     assert result["status"] == "expired"
     assert all(row["userId"] != "user-1" for row in client.rows["Sessions"])
+
+
+def test_user_update_writes_durable_audit_row(stubDurableAudit):
+    client = FakeClient([userRow()])
+    service = AdminManagementService(client=client)
+    patchPayload = AdminUserPatch.model_validate({"fullName": "New Name"})
+
+    service.updateUser("user-1", patchPayload, ADMIN_CONTEXT)
+
+    assert stubDurableAudit.calls[-1]["action"] == "user.update"
+    assert stubDurableAudit.calls[-1]["targetType"] == "user"
+    assert stubDurableAudit.calls[-1]["targetId"] == "user-1"
+    assert stubDurableAudit.calls[-1]["changedFields"] == ["fullName"]
+    assert stubDurableAudit.calls[-1]["outcome"] == "success"
+    assert stubDurableAudit.calls[-1]["admin"] is ADMIN_CONTEXT
+
+
+def test_durable_audit_does_not_duplicate_the_log_line(stubDurableAudit):
+    client = FakeClient([userRow()])
+    service = AdminManagementService(client=client)
+    patchPayload = AdminUserPatch.model_validate({"fullName": "New Name"})
+
+    service.updateUser("user-1", patchPayload, ADMIN_CONTEXT)
+
+    assert stubDurableAudit.calls[-1]["emitLog"] is False
+
+
+def test_subscription_update_writes_durable_audit_row(stubDurableAudit):
+    client = FakeClient([], [subscriptionRow()])
+    service = AdminManagementService(client=client, creditService=MagicMock())
+    patchPayload = AdminSubscriptionPatch.model_validate({"status": "active"})
+
+    service.updateSubscription("sub-1", patchPayload, ADMIN_CONTEXT)
+
+    assert stubDurableAudit.calls[-1]["action"] == "subscription.update"
+    assert stubDurableAudit.calls[-1]["targetType"] == "subscription"
+    assert stubDurableAudit.calls[-1]["outcome"] == "success"
+
+
+def test_missing_user_writes_not_found_durable_audit_row(stubDurableAudit):
+    client = FakeClient([])
+    service = AdminManagementService(client=client)
+    patchPayload = AdminUserPatch.model_validate({"fullName": "New Name"})
+
+    with pytest.raises(AdminApiError):
+        service.updateUser("ghost", patchPayload, ADMIN_CONTEXT)
+
+    assert stubDurableAudit.calls[-1]["outcome"] == "not_found"
+
+
+def test_conflicted_subscription_update_writes_conflict_durable_audit_row(stubDurableAudit):
+    client = FakeClient([], [subscriptionRow()])
+    client.forceEmptySubscriptionUpdate = True
+    service = AdminManagementService(client=client, creditService=MagicMock())
+    patchPayload = AdminSubscriptionPatch.model_validate({"status": "expired"})
+
+    with pytest.raises(AdminApiError) as excinfo:
+        service.updateSubscription("sub-1", patchPayload, ADMIN_CONTEXT)
+
+    assert excinfo.value.statusCode == 409
+    assert stubDurableAudit.calls[-1]["action"] == "subscription.update"
+    assert stubDurableAudit.calls[-1]["outcome"] == "conflict"
+
+
+def test_failed_user_update_writes_failure_durable_audit_row(stubDurableAudit):
+    client = FakeClient([userRow()])
+    client.failNextUsersUpdate = True
+    service = AdminManagementService(client=client)
+    patchPayload = AdminUserPatch.model_validate({"fullName": "New Name"})
+
+    with pytest.raises(AdminApiError):
+        service.updateUser("user-1", patchPayload, ADMIN_CONTEXT)
+
+    assert stubDurableAudit.calls[-1]["outcome"] == "failed"
+
+
+def test_durable_audit_failure_never_breaks_the_request():
+    client = FakeClient([userRow()])
+    exploding = MagicMock()
+    exploding.record.side_effect = RuntimeError("audit down")
+    service = AdminManagementService(client=client, auditService=exploding)
+    patchPayload = AdminUserPatch.model_validate({"fullName": "New Name"})
+
+    updated = service.updateUser("user-1", patchPayload, ADMIN_CONTEXT)
+
+    assert updated["fullName"] == "New Name"
+    assert exploding.record.called

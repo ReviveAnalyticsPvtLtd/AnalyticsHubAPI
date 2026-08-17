@@ -50,9 +50,11 @@ class FakeQuery:
         self.limitCount = None
         self.operation = "select"
         self.payload = None
+        self.orderBy = None
 
-    def select(self, _fields):
+    def select(self, fields):
         self.operation = "select"
+        self.client.selectFields.append((self.tableName, fields))
         return self
 
     def eq(self, field, value):
@@ -61,6 +63,14 @@ class FakeQuery:
 
     def limit(self, count):
         self.limitCount = count
+        return self
+
+    def order(self, column, desc=False):
+        self.orderBy = (column, desc)
+        return self
+
+    def is_(self, field, value):
+        self.filters.append((field, None if value == "null" else value))
         return self
 
     def insert(self, payload):
@@ -86,6 +96,11 @@ class FakeQuery:
             row for row in self.client.rows[self.tableName]
             if all(row.get(field) == value for field, value in self.filters)
         ]
+        if self.orderBy is not None:
+            column, descending = self.orderBy
+            matching.sort(
+                key=lambda row: str(row.get(column, "")), reverse=descending
+            )
         if self.limitCount is not None:
             matching = matching[:self.limitCount]
         if self.operation == "update":
@@ -102,6 +117,7 @@ class FakeAdminClient:
         self.rows = {"admin_users": adminUsers, "admin_sessions": []}
         self.insertCalls = []
         self.updateCalls = []
+        self.selectFields = []
         self.failureOperation = None
 
     def table(self, name):
@@ -203,6 +219,7 @@ def authFixture(monkeypatch, passwordHasher):
             "password_hash": passwordHasher.hash(VALID_PASSWORD),
             "is_active": True,
             "last_login_at": None,
+            "created_at": "2026-01-01T00:00:00+00:00",
         },
         {
             "id": OTHER_ADMIN_ID,
@@ -211,6 +228,7 @@ def authFixture(monkeypatch, passwordHasher):
             "password_hash": passwordHasher.hash(OTHER_PASSWORD),
             "is_active": True,
             "last_login_at": None,
+            "created_at": "2026-02-01T00:00:00+00:00",
         },
     ]
     client = FakeAdminClient(admins)
@@ -775,3 +793,198 @@ def test_admin_secret_never_falls_back_to_product_secret(authFixture, monkeypatc
     assert VALID_PASSWORD not in loggedArguments
     assert "admin@example.com" not in loggedArguments
     assert "203.0.113.10" not in loggedArguments
+
+
+@pytest.fixture(autouse=True)
+def stubLifecycleAudit():
+    """Keep CLI lifecycle audit writes off the network in unit tests."""
+    recorder = SimpleNamespace(calls=[])
+    recorder.record = lambda **kwargs: recorder.calls.append(kwargs)
+    with patch(
+        "api.services.adminAuditService.getAdminAuditService",
+        return_value=recorder,
+    ):
+        yield recorder
+
+
+def liveSession(sessionId, adminId, revokedAt=None):
+    return {
+        "id": sessionId,
+        "admin_id": adminId,
+        "token_hash": "a" * 64,
+        "created_at": FIXED_NOW.isoformat(),
+        "expires_at": (FIXED_NOW + timedelta(hours=8)).isoformat(),
+        "revoked_at": revokedAt,
+        "last_used_at": FIXED_NOW.isoformat(),
+    }
+
+
+def test_list_admins_returns_safe_fields_only(authFixture):
+    admins = authFixture.service.listAdmins()
+
+    assert len(admins) == 2
+    assert set(admins[0]) == {
+        "id", "email", "name", "is_active", "last_login_at", "created_at",
+    }
+    assert all("password_hash" not in admin for admin in admins)
+
+
+def test_list_admins_never_selects_the_password_hash(authFixture):
+    authFixture.service.listAdmins()
+
+    selected = [
+        call for call in authFixture.client.selectFields
+        if call[0] == "admin_users"
+    ]
+    assert selected, "expected a select against admin_users"
+    assert all("password_hash" not in call[1] for call in selected)
+
+
+def test_deactivate_sets_flag_and_revokes_live_sessions(authFixture):
+    authFixture.client.rows["admin_sessions"].append(
+        liveSession("session-1", ADMIN_ID)
+    )
+    authFixture.client.rows["admin_sessions"].append(
+        liveSession("session-2", OTHER_ADMIN_ID)
+    )
+
+    result = authFixture.service.setAdminActive("admin@example.com", False)
+
+    assert result["is_active"] is False
+    assert result["revokedSessions"] == 1
+    assert authFixture.admins[0]["is_active"] is False
+    revoked = {
+        row["id"]: row["revoked_at"]
+        for row in authFixture.client.rows["admin_sessions"]
+    }
+    assert revoked["session-1"] == FIXED_NOW.isoformat()
+    assert revoked["session-2"] is None
+
+
+def test_deactivate_is_case_insensitive_on_email(authFixture):
+    result = authFixture.service.setAdminActive("ADMIN@Example.COM", False)
+
+    assert result["id"] == ADMIN_ID
+    assert authFixture.admins[0]["is_active"] is False
+
+
+def test_activate_restores_flag_without_revoking_sessions(authFixture):
+    authFixture.admins[0]["is_active"] = False
+    authFixture.client.rows["admin_sessions"].append(
+        liveSession("session-1", ADMIN_ID)
+    )
+
+    result = authFixture.service.setAdminActive("admin@example.com", True)
+
+    assert result["is_active"] is True
+    assert result["revokedSessions"] == 0
+    assert authFixture.client.rows["admin_sessions"][0]["revoked_at"] is None
+
+
+def test_change_password_replaces_hash_and_revokes_sessions(authFixture):
+    authFixture.client.rows["admin_sessions"].append(
+        liveSession("session-1", ADMIN_ID)
+    )
+    oldHash = authFixture.admins[0]["password_hash"]
+
+    result = authFixture.service.changeAdminPassword(
+        "admin@example.com", "a brand new password"
+    )
+
+    assert result["revokedSessions"] == 1
+    assert authFixture.admins[0]["password_hash"] != oldHash
+    assert authFixture.client.rows["admin_sessions"][0]["revoked_at"] is not None
+
+
+def test_password_after_reset_authenticates_and_old_one_does_not(authFixture):
+    authFixture.service.changeAdminPassword(
+        "admin@example.com", "a brand new password"
+    )
+
+    assertUnauthorized(
+        lambda: authFixture.service.login(
+            "admin@example.com", VALID_PASSWORD, "10.0.0.1"
+        )
+    )
+    response = authFixture.service.login(
+        "admin@example.com", "a brand new password", "10.0.0.2"
+    )
+    assert response["admin"]["id"] == ADMIN_ID
+
+
+def test_change_password_enforces_minimum_length(authFixture):
+    with pytest.raises(AdminApiError) as captured:
+        authFixture.service.changeAdminPassword("admin@example.com", "short")
+
+    assert captured.value.statusCode == 422
+    assert "password" in captured.value.errors
+
+
+def test_change_password_enforces_maximum_length(authFixture):
+    with pytest.raises(AdminApiError) as captured:
+        authFixture.service.changeAdminPassword("admin@example.com", "x" * 129)
+
+    assert captured.value.statusCode == 422
+    assert "password" in captured.value.errors
+
+
+def test_change_password_rejects_before_touching_storage(authFixture):
+    before = authFixture.admins[0]["password_hash"]
+
+    with pytest.raises(AdminApiError):
+        authFixture.service.changeAdminPassword("admin@example.com", "short")
+
+    assert authFixture.admins[0]["password_hash"] == before
+
+
+def test_lifecycle_on_unknown_email_is_not_found(authFixture):
+    with pytest.raises(AdminApiError) as captured:
+        authFixture.service.setAdminActive("nobody@example.com", False)
+
+    assert captured.value.statusCode == 404
+    assert captured.value.message == "Administrator not found"
+
+
+def test_lifecycle_on_malformed_email_is_validation_error(authFixture):
+    with pytest.raises(AdminApiError) as captured:
+        authFixture.service.changeAdminPassword("not-an-email", "a valid password")
+
+    assert captured.value.statusCode == 422
+    assert "email" in captured.value.errors
+
+
+def test_revoke_all_sessions_skips_already_revoked(authFixture):
+    authFixture.client.rows["admin_sessions"].append(
+        liveSession("session-1", ADMIN_ID, revokedAt="2026-01-01T00:00:00+00:00")
+    )
+    authFixture.client.rows["admin_sessions"].append(
+        liveSession("session-2", ADMIN_ID)
+    )
+
+    revoked = authFixture.service.revokeAllSessions(ADMIN_ID)
+
+    assert revoked == 1
+    assert authFixture.client.rows["admin_sessions"][0]["revoked_at"] == (
+        "2026-01-01T00:00:00+00:00"
+    )
+
+
+def test_lifecycle_actions_are_audited(authFixture, stubLifecycleAudit):
+    authFixture.service.setAdminActive("admin@example.com", False)
+    authFixture.service.changeAdminPassword("admin@example.com", "a valid password")
+
+    actions = [call["action"] for call in stubLifecycleAudit.calls]
+    assert actions == ["admin.deactivate", "admin.password_reset"]
+    assert all(call["targetType"] == "admin" for call in stubLifecycleAudit.calls)
+    assert all(call["outcome"] == "success" for call in stubLifecycleAudit.calls)
+
+
+def test_lifecycle_succeeds_when_audit_backend_is_down(authFixture):
+    with patch(
+        "api.services.adminAuditService.getAdminAuditService",
+        side_effect=RuntimeError("audit down"),
+    ):
+        result = authFixture.service.setAdminActive("admin@example.com", False)
+
+    assert result["is_active"] is False
+    assert authFixture.admins[0]["is_active"] is False

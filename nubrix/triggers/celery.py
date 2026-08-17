@@ -17,6 +17,7 @@ from nubrix.triggers.tasks.billingMetricsTask import BillingMetricsTask
 from nubrix.triggers.tasks.entitlementBoundaryTask import EntitlementBoundaryTask
 from nubrix.triggers.tasks.subscriptionExpiryTask import SubscriptionExpiryTask
 from nubrix.triggers.tasks.creditReconciliationTask import CreditReconciliationTask
+from nubrix.triggers.tasks.adminSessionCleanupTask import AdminSessionCleanupTask
 from nubrix.triggers.tasks.billingTask import DailyBillingTask
 from celery.schedules import crontab
 from celery import Celery
@@ -68,6 +69,10 @@ def runSubscriptionExpiry():
 def runCreditReconciliation():
     return CreditReconciliationTask().execute()
 
+@celeryApp.task(name=f"{APP_NAME}.adminSessionCleanup")
+def runAdminSessionCleanup():
+    return AdminSessionCleanupTask().execute()
+
 
 celeryApp.conf.beat_schedule = {
     "daily-billing-midnight": {"task": f"{APP_NAME}.dailyBilling", "schedule": crontab(minute=0, hour=0)},
@@ -79,5 +84,6 @@ celeryApp.conf.beat_schedule = {
     "billing-metrics-every-30min": {"task": f"{APP_NAME}.billingMetrics", "schedule": crontab(minute="*/30")},
     "subscription-expiry-daily": {"task": f"{APP_NAME}.subscriptionExpiry", "schedule": crontab(minute=0, hour=1)},
     "credit-reconciliation-hourly": {"task": f"{APP_NAME}.creditReconciliation", "schedule": crontab(minute=0)},
+    "admin-session-cleanup-daily": {"task": f"{APP_NAME}.adminSessionCleanup", "schedule": crontab(minute=0, hour=3)},
 }
 celeryApp.conf.timezone = "UTC"

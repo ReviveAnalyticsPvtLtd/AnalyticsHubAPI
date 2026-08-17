@@ -104,9 +104,10 @@ def _escapeIlikeLiteral(value: str) -> str:
 
 
 class AdminManagementService:
-    def __init__(self, client=None, creditService=None):
+    def __init__(self, client=None, creditService=None, auditService=None):
         self._client = client
         self._creditService = creditService
+        self._auditService = auditService
 
     @property
     def client(self):
@@ -121,6 +122,13 @@ class AdminManagementService:
             from api.services.credits.creditService import creditService
             self._creditService = creditService
         return self._creditService
+
+    @property
+    def auditService(self):
+        if self._auditService is None:
+            from api.services.adminAuditService import getAdminAuditService
+            self._auditService = getAdminAuditService()
+        return self._auditService
 
     def listUsers(self) -> list[dict]:
         try:
@@ -400,8 +408,8 @@ class AdminManagementService:
                 return rows
             start += ADMIN_BATCH_SIZE
 
-    @staticmethod
     def _auditUserUpdate(
+        self,
         admin: AdminContext,
         userId: str,
         changedFields: list[str],
@@ -420,9 +428,12 @@ class AdminManagementService:
             event.critical("admin_audit")
         else:
             event.info("admin_audit")
+        self._recordDurableAudit(
+            "user.update", "user", userId, changedFields, outcome, admin
+        )
 
-    @staticmethod
     def _auditSubscriptionUpdate(
+        self,
         admin: AdminContext,
         subscriptionId: str,
         changedFields: list[str],
@@ -436,6 +447,47 @@ class AdminManagementService:
             changedFields=changedFields,
             outcome=outcome,
         ).info("admin_audit")
+        self._recordDurableAudit(
+            "subscription.update", "subscription", subscriptionId,
+            changedFields, outcome, admin,
+        )
+
+    def _recordDurableAudit(
+        self,
+        action: str,
+        targetType: str,
+        targetId: str,
+        changedFields: list[str],
+        outcome: str,
+        admin: AdminContext,
+    ) -> None:
+        """
+        Persist the audit event alongside the log line already emitted above.
+
+        emitLog is False because this method's callers have just written the
+        structured `admin_audit` line themselves; passing True would put the
+        same event into the log stream twice.
+
+        Resolving the audit service can itself fail when Supabase credentials
+        are unavailable, so the lookup is guarded too. record() already
+        swallows write failures.
+        """
+        try:
+            self.auditService.record(
+                action=action,
+                targetType=targetType,
+                targetId=targetId,
+                changedFields=changedFields,
+                outcome=outcome,
+                admin=admin,
+                emitLog=False,
+            )
+        except Exception as exc:
+            logger.error(
+                "Durable admin audit unavailable for {}: {}",
+                action,
+                type(exc).__name__,
+            )
 
 
 _adminManagementService: AdminManagementService | None = None
