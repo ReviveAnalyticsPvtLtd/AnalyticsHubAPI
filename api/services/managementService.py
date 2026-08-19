@@ -1279,6 +1279,8 @@ class ManagementService:
             jwtStatus = decodedToken.get("sub_status", "none")
             jwtPlanType = decodedToken.get("plan_type", "none")
             refreshedAccessToken = None
+            # Compatibility refresh for clients that still consume plan claims.
+            # Backend authorization does not depend on the returned replacement token.
             if jwtStatus != dbStatus or jwtPlanType != freshPlanType:
                 decodedToken["sub_status"] = dbStatus
                 decodedToken["plan_type"] = freshPlanType

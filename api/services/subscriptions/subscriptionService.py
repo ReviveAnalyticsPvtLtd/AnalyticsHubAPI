@@ -170,10 +170,12 @@ class SubscriptionService:
         self, oldToken: str, newStatus: str, newPlanType: str
     ) -> str:
         """
-        Re-mint the JWT with updated subscription claims and insert a
-        new Sessions row for the fresh token.  The old session row is
-        left intact so in-flight requests using the previous token
-        continue to pass verifyToken until natural expiry.
+        Re-mint compatibility plan claims for existing clients that consume the
+        returned accessToken. Backend feature gates ignore these mutable claims and
+        load current entitlement state from the canonical subscriptions row.
+
+        The old session remains valid by design during the compatibility period;
+        using it must not preserve old plan access.
         """
         oldSession = self.client.table("Sessions") \
             .select("userId, email, sessionStartTime, expiresAt") \

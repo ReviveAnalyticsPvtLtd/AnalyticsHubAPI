@@ -406,6 +406,8 @@ class AuthenticationService:
                 subscription.get("billing_mode") if subscription else None,
                 subscription.get("status") if subscription else None,
             )
+            # Compatibility metadata only. Backend authorization loads current
+            # entitlement state from subscriptions and must not trust these claims.
             tokenPayload = {
                 "userId": dataSlice["userId"],
                 "email": loginDetails.email,
@@ -541,6 +543,8 @@ class AuthenticationService:
 
             sessionStartTime = datetime.datetime.now(datetime.timezone.utc)
             expiresAt = sessionStartTime + datetime.timedelta(hours=24)
+            # Compatibility metadata only. Backend authorization loads current
+            # entitlement state from subscriptions and must not trust these claims.
             tokenPayload = {
                 "userId": userData["userId"],
                 "email": userData["email"],

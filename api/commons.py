@@ -41,6 +41,14 @@ client = create_client(
     )
 )
 
+from api.services.subscriptions.entitlementService import (
+    EntitlementUnavailableError,
+    SubscriptionEntitlement,
+    SubscriptionEntitlementService,
+)
+
+subscriptionEntitlementService = SubscriptionEntitlementService(client)
+
 from jose import jwt, JWTError
 
 def _verifyTokenInternal(credentials: HTTPAuthorizationCredentials, checkExpiry: bool) -> str:
@@ -130,66 +138,65 @@ def verifyTokenWithExpiry(credentials: HTTPAuthorizationCredentials = Depends(se
 
 @dataclass
 class UserContext:
-    """Decoded JWT claims including subscription state."""
+    """Authenticated user identity backed by a live Sessions row."""
     userId: str
     email: str
     token: str
-    sub_status: str
-    plan_type: str
 
 
 def verifyUser(credentials: HTTPAuthorizationCredentials = Depends(security)) -> UserContext:
-    """
-    Verify the token and return a UserContext with subscription claims
-    decoded from the JWT. No additional DB query for subscription data.
-    """
     token = _verifyTokenInternal(credentials, checkExpiry=False)
     payload = jwt.decode(token, os.environ["SECRET_KEY"], algorithms=["HS256"])
     return UserContext(
         userId=payload["userId"],
         email=payload["email"],
         token=token,
-        sub_status=payload.get("sub_status", "none"),
-        plan_type=payload.get("plan_type", "none"),
     )
 
 
-_ACTIVE_SUBSCRIPTION_STATUSES = {"active", "renewal_upcoming", "payment_pending", "cancelled"}
-
-_TOPUP_ELIGIBLE_STATUSES = {"active", "renewal_upcoming", "payment_pending"}
+def _loadCurrentEntitlement(user: UserContext) -> SubscriptionEntitlement:
+    try:
+        return subscriptionEntitlementService.get(user.userId)
+    except EntitlementUnavailableError:
+        raiseFeatureGateHttpException(
+            statusCode=status.HTTP_503_SERVICE_UNAVAILABLE,
+            uiMessage="Subscription access could not be verified. Please try again.",
+            backendLogMessage=(
+                f"Entitlement lookup unavailable for userId={user.userId}"
+            ),
+            errorCode="ENTITLEMENT_UNAVAILABLE",
+        )
 
 def requireActiveSubscription(
     user: UserContext = Depends(verifyUser),
 ) -> UserContext:
     """Gate: requires an active (or cancelled-but-in-period) subscription."""
-    if user.sub_status not in _ACTIVE_SUBSCRIPTION_STATUSES:
+    entitlement = _loadCurrentEntitlement(user)
+    if not entitlement.activeSubscription:
         raiseFeatureGateHttpException(
             statusCode=status.HTTP_403_FORBIDDEN,
             uiMessage="This feature requires an active subscription.",
             backendLogMessage=(
                 f"Feature gate requireActiveSubscription blocked userId={user.userId}, "
-                f"sub_status={user.sub_status}, "
-                f"allowed={sorted(_ACTIVE_SUBSCRIPTION_STATUSES)}"
+                f"status={entitlement.status}, planType={entitlement.planType}"
             ),
             errorCode="FEATURE_BLOCKED",
         )
     return user
 
 
-_TRIAL_OR_ABOVE_STATUSES = {"trial", "active", "renewal_upcoming", "payment_pending", "cancelled"}
-
 def requireTrialOrAbove(
     user: UserContext = Depends(verifyUser),
 ) -> UserContext:
     """Gate: requires at least a trial subscription."""
-    if user.sub_status not in _TRIAL_OR_ABOVE_STATUSES:
+    entitlement = _loadCurrentEntitlement(user)
+    if not entitlement.trialOrAbove:
         raiseFeatureGateHttpException(
             statusCode=status.HTTP_403_FORBIDDEN,
             uiMessage="Start a free trial or subscribe to access this feature.",
             backendLogMessage=(
                 f"Feature gate requireTrialOrAbove blocked userId={user.userId}, "
-                f"sub_status={user.sub_status}, "
-                f"allowed={sorted(_TRIAL_OR_ABOVE_STATUSES)}"
+                f"status={entitlement.status}, planType={entitlement.planType}"
             ),
             errorCode="FEATURE_BLOCKED",
         )
@@ -200,13 +207,14 @@ def requirePaidPlan(
     user: UserContext = Depends(verifyUser),
 ) -> UserContext:
     """Gate: requires a paid plan (pro or annual)."""
-    if user.plan_type in ("none", "free"):
+    entitlement = _loadCurrentEntitlement(user)
+    if not entitlement.paidPlan:
         raiseFeatureGateHttpException(
             statusCode=status.HTTP_403_FORBIDDEN,
             uiMessage="This feature requires a paid plan.",
             backendLogMessage=(
                 f"Feature gate requirePaidPlan blocked userId={user.userId}, "
-                f"plan_type={user.plan_type}, sub_status={user.sub_status}"
+                f"status={entitlement.status}, planType={entitlement.planType}"
             ),
             errorCode="FEATURE_BLOCKED",
         )
@@ -231,11 +239,8 @@ def requireCredits(operationType: str):
     unreadable (Redis and Supabase both unavailable) and is allowed through
     rather than blocking the user on an infrastructure fault.
 
-    The 402 body carries topupAvailable so the client knows whether to offer a
-    purchase or an upgrade. It follows _TOPUP_ELIGIBLE_STATUSES, which mirrors
-    subscriptionService._isSubscriptionActive rather than
-    _ACTIVE_SUBSCRIPTION_STATUSES: the latter admits 'cancelled', and purchased
-    tokens would outlive a departing user's access.
+    The 402 body carries topupAvailable from the current subscription
+    entitlement so the client knows whether to offer a purchase or an upgrade.
     """
     def _dependency(user: UserContext = Depends(verifyUser)) -> UserContext:
         from api.services.credits.creditService import creditService
@@ -246,10 +251,15 @@ def requireCredits(operationType: str):
 
         if remaining != -1 and remaining < minimum:
             snapshot = creditService.getBalanceSnapshot(user.userId)
-            topupAvailable = (
-                getattr(user, "plan_type", None) in ("pro", "annual")
-                and getattr(user, "sub_status", None) in _TOPUP_ELIGIBLE_STATUSES
-            )
+            try:
+                entitlement = subscriptionEntitlementService.get(user.userId)
+                topupAvailable = entitlement.topupEligible
+            except EntitlementUnavailableError:
+                logger.warning(
+                    "Top-up eligibility unavailable for userId={}",
+                    user.userId,
+                )
+                topupAvailable = False
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
                 detail={
