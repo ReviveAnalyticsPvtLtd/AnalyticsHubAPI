@@ -444,7 +444,7 @@ class ManagementService:
             logger.error(exception)
             raise exception   
         
-    def _attributeInfoFunc(self, projectId: str, dataframeName: str) -> str:
+    def _attributeInfoFunc(self, projectId: str, dataframeName: str) -> tuple:
         """
         Generate attribute information string for a given dataframe in a project.
 
@@ -453,7 +453,7 @@ class ManagementService:
             dataframeName (str): The dataframe/table name.
 
         Returns:
-            str: Attribute information string for the dataframe.
+            tuple: (attribute info string, deterministic [num_rows, num_cols] shape).
         """
         import pyarrow.parquet as pq
         import httpx
@@ -477,10 +477,10 @@ class ManagementService:
                 attributeInfo += 'SAMPLE ROW:\n' + str(sample_df.to_string()) + '\n'
             except Exception:
                 attributeInfo += 'SAMPLE ROW: (failed to load)\n'
-            return attributeInfo
+            return attributeInfo, [int(num_rows), int(num_cols)]
         except Exception as e:
             logger.error(f"Failed to generate attribute info for {dataframeName} under project {projectId}: {e}")
-            return f"DATAFRAME NAME: {dataframeName}\n(Metadata read failed)\n"
+            return f"DATAFRAME NAME: {dataframeName}\n(Metadata read failed)\n", None
 
     def _parseModelJsonOutput(self, rawOutput: object, stage: str) -> dict:
         """Delegate to shared parser in utils.llmOutputParser."""
@@ -540,9 +540,13 @@ class ManagementService:
             else:
                 dataFiles = [x.get("name") for x in self.client.storage.from_("AnalyticsHub").list(path = projectId) if x.get("name").endswith(".parquet")]
             results = ""
+            tableShapes: dict = {}
             for fileName in dataFiles:
                 dataframeName = fileName.replace(".parquet", "")
-                results += self._attributeInfoFunc(projectId = projectId, dataframeName = dataframeName)
+                info, shape = self._attributeInfoFunc(projectId = projectId, dataframeName = dataframeName)
+                results += info
+                if shape is not None:
+                    tableShapes[dataframeName] = shape
             from utils.llm import getLangfuseConfig
             metadataChain = self.metadataGenerator.getMetadataChain()
             metadataConfig = getLangfuseConfig(
@@ -563,6 +567,11 @@ class ManagementService:
             )
             for tableName in metadata:
                 metadata[tableName]["isActive"] = True
+                # Deterministically override the LLM's shape so row/column
+                # counts always match the actual parquet file and are never
+                # missing from the emitted entry.
+                if tableName in tableShapes:
+                    metadata[tableName]["shape"] = tableShapes[tableName]
             return metadata
         except Exception as e:
             logger.error(CustomException(e))
