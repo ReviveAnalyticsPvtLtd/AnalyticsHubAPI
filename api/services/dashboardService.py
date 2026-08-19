@@ -475,6 +475,37 @@ class DashboardService:
         else:
             ...
         
+    def _updateMetadataShapes(self, projectId: str, shapes: dict) -> None:
+        """Override the row/column counts in metadata.json with fresh deterministic values.
+
+        Args:
+            projectId (str): The project identifier.
+            shapes (dict): ``{tableName: [rows, cols]}`` from the just-refreshed data.
+        """
+        try:
+            files = [x.get("name") for x in client.storage.from_("AnalyticsHub").list(path = projectId)]
+            if "metadata.json" not in files:
+                return
+            metadataUrl = os.environ["FILE_URL"].format(projectId = projectId, fileName = "metadata.json").replace(".parquet", "") + f"?cb={int(time.time())}"
+            metadata = json.loads(urlopen(metadataUrl).read())
+            changed = False
+            for tableName, shape in shapes.items():
+                if metadata.get(tableName, {}).get("shape") != shape:
+                    metadata.setdefault(tableName, {})["shape"] = shape
+                    changed = True
+            if not changed:
+                return
+            with io.BytesIO() as buffer:
+                buffer.write(json.dumps(metadata, indent=4).encode("utf-8"))
+                buffer.seek(0)
+                client.storage.from_("AnalyticsHub").upload(
+                    path = f"{projectId}/metadata.json",
+                    file = buffer.getvalue(),
+                    file_options = {"upsert": "true"}
+                )
+        except Exception as e:
+            logger.warning(f"Failed to update metadata shapes after refresh for {projectId}: {e}")
+
     def pullDataInParallel(self, projectId: str) -> dict:
         """
         Retrieve data from multiple databases in parallel and upload results to the NubrixAI storage bucket.
@@ -508,6 +539,16 @@ class DashboardService:
                         file_options = {"upsert": "true"}
                     )
                 temp.close()
+            # Deterministically refresh row/column counts in metadata.json so
+            # they never drift from the just-refreshed parquet files.
+            shapes = {name: [int(len(df.index)), int(len(df.columns))] for name, df in results.items()}
+            self._updateMetadataShapes(projectId, shapes)
+            # Drop the in-process Arrow LRU so fetch/classify see the new data.
+            try:
+                from utils.initMethods import invalidate_data_cache
+                invalidate_data_cache(projectId=projectId)
+            except Exception as e:
+                logger.warning(f"Failed to invalidate data cache after refresh for {projectId}: {e}")
             updateProjectModifiedAt(projectId)
             return {"status": "SUCCESS"}
         except Exception as e:
