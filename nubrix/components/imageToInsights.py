@@ -3,8 +3,8 @@ imageToInsights.py
 
 This module provides the ImageToInsights class for extracting structured, evidence-backed
 insights from a dashboard page. The serialized dashboard data payload built by
-DashboardPayloadBuilder is the authoritative input and is sent first; a screenshot is
-attached only in hybrid mode, as supplementary layout context.
+DashboardPayloadBuilder is the sole input — the LLM reasons over exact numbers
+and statistical signals, not screenshots.
 """
 
 __version__ = "1.0.0"
@@ -68,19 +68,14 @@ class ImageToInsights:
     def getInsights(
         self,
         payloadText: str,
-        b64String: str | None = None,
         context: dict | None = None,
         callbacks: list | None = None,
     ) -> dict:
         """
         Generates structured insights from a serialized dashboard data payload.
 
-        The payload text is sent first and is authoritative. An image, when
-        supplied, is attached afterwards as supplementary layout context only.
-
         Args:
             payloadText (str): Serialized dashboard payload from DashboardPayloadBuilder.
-            b64String (str | None): Optional base64 PNG for hybrid mode.
             context (dict | None): Context dict, read only for tracing identifiers.
             callbacks (list | None): LangChain callbacks, e.g. credit tracking.
 
@@ -94,20 +89,11 @@ class ImageToInsights:
         try:
             logger.info("Generating insights from dashboard data payload.")
 
-            userContent = [{
-                "type": "text",
-                "text": payloadText + (
-                    "\n\nCRITICAL: You MUST output ONLY raw, valid JSON. Your response must be "
-                    "immediately parseable by `json.loads`. DO NOT wrap the output in markdown "
-                    "code blocks like ```json."
-                ),
-            }]
-
-            if b64String:
-                userContent.append({
-                    "type": "image_url",
-                    "image_url": {"url": "data:image/png;base64," + b64String},
-                })
+            userContent = payloadText + (
+                "\n\nCRITICAL: You MUST output ONLY raw, valid JSON. Your response must be "
+                "immediately parseable by `json.loads`. DO NOT wrap the output in markdown "
+                "code blocks like ```json."
+            )
 
             messages = [
                 SystemMessage(content=self.prompt),

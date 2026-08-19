@@ -86,9 +86,9 @@ class InsightContextBuilder:
         except Exception:
             return {}
 
-    def _extractChartData(self, dashboardConfig: dict, pageId: str | None) -> list[dict]:
+    def _extractChartData(self, dashboardConfig: dict, pageId: str) -> list[dict]:
         """
-        Extracts widget data from dashboard pages, filtered by page.
+        Extracts widget data from a single dashboard page.
 
         Carries `generatedCode` through so downstream provenance extraction can
         recover what each widget measures, and assigns each widget a short
@@ -96,7 +96,7 @@ class InsightContextBuilder:
 
         Args:
             dashboardConfig (dict): Parsed dashboardConfig.json.
-            pageId (str | None): Page to restrict to, or None for all pages.
+            pageId (str): The dashboard page to extract widgets from.
 
         Returns:
             list[dict]: Widget dicts in render order.
@@ -105,8 +105,7 @@ class InsightContextBuilder:
         if not dashboardConfig:
             return chartData
 
-        pages = [pageId] if pageId else list(dashboardConfig.keys())
-        for pid in pages:
+        for pid in [pageId]:
             page = dashboardConfig.get(pid)
             if not page:
                 continue
@@ -129,14 +128,14 @@ class InsightContextBuilder:
     def buildContext(
         self,
         projectId: str,
-        pageId: str | None = None,
+        pageId: str,
     ) -> dict:
         """
         Assembles the full context payload for insight generation.
 
         Args:
             projectId (str): The project identifier.
-            pageId (str | None): Optional dashboard page to focus on.
+            pageId (str): The dashboard page to generate insights for.
 
         Returns:
             dict: Context payload with keys: metadata, dashboard, chartData, domainContext, filters.

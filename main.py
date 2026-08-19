@@ -11,12 +11,30 @@ __author__ = "Rauhan Ahmed Siddiqui"
 import ssl
 ssl._create_default_https_context = ssl._create_unverified_context
 
-from api.routers import authentication, manager, dataLoader, reporting, utils, blends, dashboard, subscriptions, webhooks, billingAdmin, transformations, credits
+from api.routers import (
+    admin,
+    authentication,
+    billingAdmin,
+    blends,
+    credits,
+    dashboard,
+    dataLoader,
+    manager,
+    reporting,
+    subscriptions,
+    transformations,
+    utils,
+    webhooks,
+)
+from api.adminErrors import AdminApiError, requestValidationErrors
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from utils.logger import logger
 from fastapi.responses import ORJSONResponse
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request
+from starlette.exceptions import HTTPException as StarletteHTTPException
 import psutil
 import os
 
@@ -29,14 +47,53 @@ app = FastAPI(
     redoc_url = "/documentation/redoc"
 )
 
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request: Request, exc: HTTPException):
+def _isAdminRequest(request: Request) -> bool:
+    path = request.scope.get("path", "")
+    return (
+        path == "/admin"
+        or path.startswith("/admin/")
+        or path == "/api/latest/admin"
+        or path.startswith("/api/latest/admin/")
+    )
+
+
+@app.exception_handler(AdminApiError)
+async def admin_exception_handler(_request: Request, exc: AdminApiError):
+    content = {"message": exc.message}
+    if exc.errors:
+        content["errors"] = exc.errors
+    return ORJSONResponse(status_code=exc.statusCode, content=content)
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_handler(request: Request, exc: RequestValidationError):
+    if not _isAdminRequest(request):
+        return await request_validation_exception_handler(request, exc)
+    return ORJSONResponse(
+        status_code=422,
+        content={
+            "message": "Validation failed",
+            "errors": requestValidationErrors(exc.errors()),
+        },
+    )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     """
     Global exception handler for HTTPException.
     
     If the detail is a dict containing 'status' and 'message', it returns a 
     flat response. Otherwise, it returns the standard detail format.
     """
+    if _isAdminRequest(request):
+        if isinstance(exc.detail, dict):
+            content = {"message": exc.detail.get("message", "Request failed")}
+            if exc.detail.get("errors"):
+                content["errors"] = exc.detail["errors"]
+        else:
+            content = {"message": str(exc.detail)}
+        return ORJSONResponse(status_code=exc.status_code, content=content)
     if isinstance(exc.detail, dict) and "status" in exc.detail and "message" in exc.detail:
         return ORJSONResponse(
             status_code=exc.status_code,
@@ -46,6 +103,20 @@ async def http_exception_handler(request: Request, exc: HTTPException):
         status_code=exc.status_code,
         content={"detail": exc.detail}
     )
+
+
+@app.middleware("http")
+async def admin_unhandled_exception_middleware(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception as exc:
+        if not _isAdminRequest(request):
+            raise
+        logger.error("Unhandled admin request failure: {}", type(exc).__name__)
+        return ORJSONResponse(
+            status_code=500,
+            content={"message": "Internal server error"},
+        )
 
 app.add_middleware(
     CORSMiddleware,
@@ -82,3 +153,4 @@ app.include_router(webhooks.router, prefix = "/webhooks", tags = ["Webhooks"])
 app.include_router(billingAdmin.router, prefix = "/billing-admin", tags = ["Billing Admin"])
 app.include_router(transformations.router, prefix = "/transformations", tags = ["Transformations"])
 app.include_router(credits.router, prefix = "/credits", tags = ["Credits"])
+app.include_router(admin.router, prefix = "/admin", tags = ["Admin"])

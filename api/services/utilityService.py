@@ -104,13 +104,12 @@ class UtilityService:
         Extracts structured, evidence-backed insights from a dashboard page's own data.
 
         Builds a serialized data payload from the page's widgets, statistics, schema,
-        and domain profile, and sends that to the LLM. The screenshot is only attached
-        when mode is "hybrid". Results are cached per page against a hash of the
-        payload, so the cache invalidates exactly when the underlying data changes.
+        and domain profile, and sends that to the LLM. Results are cached per page
+        against a hash of the payload, so the cache invalidates exactly when the
+        underlying data changes.
 
         Args:
-            imageToInsights (ImageToInsightsModel): Project, page, mode, refresh flag,
-                and optional base64 image.
+            imageToInsights (ImageToInsightsModel): Project, page, and refresh flag.
             userId (str | None): Caller, used for credit tracking and tracing.
 
         Returns:
@@ -148,15 +147,14 @@ class UtilityService:
             if userId:
                 context["userId"] = userId
 
-            imgCallbacks = []
+            insightCallbacks = []
             if userId:
-                imgCallbacks.append(CreditTrackingCallback(userId=userId, operationType="image_to_insights"))
+                insightCallbacks.append(CreditTrackingCallback(userId=userId, operationType="image_to_insights"))
 
             insights = self.imageToInsightsModule.getInsights(
                 payloadText=payloadText,
-                b64String=imageToInsights.b64String if imageToInsights.mode == "hybrid" else None,
                 context=context,
-                callbacks=imgCallbacks if imgCallbacks else None,
+                callbacks=insightCallbacks if insightCallbacks else None,
             )
 
             record = self._persistDashboardInsight(
@@ -177,31 +175,46 @@ class UtilityService:
             raise exception
 
     @staticmethod
-    def _computeCacheKey(pageId: str | None, payloadText: str) -> str:
+    def _computeCacheKey(pageId: str, payloadText: str) -> str:
         """
         Derives the cache key for a page's insights from its serialized payload.
 
         Hashing the payload rather than timestamping means the cache invalidates
         precisely when the dashboard's data, filters, or widget set change.
         """
-        digest = hashlib.sha256(f"{pageId or ''}|{payloadText}".encode("utf-8"))
+        digest = hashlib.sha256(f"{pageId}|{payloadText}".encode("utf-8"))
         return digest.hexdigest()
 
-    def _findCachedRecord(self, records: list, pageId: str | None, cacheKey: str) -> dict | None:
+    def _findCachedRecord(self, records: list, pageId: str, cacheKey: str) -> dict | None:
         """
         Returns the stored insight for this page whose payload hash still matches.
 
         Records written before the content-hash cache (cacheVersion 1) carry no
-        cacheKey and are never served.
+        cacheKey and are never served. Records whose insights do not carry the
+        documented schema are also skipped, so a page cached while the payload
+        was malformed regenerates instead of serving the bad shape forever.
         """
         for record in reversed(records):
             if not isinstance(record, dict) or "insights" not in record:
                 continue
             if record.get("pageId") != pageId:
                 continue
+            if not self._isValidInsightsPayload(record.get("insights")):
+                continue
             if record.get("cacheKey") == cacheKey:
                 return record
         return None
+
+    @staticmethod
+    def _isValidInsightsPayload(insights: object) -> bool:
+        """
+        Returns whether an insights payload carries the schema the client expects:
+        diagnostic_insights, prescriptive_actions, and missing_data.
+        """
+        return isinstance(insights, dict) and all(
+            key in insights
+            for key in ("diagnostic_insights", "prescriptive_actions", "missing_data")
+        )
 
     def _formatDashboardInsightResponse(self, record: dict, source: str, cacheHit: bool) -> dict:
         """
@@ -215,14 +228,14 @@ class UtilityService:
             "generatedAt": record.get("generatedAt"),
         }
 
-    def _persistDashboardInsight(self, projectId: str, pageId: str | None, insights: dict, cacheKey: str) -> dict:
+    def _persistDashboardInsight(self, projectId: str, pageId: str, insights: dict, cacheKey: str) -> dict:
         """
         Persists the generated insight to dashboardInsights.json, replacing only
         the record for this page and leaving other pages' records intact.
 
         Args:
             projectId (str): The project identifier.
-            pageId (str | None): The dashboard page the insight was generated for.
+            pageId (str): The dashboard page the insight was generated for.
             insights (dict): The structured insight payload.
             cacheKey (str): Hash of the payload this insight was generated from.
 

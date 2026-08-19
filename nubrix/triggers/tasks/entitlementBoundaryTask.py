@@ -8,6 +8,7 @@ __all__ = ["EntitlementBoundaryTask"]
 
 
 from api.services.billing.billingEventService import BillingEventService
+from api.services.credits.creditService import creditService
 from api.services.subscriptions.paymentValidationService import parseUtc, utcNow
 from api.services.subscriptions.subscriptionFieldUtils import (
     CANONICAL_SUBSCRIPTION_SELECT,
@@ -69,6 +70,18 @@ class EntitlementBoundaryTask:
                     "domain_count": len(updatedExperts),
                     "pending_removals": [],
                 }).eq("id", subscription["id"]).execute()
+
+                try:
+                    creditService.applyDomainCountChange(
+                        userId=subscription.get("user_id"),
+                        domainCount=len(updatedExperts),
+                        grantImmediately=False,
+                    )
+                except Exception as creditErr:
+                    logger.warning(
+                        f"Credit allowance update failed after removal for "
+                        f"subscription {subscription.get('id')}: {creditErr}"
+                    )
 
                 BillingEventService(self.client).log_event(
                     user_id=subscription.get("user_id"),

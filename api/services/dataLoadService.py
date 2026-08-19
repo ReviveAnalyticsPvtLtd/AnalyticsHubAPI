@@ -73,12 +73,19 @@ class DataLoadService:
                 newNulls = numeric.isna() & ~originalNulls
                 if not newNulls.any():
                     df[col] = numeric
-                else:
-                    df[col] = (
-                        df[col]
-                        .astype(str)
-                        .replace({"None": pd.NA, "nan": pd.NA, "<NA>": pd.NA})
-                    )
+                    continue
+
+                dt = pd.to_datetime(df[col], errors="coerce", format="mixed")
+                dtNewNulls = dt.isna() & ~originalNulls
+                if not dtNewNulls.any():
+                    df[col] = dt
+                    continue
+
+                df[col] = (
+                    df[col]
+                    .astype(str)
+                    .replace({"None": pd.NA, "nan": pd.NA, "<NA>": pd.NA})
+                )
         return df
 
     @staticmethod
@@ -189,7 +196,7 @@ class DataLoadService:
                     tableName = f"{sanitizedBase}_{sanitizedSheet}"
                     managementService.validateTableNameAvailable(projectId=projectId, tableName=tableName)
                     with tempfile.NamedTemporaryFile(delete=True, suffix=".parquet") as temp:
-                        sheetData.to_parquet(temp.name, compression="snappy")
+                        self._sanitizeDfForParquet(sheetData).to_parquet(temp.name, compression="snappy")
                         fileName = f"{tableName}.parquet"
                         self.client.storage.from_("AnalyticsHub").upload(
                             file=temp.name,

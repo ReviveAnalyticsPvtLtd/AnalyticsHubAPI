@@ -1263,16 +1263,10 @@ class ManagementService:
             record = userRecord[0]
             try:
                 from api.services.credits.creditService import creditService
+                from api.services.credits.creditPresentation import buildProfileCreditView
+
                 snapshot = creditService.getBalanceSnapshot(userId)
-                creditsView = {
-                    "monthlyCredits": snapshot.get("monthlyCredits", 0.0),
-                    "usedCredits": snapshot.get("usedCredits", 0.0),
-                    "topupCredits": snapshot.get("topupCredits", 0.0),
-                    "remainingCredits": snapshot.get("remainingCredits", 0.0),
-                    "usagePercentage": snapshot.get("usagePercentage", 0.0),
-                    "periodEnd": snapshot.get("periodEnd"),
-                    "initialized": snapshot.get("initialized", False),
-                }
+                creditsView = buildProfileCreditView(snapshot)
             except Exception:
                 creditsView = None
             subscription = self._getCanonicalSubscription(userId)

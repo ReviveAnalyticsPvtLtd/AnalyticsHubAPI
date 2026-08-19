@@ -60,10 +60,8 @@ class SpeechToTextModel(BaseModel):
 
 class ImageToInsightsModel(BaseModel):
     projectId: str
-    b64String: str | None = None
-    pageId: str | None = None
+    pageId: str
     refresh: bool = False
-    mode: Literal["data", "hybrid"] = "data"
 
 class DeleteTable(BaseModel):
     projectId: str
