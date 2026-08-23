@@ -4,7 +4,11 @@ import json
 from loguru import logger
 
 from api.adminErrors import AdminApiError
-from api.adminModels import AdminSubscriptionPatch, AdminUserPatch
+from api.adminModels import (
+    AdminSubscriptionPatch,
+    AdminUserAccessPatch,
+    AdminUserPatch,
+)
 from api.services.adminAuthService import AdminContext
 from api.services.subscriptions.subscriptionFieldUtils import (
     mapBillingModeToPlanType,
@@ -16,6 +20,7 @@ ADMIN_USER_FIELDS = (
     "userId", "email", "fullName", "phoneNumber", "profileImage",
     "onboarded", "currentWorkspaceId", "companyName", "role", "profileBio",
     "usage", "industryType", "companySize", "country", "goals", "source",
+    "isBanned", "bannedAt", "bannedBy", "banReason",
 )
 ADMIN_USER_SELECT = ",".join(ADMIN_USER_FIELDS)
 ADMIN_SUBSCRIPTION_FIELDS = (
@@ -40,6 +45,7 @@ ADMIN_BATCH_SIZE = 1000
 def _serializeUser(row: dict) -> dict:
     result = {field: row.get(field) for field in ADMIN_USER_FIELDS}
     result["onboarded"] = bool(result["onboarded"])
+    result["isBanned"] = bool(result["isBanned"])
     return result
 
 
@@ -387,6 +393,152 @@ class AdminManagementService:
         self._auditUserUpdate(admin, userId, changedFields, "success")
         return _serializeUser(updatedRows[0])
 
+    def setUserAccess(
+        self,
+        userId: str,
+        patch: AdminUserAccessPatch,
+        admin: AdminContext,
+    ) -> dict:
+        changedFields = ["isBanned", "bannedAt", "bannedBy", "banReason"]
+        try:
+            existingRows = (
+                self.client.table("Users")
+                .select(ADMIN_USER_SELECT)
+                .eq("userId", userId)
+                .execute().data
+            )
+        except Exception as exc:
+            self._auditUserAccess(
+                admin, userId, patch.banned, changedFields, "failed", None
+            )
+            raise AdminApiError(500, "Failed to update user access") from exc
+
+        if not existingRows:
+            self._auditUserAccess(
+                admin, userId, patch.banned, changedFields, "not_found", None
+            )
+            raise AdminApiError(404, "User not found")
+
+        current = existingRows[0]
+        sessionsRevoked = 0
+        if not patch.banned and bool(current.get("isBanned")):
+            try:
+                revokedRows = (
+                    self.client.table("Sessions")
+                    .delete()
+                    .eq("userId", userId)
+                    .execute().data
+                ) or []
+                sessionsRevoked = len(revokedRows)
+            except Exception as exc:
+                self._auditUserAccess(
+                    admin,
+                    userId,
+                    patch.banned,
+                    changedFields,
+                    "side_effect_failed",
+                    None,
+                    details={"failedSideEffects": ["session_revocation"]},
+                )
+                raise AdminApiError(500, "Failed to restore user access") from exc
+
+        if patch.banned:
+            transitioning = not bool(current.get("isBanned"))
+            reason = (
+                patch.reason
+                if "reason" in patch.model_fields_set or transitioning
+                else current.get("banReason")
+            )
+            updatePayload = {
+                "isBanned": True,
+                "bannedAt": (
+                    datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    if transitioning or not current.get("bannedAt")
+                    else current.get("bannedAt")
+                ),
+                "bannedBy": (
+                    admin.adminId
+                    if transitioning or not current.get("bannedBy")
+                    else current.get("bannedBy")
+                ),
+                "banReason": reason,
+            }
+        else:
+            reason = None
+            updatePayload = {
+                "isBanned": False,
+                "bannedAt": None,
+                "bannedBy": None,
+                "banReason": None,
+            }
+
+        try:
+            updatedRows = (
+                self.client.table("Users")
+                .update(updatePayload)
+                .eq("userId", userId)
+                .execute().data
+            )
+            if not updatedRows:
+                raise RuntimeError("Users access update returned no row")
+        except Exception as exc:
+            self._auditUserAccess(
+                admin, userId, patch.banned, changedFields, "failed", reason
+            )
+            raise AdminApiError(500, "Failed to update user access") from exc
+
+        warnings = []
+        failedSideEffects = []
+        if patch.banned:
+            try:
+                revokedRows = (
+                    self.client.table("Sessions")
+                    .delete()
+                    .eq("userId", userId)
+                    .execute().data
+                ) or []
+                sessionsRevoked = len(revokedRows)
+            except Exception:
+                warnings.append("Product session revocation failed")
+                failedSideEffects.append("session_revocation")
+
+        try:
+            self.client.auth.admin.update_user_by_id(
+                userId,
+                {"ban_duration": "876000h" if patch.banned else "none"},
+            )
+            supabaseAuthSynced = True
+        except Exception:
+            supabaseAuthSynced = False
+            warnings.append("Supabase Auth synchronization failed")
+            failedSideEffects.append("supabase_auth_sync")
+
+        outcome = "side_effect_failed" if warnings else "success"
+        self._auditUserAccess(
+            admin,
+            userId,
+            patch.banned,
+            changedFields,
+            outcome,
+            reason,
+            details={
+                "sessionsRevoked": sessionsRevoked,
+                "supabaseAuthSynced": supabaseAuthSynced,
+                "failedSideEffects": failedSideEffects,
+            },
+        )
+        updated = updatedRows[0]
+        return {
+            "userId": updated["userId"],
+            "isBanned": bool(updated.get("isBanned")),
+            "bannedAt": updated.get("bannedAt"),
+            "bannedBy": updated.get("bannedBy"),
+            "banReason": updated.get("banReason"),
+            "sessionsRevoked": sessionsRevoked,
+            "supabaseAuthSynced": supabaseAuthSynced,
+            "warnings": warnings,
+        }
+
     def _fetchAll(
         self,
         tableName: str,
@@ -432,6 +584,38 @@ class AdminManagementService:
             "user.update", "user", userId, changedFields, outcome, admin
         )
 
+    def _auditUserAccess(
+        self,
+        admin: AdminContext,
+        userId: str,
+        banned: bool,
+        changedFields: list[str],
+        outcome: str,
+        reason: str | None,
+        details: dict | None = None,
+    ) -> None:
+        action = "user.ban" if banned else "user.unban"
+        logger.bind(
+            adminId=admin.adminId,
+            sessionId=admin.sessionId,
+            targetType="user",
+            targetId=userId,
+            changedFields=changedFields,
+            outcome=outcome,
+        ).info("admin_audit")
+        auditDetails = dict(details or {})
+        if reason is not None:
+            auditDetails["reason"] = reason
+        self._recordDurableAudit(
+            action,
+            "user",
+            userId,
+            changedFields,
+            outcome,
+            admin,
+            details=auditDetails,
+        )
+
     def _auditSubscriptionUpdate(
         self,
         admin: AdminContext,
@@ -460,6 +644,7 @@ class AdminManagementService:
         changedFields: list[str],
         outcome: str,
         admin: AdminContext,
+        details: dict | None = None,
     ) -> None:
         """
         Persist the audit event alongside the log line already emitted above.
@@ -481,6 +666,7 @@ class AdminManagementService:
                 outcome=outcome,
                 admin=admin,
                 emitLog=False,
+                details=details,
             )
         except Exception as exc:
             logger.error(

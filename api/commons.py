@@ -24,7 +24,10 @@ from fastapi import status, HTTPException
 from supabase.lib.client_options import ClientOptions
 from supabase import create_client
 from utils.logger import logger
-from utils.exceptionHandler import raiseFeatureGateHttpException
+from utils.exceptionHandler import (
+    raiseAccountAccessRevokedHttpException,
+    raiseFeatureGateHttpException,
+)
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from fastapi import Depends
@@ -62,16 +65,27 @@ def _verifyTokenInternal(credentials: HTTPAuthorizationCredentials, checkExpiry:
     try:
         payload = jwt.decode(token, os.environ["SECRET_KEY"], algorithms=["HS256"])
         tokenEmail = payload.get("email")
-        if not tokenEmail:
+        tokenUserId = payload.get("userId")
+        if not tokenEmail or not tokenUserId:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, 
-                detail={"status": "FAILURE", "message": "Invalid token payload: missing email"}
+                detail={"status": "FAILURE", "message": "Invalid token payload: missing identity"}
             )
     except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, 
             detail={"status": "FAILURE", "message": "Invalid token: failed to decode"}
         )
+
+    userRows = (
+        client.table("Users")
+        .select("isBanned")
+        .eq("userId", tokenUserId)
+        .limit(1)
+        .execute().data
+    )
+    if userRows and userRows[0].get("isBanned"):
+        raiseAccountAccessRevokedHttpException(str(tokenUserId))
 
     # 2. Check existence in database
     response = client.table("Sessions").select("*").eq("accessToken", token).limit(1).execute()
@@ -84,10 +98,15 @@ def _verifyTokenInternal(credentials: HTTPAuthorizationCredentials, checkExpiry:
     
     sessionData = response.data[0]
     dbEmail = sessionData.get("email")
+    dbUserId = sessionData.get("userId")
 
-    # 3. Cross-validate email (JWT vs DB)
-    if tokenEmail != dbEmail:
-        logger.error(f"Token email mismatch: JWT({tokenEmail}) vs DB({dbEmail})")
+    # 3. Cross-validate identity (JWT vs DB)
+    if tokenEmail != dbEmail or tokenUserId != dbUserId:
+        logger.error(
+            "Token identity mismatch: JWT userId={}, DB userId={}",
+            tokenUserId,
+            dbUserId,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, 
             detail={"status": "FAILURE", "message": "Token validation failed: identity mismatch"}

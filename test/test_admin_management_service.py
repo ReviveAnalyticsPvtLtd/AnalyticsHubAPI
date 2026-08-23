@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import api.adminModels as adminModels
 from api.adminErrors import AdminApiError
 from api.adminModels import AdminSubscriptionPatch, AdminUserPatch
 from api.services.adminAuthService import AdminContext
@@ -60,6 +61,7 @@ EXPECTED_USER_FIELDS = {
     "userId", "email", "fullName", "phoneNumber", "profileImage",
     "onboarded", "currentWorkspaceId", "companyName", "role", "profileBio",
     "usage", "industryType", "companySize", "country", "goals", "source",
+    "isBanned", "bannedAt", "bannedBy", "banReason",
 }
 
 EXPECTED_SUBSCRIPTION_FIELD_ORDER = (
@@ -93,6 +95,10 @@ def userRow(userId="user-1", email="old@example.com", **overrides):
         "country": "India",
         "goals": "Insights",
         "source": "Referral",
+        "isBanned": False,
+        "bannedAt": None,
+        "bannedBy": None,
+        "banReason": None,
         "password": "must-never-leave-storage",
         "internalFlag": "private",
     }
@@ -346,15 +352,188 @@ def test_list_users_batches_and_never_selects_sensitive_fields():
     )
 
 
-def test_list_users_serializes_exactly_sixteen_fields_and_normalizes_boolean():
+def test_list_users_serializes_access_fields_and_normalizes_booleans():
     client = FakeClient([userRow(onboarded=0, profileBio=None)])
 
     users = AdminManagementService(client=client).listUsers()
 
     assert set(users[0]) == EXPECTED_USER_FIELDS
-    assert len(users[0]) == 16
+    assert len(users[0]) == 20
     assert users[0]["onboarded"] is False
+    assert users[0]["isBanned"] is False
     assert users[0]["profileBio"] is None
+
+
+def test_ban_user_sets_authoritative_state_revokes_sessions_and_syncs_auth(
+    stubDurableAudit,
+):
+    patchModel = getattr(adminModels, "AdminUserAccessPatch")
+    client = FakeClient([userRow()])
+    client.rows["Sessions"] = [
+        {"id": "session-1", "userId": "user-1"},
+        {"id": "session-2", "userId": "user-1"},
+        {"id": "session-3", "userId": "user-2"},
+    ]
+    service = AdminManagementService(client=client, auditService=stubDurableAudit)
+
+    result = service.setUserAccess(
+        "user-1",
+        patchModel.model_validate({"banned": True, "reason": "  Abuse  "}),
+        ADMIN_CONTEXT,
+    )
+
+    update = client.lastUpdate("Users")
+    assert update["isBanned"] is True
+    assert update["bannedBy"] == ADMIN_CONTEXT.adminId
+    assert update["banReason"] == "Abuse"
+    assert update["bannedAt"] is not None
+    assert client.deletedFilters("Sessions") == [("userId", "user-1")]
+    assert [row["id"] for row in client.rows["Sessions"]] == ["session-3"]
+    client.auth.admin.update_user_by_id.assert_called_once_with(
+        "user-1", {"ban_duration": "876000h"}
+    )
+    assert result["isBanned"] is True
+    assert result["banReason"] == "Abuse"
+    assert result["sessionsRevoked"] == 2
+    assert result["supabaseAuthSynced"] is True
+    assert result["warnings"] == []
+    assert stubDurableAudit.calls[-1]["action"] == "user.ban"
+    assert stubDurableAudit.calls[-1]["details"] == {
+        "reason": "Abuse",
+        "sessionsRevoked": 2,
+        "supabaseAuthSynced": True,
+        "failedSideEffects": [],
+    }
+
+
+def test_ban_user_accepts_omitted_reason():
+    patchModel = getattr(adminModels, "AdminUserAccessPatch")
+    client = FakeClient([userRow()])
+
+    result = AdminManagementService(client=client).setUserAccess(
+        "user-1",
+        patchModel.model_validate({"banned": True}),
+        ADMIN_CONTEXT,
+    )
+
+    assert client.lastUpdate("Users")["banReason"] is None
+    assert result["banReason"] is None
+
+
+def test_unban_user_revokes_residual_sessions_before_clearing_ban_snapshot():
+    patchModel = getattr(adminModels, "AdminUserAccessPatch")
+    client = FakeClient([
+        userRow(
+            isBanned=True,
+            bannedAt="2026-08-20T00:00:00+00:00",
+            bannedBy=ADMIN_CONTEXT.adminId,
+            banReason="Abuse",
+        )
+    ])
+    client.rows["Sessions"] = [
+        {"id": "old-session", "userId": "user-1"},
+        {"id": "other-session", "userId": "user-2"},
+    ]
+
+    result = AdminManagementService(client=client).setUserAccess(
+        "user-1",
+        patchModel.model_validate({"banned": False}),
+        ADMIN_CONTEXT,
+    )
+
+    assert client.lastUpdate("Users") == {
+        "isBanned": False,
+        "bannedAt": None,
+        "bannedBy": None,
+        "banReason": None,
+    }
+    client.auth.admin.update_user_by_id.assert_called_once_with(
+        "user-1", {"ban_duration": "none"}
+    )
+    assert client.deletedFilters("Sessions") == [("userId", "user-1")]
+    assert [row["id"] for row in client.rows["Sessions"]] == ["other-session"]
+    assert result["isBanned"] is False
+    assert result["sessionsRevoked"] == 1
+
+
+def test_unban_keeps_user_banned_when_residual_session_revocation_fails(
+    stubDurableAudit,
+):
+    patchModel = getattr(adminModels, "AdminUserAccessPatch")
+    client = FakeClient([
+        userRow(
+            isBanned=True,
+            bannedAt="2026-08-20T00:00:00+00:00",
+            bannedBy=ADMIN_CONTEXT.adminId,
+            banReason="Abuse",
+        )
+    ])
+    client.rows["Sessions"] = [{"id": "old-session", "userId": "user-1"}]
+    client.failSessionDelete = True
+
+    with pytest.raises(AdminApiError) as captured:
+        AdminManagementService(
+            client=client,
+            auditService=stubDurableAudit,
+        ).setUserAccess(
+            "user-1",
+            patchModel.model_validate({"banned": False}),
+            ADMIN_CONTEXT,
+        )
+
+    assert captured.value.statusCode == 500
+    assert captured.value.message == "Failed to restore user access"
+    assert client.rows["Users"][0]["isBanned"] is True
+    assert client.rows["Sessions"][0]["id"] == "old-session"
+    assert client.updates == []
+    assert stubDurableAudit.calls[-1]["outcome"] == "side_effect_failed"
+    assert stubDurableAudit.calls[-1]["details"] == {
+        "failedSideEffects": ["session_revocation"]
+    }
+
+
+def test_ban_remains_enforced_when_native_auth_sync_fails(stubDurableAudit):
+    patchModel = getattr(adminModels, "AdminUserAccessPatch")
+    client = FakeClient([userRow()])
+    client.auth.admin.update_user_by_id.side_effect = RuntimeError(
+        "auth backend secret must not leak"
+    )
+
+    result = AdminManagementService(
+        client=client,
+        auditService=stubDurableAudit,
+    ).setUserAccess(
+        "user-1",
+        patchModel.model_validate({"banned": True}),
+        ADMIN_CONTEXT,
+    )
+
+    assert client.rows["Users"][0]["isBanned"] is True
+    assert result["supabaseAuthSynced"] is False
+    assert result["warnings"] == ["Supabase Auth synchronization failed"]
+    assert stubDurableAudit.calls[-1]["outcome"] == "side_effect_failed"
+    assert stubDurableAudit.calls[-1]["details"]["failedSideEffects"] == [
+        "supabase_auth_sync"
+    ]
+    assert "secret" not in repr(result)
+
+
+def test_set_user_access_returns_404_for_missing_user(stubDurableAudit):
+    patchModel = getattr(adminModels, "AdminUserAccessPatch")
+
+    with pytest.raises(AdminApiError) as captured:
+        AdminManagementService(
+            client=FakeClient([]),
+            auditService=stubDurableAudit,
+        ).setUserAccess(
+            "missing-user",
+            patchModel.model_validate({"banned": True}),
+            ADMIN_CONTEXT,
+        )
+
+    assert captured.value.statusCode == 404
+    assert captured.value.message == "User not found"
+    assert stubDurableAudit.calls[-1]["outcome"] == "not_found"
 
 
 def test_update_user_applies_only_fields_explicitly_supplied():

@@ -1,6 +1,13 @@
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 
 AdminSubscriptionStatus = Literal[
@@ -54,6 +61,21 @@ class AdminUserPatch(_StrictModel):
         return self
 
 
+class AdminUserAccessPatch(_StrictModel):
+    banned: bool
+    reason: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def normalizeReason(cls, value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            normalized = value.strip()
+            return normalized or None
+        return value
+
+
 class AdminSubscriptionPatch(_StrictModel):
     status: AdminSubscriptionStatus | None = None
     subscribed_experts: str | None = None
@@ -86,6 +108,21 @@ class AdminUserView(_StrictModel):
     country: str | None = None
     goals: str | None = None
     source: str | None = None
+    isBanned: bool
+    bannedAt: str | None = None
+    bannedBy: str | None = None
+    banReason: str | None = None
+
+
+class AdminUserAccessView(_StrictModel):
+    userId: str
+    isBanned: bool
+    bannedAt: str | None = None
+    bannedBy: str | None = None
+    banReason: str | None = None
+    sessionsRevoked: int = Field(ge=0)
+    supabaseAuthSynced: bool
+    warnings: list[str]
 
 
 class AdminAuditEventView(_StrictModel):
@@ -98,6 +135,7 @@ class AdminAuditEventView(_StrictModel):
     target_type: str
     target_id: str | None = None
     changed_fields: str
+    details: str
     outcome: str
     created_at: str
 

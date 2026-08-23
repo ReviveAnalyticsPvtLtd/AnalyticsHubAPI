@@ -7,11 +7,26 @@ for debugging and logging.
 
 __version__ = "1.0.0"
 __author__ = "Rauhan Ahmed Siddiqui"
-__all__ = ["CustomException", "raiseHttpException", "raiseFeatureGateHttpException"]
+__all__ = [
+    "ACCOUNT_ACCESS_REVOKED_ERROR_CODE",
+    "ACCOUNT_ACCESS_REVOKED_MESSAGE",
+    "CustomException",
+    "accountAccessRevokedException",
+    "raiseAccountAccessRevokedHttpException",
+    "raiseHttpException",
+    "raiseFeatureGateHttpException",
+]
 
 
 from fastapi import HTTPException
 import traceback
+
+
+ACCOUNT_ACCESS_REVOKED_ERROR_CODE = "ACCOUNT_ACCESS_REVOKED"
+ACCOUNT_ACCESS_REVOKED_MESSAGE = (
+    "Access to this account has been revoked. "
+    "Please contact NubrixAI Support."
+)
 
 class CustomException(Exception):
     """
@@ -19,7 +34,13 @@ class CustomException(Exception):
     the line number, file name, and original error message where
     the exception was raised.
     """
-    def __init__(self, exception: Exception, statusCode: int = 500, uiMessage: str = "Something went wrong. Please try again later.") -> None:
+    def __init__(
+        self,
+        exception: Exception,
+        statusCode: int = 500,
+        uiMessage: str = "Something went wrong. Please try again later.",
+        errorCode: str | None = None,
+    ) -> None:
         """
         Initialize the CustomException with detailed traceback information.
 
@@ -28,6 +49,7 @@ class CustomException(Exception):
         """
         self.statusCode = statusCode
         self.uiMessage = uiMessage
+        self.errorCode = errorCode
         tbList = traceback.extract_tb(exception.__traceback__) if exception.__traceback__ else []
         if tbList:
             tb = tbList[-1]
@@ -44,14 +66,31 @@ class CustomException(Exception):
         super().__init__(self.customErrorMessage)
 
 def raiseHttpException(e: CustomException):
+    detail = {
+        "status": e.statusCode,
+        "message": e.uiMessage,
+        "backendLogMessage": e.customErrorMessage,
+    }
+    if e.errorCode is not None:
+        detail["errorCode"] = e.errorCode
     raise HTTPException(
         status_code=e.statusCode,
-        detail={
-            "status": e.statusCode,
-            "message": e.uiMessage,
-            "backendLogMessage": e.customErrorMessage,
-        }
+        detail=detail,
     )
+
+
+def accountAccessRevokedException(userId: str) -> CustomException:
+    return CustomException(
+        PermissionError(f"Account access revoked for userId={userId}"),
+        statusCode=403,
+        uiMessage=ACCOUNT_ACCESS_REVOKED_MESSAGE,
+        errorCode=ACCOUNT_ACCESS_REVOKED_ERROR_CODE,
+    )
+
+
+def raiseAccountAccessRevokedHttpException(userId: str) -> None:
+    exception = accountAccessRevokedException(userId)
+    raiseHttpException(exception)
 
 
 def raiseFeatureGateHttpException(

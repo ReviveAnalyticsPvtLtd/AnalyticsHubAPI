@@ -2030,6 +2030,72 @@ unconfigured or its metrics endpoint returns an unexpected shape.
 
 ---
 
+## 15. Admin Panel
+
+All routes under `/api/latest/admin/` use the isolated administrator bearer
+token issued by `POST /api/latest/admin/auth/login`.
+
+### 15.1 `PATCH /api/latest/admin/users/{userId}/access`
+
+Ban a product user or restore their access. Banning is effective immediately:
+the authoritative flag is written to `Users`, all Nubrix product sessions are
+revoked, and Supabase Auth is synchronized as a defense-in-depth control.
+
+**Request:**
+```json
+{
+  "banned": true,
+  "reason": "Optional internal reason"
+}
+```
+
+`reason` is optional, accepts `null` or an empty string, and is limited to
+1,000 characters. It is retained for administrators and audit history but is
+never returned to the banned user.
+
+To restore access:
+```json
+{
+  "banned": false
+}
+```
+
+Restoring access does not restore any prior session. Residual sessions are
+revoked before the ban flag is cleared, and the user must log in again to
+receive a fresh token. If residual session cleanup fails, the user remains
+banned and the endpoint returns `500`.
+
+**Response (200):**
+```json
+{
+  "userId": "2f5a3428-82a5-41d9-ae80-5388842953bc",
+  "isBanned": true,
+  "bannedAt": "2026-08-23T15:39:03+00:00",
+  "bannedBy": "f1998e72-e414-4694-8873-211b2136f25f",
+  "banReason": null,
+  "sessionsRevoked": 2,
+  "supabaseAuthSynced": true,
+  "warnings": []
+}
+```
+
+If Nubrix session cleanup or Supabase Auth synchronization fails, the database
+ban remains authoritative. The response contains a safe warning and the audit
+outcome is recorded as `side_effect_failed`.
+
+**Errors:**
+- `401` — Missing, invalid, expired, or revoked administrator session
+- `404` — Product user not found
+- `422` — Invalid payload or reason longer than 1,000 characters
+- `500` — The authoritative state could not be written, or sessions could not
+  be safely revoked before restoring access
+
+When a banned user attempts login or uses a previously issued token, the
+product API returns `403` with `errorCode: "ACCOUNT_ACCESS_REVOKED"` and tells
+the user to contact NubrixAI Support.
+
+---
+
 ## Common Error Responses
 
 All endpoints (except webhook) return errors in a flat shape:
@@ -2060,8 +2126,8 @@ All endpoints (except `/auth/signUp`, `/auth/login`, `/auth/loginWithProvider`, 
 JWT requirements:
 - Algorithm: HS256
 - Secret: `SECRET_KEY` env var
-- Required claim: `email`
-- Optional claims: `userId`, `exp`, `sub_status`, `plan_type`
+- Required claims: `email`, `userId`
+- Optional claims: `exp`, `sub_status`, `plan_type`
 
 ---
 

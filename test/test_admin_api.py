@@ -25,6 +25,7 @@ from api.adminModels import (
     AdminSubscriptionView,
     AdminUserView,
 )
+import api.adminModels as adminModels
 from api.routers import admin
 from api.routers.billingAdmin import verifyBillingAdmin
 from api.services.adminAuthService import (
@@ -69,6 +70,21 @@ USER_VIEW = {
     "country": "IN",
     "goals": "Reporting",
     "source": "email",
+    "isBanned": False,
+    "bannedAt": None,
+    "bannedBy": None,
+    "banReason": None,
+}
+
+USER_ACCESS_VIEW = {
+    "userId": "user-1",
+    "isBanned": True,
+    "bannedAt": "2026-08-23T00:00:00+00:00",
+    "bannedBy": "admin-1",
+    "banReason": None,
+    "sessionsRevoked": 2,
+    "supabaseAuthSynced": True,
+    "warnings": [],
 }
 
 SUBSCRIPTION_VIEW = {
@@ -147,6 +163,16 @@ class FakeAdminManagementService:
             **payload.model_dump(exclude_unset=True),
         }
 
+    def setUserAccess(self, userId: str, payload, admin: AdminContext) -> dict:
+        if userId == "missing":
+            raise AdminApiError(404, "User not found")
+        return {
+            **USER_ACCESS_VIEW,
+            "userId": userId,
+            "isBanned": payload.banned,
+            "banReason": payload.reason,
+        }
+
 
 AUDIT_EVENT_VIEW = {
     "id": "audit-1",
@@ -158,6 +184,7 @@ AUDIT_EVENT_VIEW = {
     "target_type": "user",
     "target_id": "user-1",
     "changed_fields": '["email"]',
+    "details": "{}",
     "outcome": "success",
     "created_at": "2026-08-17T00:00:00+00:00",
 }
@@ -258,6 +285,21 @@ def test_user_routes_return_only_public_response_fields(client):
         **USER_VIEW,
         "userId": "user-2",
         "fullName": "Updated User",
+    }
+
+
+def test_user_access_route_bans_with_optional_reason(client):
+    response = client.patch(
+        "/admin/users/user-2/access",
+        json={"banned": True, "reason": ""},
+        headers=_adminHeaders(),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        **USER_ACCESS_VIEW,
+        "userId": "user-2",
+        "banReason": None,
     }
 
 
@@ -369,12 +411,14 @@ def test_unknown_admin_path_uses_admin_error_shape(client, path):
 
 
 def test_admin_routes_declare_strict_response_allowlists():
+    accessView = getattr(adminModels, "AdminUserAccessView")
     expectedModels = {
         ("/admin/auth/login", "POST"): AdminLoginResponse,
         ("/admin/auth/logout", "POST"): AdminLogoutResponse,
         ("/admin/audit", "GET"): list[AdminAuditEventView],
         ("/admin/users", "GET"): list[AdminUserView],
         ("/admin/users/{userId}", "PATCH"): AdminUserView,
+        ("/admin/users/{userId}/access", "PATCH"): accessView,
         ("/admin/subscriptions", "GET"): list[AdminSubscriptionView],
         ("/admin/subscriptions/{subscriptionId}", "PATCH"): AdminSubscriptionView,
     }

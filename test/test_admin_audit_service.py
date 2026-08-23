@@ -129,7 +129,26 @@ def test_record_writes_durable_row():
     assert row["target_id"] == "user-1"
     assert row["changed_fields"] == ["email"]
     assert row["outcome"] == "success"
+    assert row["details"] == {}
     assert row["created_at"] == FIXED_NOW.isoformat()
+
+
+def test_record_persists_internal_access_reason_in_details():
+    service, client = buildService()
+
+    service.record(
+        action="user.ban",
+        targetType="user",
+        targetId="user-1",
+        changedFields=["isBanned", "banReason"],
+        outcome="success",
+        admin=ADMIN_CONTEXT,
+        details={"reason": "Repeated abuse"},
+    )
+
+    assert client.rows[ADMIN_AUDIT_TABLE][0]["details"] == {
+        "reason": "Repeated abuse"
+    }
 
 
 def test_record_never_raises_when_durable_write_fails():
@@ -258,6 +277,7 @@ def test_list_events_serializes_changed_fields_as_json_string():
         "target_type": "user",
         "target_id": "user-1",
         "changed_fields": ["email", "fullName"],
+        "details": {"reason": "Repeated abuse"},
         "outcome": "success",
         "created_at": FIXED_NOW.isoformat(),
     }]
@@ -266,6 +286,7 @@ def test_list_events_serializes_changed_fields_as_json_string():
     events = service.listEvents(limit=10, offset=0)
 
     assert events[0]["changed_fields"] == '["email","fullName"]'
+    assert events[0]["details"] == '{"reason":"Repeated abuse"}'
 
 
 def test_list_events_raises_admin_error_when_backend_fails():

@@ -7,6 +7,8 @@ from api.adminModels import (
     AdminLogoutResponse,
     AdminSubscriptionPatch,
     AdminSubscriptionView,
+    AdminUserAccessPatch,
+    AdminUserAccessView,
     AdminUserPatch,
     AdminUserView,
 )
@@ -68,6 +70,19 @@ async def updateUser(
     service: AdminManagementService = Depends(getAdminManagementService),
 ):
     return service.updateUser(userId, payload, admin)
+
+
+@router.patch(
+    "/users/{userId}/access",
+    response_model=AdminUserAccessView,
+)
+async def setUserAccess(
+    userId: str,
+    payload: AdminUserAccessPatch,
+    admin: AdminContext = Depends(verifyAdmin),
+    service: AdminManagementService = Depends(getAdminManagementService),
+):
+    return service.setUserAccess(userId, payload, admin)
 
 
 @router.get("/audit", response_model=list[AdminAuditEventView])
