@@ -132,10 +132,73 @@ def subscriptionRow(subscriptionId="sub-1", **overrides):
         "plan_type": "pro",
         "created_at": "2026-01-01T00:00:00+00:00",
         "updated_at": "2026-08-01T00:00:00+00:00",
+        "erasure_pending": False,
         "provider_secret": "must-never-leave-storage",
     }
     row.update(overrides)
     return row
+
+
+def test_erasure_pending_blocks_user_edits_unban_and_subscription_edits():
+    client = FakeClient([userRow(isBanned=True)])
+    client.rows["subscriptions"] = [subscriptionRow(erasure_pending=True)]
+    accessPatch = getattr(adminModels, "AdminUserAccessPatch")
+
+    with pytest.raises(AdminApiError) as userEdit:
+        AdminManagementService(client=client).updateUser(
+            "user-1",
+            AdminUserPatch.model_validate({"fullName": "Changed"}),
+            ADMIN_CONTEXT,
+        )
+    with pytest.raises(AdminApiError) as unban:
+        AdminManagementService(client=client).setUserAccess(
+            "user-1",
+            accessPatch.model_validate({"banned": False}),
+            ADMIN_CONTEXT,
+        )
+    with pytest.raises(AdminApiError) as subscriptionEdit:
+        AdminManagementService(client=client).updateSubscription(
+            "sub-1",
+            AdminSubscriptionPatch.model_validate({"status": "paused"}),
+            ADMIN_CONTEXT,
+        )
+
+    for captured in (userEdit, unban, subscriptionEdit):
+        assert captured.value.statusCode == 409
+        assert captured.value.message == "User erasure is in progress"
+    assert client.updates == []
+
+
+def test_erasure_pending_still_allows_idempotent_ban_enforcement():
+    client = FakeClient([userRow(isBanned=True)])
+    client.rows["subscriptions"] = [subscriptionRow(erasure_pending=True)]
+    accessPatch = getattr(adminModels, "AdminUserAccessPatch")
+
+    result = AdminManagementService(client=client).setUserAccess(
+        "user-1",
+        accessPatch.model_validate({"banned": True}),
+        ADMIN_CONTEXT,
+    )
+
+    assert result["isBanned"] is True
+
+
+def test_active_erasure_ledger_blocks_unban_even_without_subscription_row():
+    client = FakeClient([userRow(isBanned=True)])
+    client.rows["user_erasure_requests"] = [
+        {"id": "request-1", "target_user_id": "user-1", "status": "IN_PROGRESS"}
+    ]
+    accessPatch = getattr(adminModels, "AdminUserAccessPatch")
+
+    with pytest.raises(AdminApiError) as captured:
+        AdminManagementService(client=client).setUserAccess(
+            "user-1",
+            accessPatch.model_validate({"banned": False}),
+            ADMIN_CONTEXT,
+        )
+
+    assert captured.value.statusCode == 409
+    assert client.updates == []
 
 
 class FakeQuery:
@@ -256,6 +319,7 @@ class FakeClient:
             "Users": list(users),
             "subscriptions": list(subscriptions or []),
             "Sessions": [],
+            "user_erasure_requests": [],
         }
         self.selects = {}
         self.ranges = {}
@@ -1062,7 +1126,9 @@ def test_subscription_update_uses_id_and_version_and_increments_version():
     assert set(client.lastUpdate("subscriptions")) == {
         "status", "plan_type", "updated_at", "version"
     }
-    assert client.selects["subscriptions"] == [EXPECTED_SUBSCRIPTION_SELECT]
+    assert client.selects["subscriptions"] == [
+        f"{EXPECTED_SUBSCRIPTION_SELECT},erasure_pending"
+    ]
     assert result["version"] == 13
 
 

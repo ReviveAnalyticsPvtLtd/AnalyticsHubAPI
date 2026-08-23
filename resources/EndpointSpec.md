@@ -17,6 +17,7 @@ All endpoints are mounted under `/api/latest/`. Authentication is via `Authoriza
 12. [Billing Admin](#12-billing-admin)
 13. [Webhooks](#13-webhooks)
 14. [Credits](#14-credits)
+15. [Admin Panel](#15-admin-panel)
 
 ---
 
@@ -2093,6 +2094,77 @@ outcome is recorded as `side_effect_failed`.
 When a banned user attempts login or uses a previously issued token, the
 product API returns `403` with `errorCode: "ACCOUNT_ACCESS_REVOKED"` and tells
 the user to contact NubrixAI Support.
+
+### 15.2 `POST /api/latest/admin/users/{userId}/erasure`
+
+Start the automatic, durable user-erasure workflow. The endpoint first applies
+the authoritative access ban, freezes billing, persists all workflow steps,
+and queues Celery. It is disabled unless `USER_ERASURE_ENABLED=true`.
+
+**Headers:**
+
+- `Authorization: Bearer <admin-token>`
+- `Idempotency-Key: <UUID>`
+
+**Request:**
+
+```json
+{
+  "confirmation": "ERASE",
+  "reason": "Optional internal reason"
+}
+```
+
+`confirmation` must be the literal `ERASE`. `reason` is optional, blank values
+normalize to `null`, and the maximum length is 1,000 characters.
+
+**Response (202):**
+
+```json
+{
+  "requestId": "8cfdb150-417d-47ab-acd1-fef39d2bc14e",
+  "status": "PENDING",
+  "userId": "2f5a3428-82a5-41d9-ae80-5388842953bc",
+  "createdAt": "2026-08-24T10:00:00+00:00"
+}
+```
+
+Reusing the same idempotency key for the same user returns the same request.
+Reusing it for another user returns `409`. A user may have only one active
+erasure request. The workflow automatically cleans owned database data,
+Supabase Storage and Auth, Redis/cache state, and local billing credentials;
+retained billing/audit records are anonymized.
+
+**Errors:** `401`, `404`, `409`, `422`, `500`, or `503` when rollout is disabled.
+
+### 15.3 `GET /api/latest/admin/user-erasure-requests/{requestId}`
+
+Read the sanitized workflow state. Possible request states are `PENDING`,
+`IN_PROGRESS`, `PARTIALLY_FAILED`, and `COMPLETED`.
+
+```json
+{
+  "requestId": "8cfdb150-417d-47ab-acd1-fef39d2bc14e",
+  "status": "IN_PROGRESS",
+  "createdAt": "2026-08-24T10:00:00+00:00",
+  "startedAt": "2026-08-24T10:00:02+00:00",
+  "completedAt": null,
+  "lastErrorCode": null,
+  "steps": [
+    {
+      "name": "revoke_access",
+      "status": "COMPLETED",
+      "attempts": 1,
+      "lastErrorCode": null
+    }
+  ]
+}
+```
+
+The response never exposes email, reason, object paths, provider payloads,
+tokens, or raw errors. `PARTIALLY_FAILED` remains banned and can be resumed by
+the server-only `scripts/manage_user_erasure.py retry` command. See
+`resources/AdminUserEndpointsSetup.md` for deployment and smoke testing.
 
 ---
 

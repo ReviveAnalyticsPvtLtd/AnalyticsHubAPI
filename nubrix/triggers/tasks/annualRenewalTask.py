@@ -31,6 +31,7 @@ from api.services.billing.invoiceService import (
 from api.services.billing.billingEventService import BillingEventService
 from api.services.subscriptions.subscriptionFieldUtils import (
     CANONICAL_SUBSCRIPTION_SELECT,
+    subscriptionErasurePending,
     subscriptionRenewalDomainCount,
 )
 from api.commons import client
@@ -116,6 +117,9 @@ class AnnualRenewalTask:
         errors = 0
 
         for subscription in subscriptions:
+            if subscriptionErasurePending(subscription):
+                skipped += 1
+                continue
             userId = subscription["user_id"]
             try:
                 userRows = (
@@ -207,6 +211,9 @@ class AnnualRenewalTask:
                     skipped += 1
                     continue
                 subscription = subscriptionRows[0]
+                if subscriptionErasurePending(subscription):
+                    skipped += 1
+                    continue
 
                 result = prepareDashboardRenewalInvoice(invoice)
                 if result:

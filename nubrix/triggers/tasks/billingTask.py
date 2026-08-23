@@ -29,6 +29,7 @@ from api.services.subscriptions.subscriptionFieldUtils import (
     subscriptionExperts,
     subscriptionPendingRemovals,
     subscriptionRecurringFailures,
+    subscriptionErasurePending,
     subscriptionTokenId,
 )
 from api.commons import client
@@ -435,6 +436,9 @@ class DailyBillingTask:
         errors = 0
 
         for subscription in dueSubscriptions:
+            if subscriptionErasurePending(subscription):
+                skipped += 1
+                continue
             userId = subscription["user_id"]
             subscriptionId = subscription["id"]
             periodStart = subscription.get("current_period_start", "")
@@ -593,6 +597,21 @@ class DailyBillingTask:
                 receipt = f"ren_{receiptUser}_{receiptCycle}_{int(time.time())}"
 
                 try:
+                    erasureRows = (
+                        self.client.table("subscriptions")
+                        .select("erasure_pending")
+                        .eq("id", subscriptionId)
+                        .limit(1)
+                        .execute()
+                        .data
+                    ) or []
+                    if not erasureRows or subscriptionErasurePending(erasureRows[0]):
+                        self._updatePaymentAttemptStatus(
+                            attemptId, "cancelled", failureReason="user_erasure_pending"
+                        )
+                        self.redis.delete(lockKey)
+                        skipped += 1
+                        continue
                     order = self.razorpayClient.order.create(
                         {
                             "amount": amount,

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Header, Query, Request, status
 
 from api.adminModels import (
     AdminAuditEventView,
@@ -9,6 +9,9 @@ from api.adminModels import (
     AdminSubscriptionView,
     AdminUserAccessPatch,
     AdminUserAccessView,
+    AdminUserErasureAcceptedView,
+    AdminUserErasureRequest,
+    AdminUserErasureStatusView,
     AdminUserPatch,
     AdminUserView,
 )
@@ -28,6 +31,10 @@ from api.services.adminAuthService import (
 from api.services.adminManagementService import (
     AdminManagementService,
     getAdminManagementService,
+)
+from api.services.userErasureService import (
+    UserErasureService,
+    getUserErasureService,
 )
 
 
@@ -83,6 +90,33 @@ async def setUserAccess(
     service: AdminManagementService = Depends(getAdminManagementService),
 ):
     return service.setUserAccess(userId, payload, admin)
+
+
+@router.post(
+    "/users/{userId}/erasure",
+    response_model=AdminUserErasureAcceptedView,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def startUserErasure(
+    userId: str,
+    payload: AdminUserErasureRequest,
+    idempotencyKey: str = Header(alias="Idempotency-Key"),
+    admin: AdminContext = Depends(verifyAdmin),
+    service: UserErasureService = Depends(getUserErasureService),
+):
+    return service.start(userId, payload, idempotencyKey, admin)
+
+
+@router.get(
+    "/user-erasure-requests/{requestId}",
+    response_model=AdminUserErasureStatusView,
+)
+async def getUserErasureStatus(
+    requestId: str,
+    _admin: AdminContext = Depends(verifyAdmin),
+    service: UserErasureService = Depends(getUserErasureService),
+):
+    return service.getStatus(requestId)
 
 
 @router.get("/audit", response_model=list[AdminAuditEventView])

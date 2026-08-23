@@ -29,6 +29,7 @@ __all__ = [
     "subscriptionTokenId",
     "subscriptionAnchorDay",
     "subscriptionRecurringFailures",
+    "subscriptionErasurePending",
     "toSubscriptionBillingPayload",
     "toApiPlanFields",
     "mapBillingModeToPlanType",
@@ -45,7 +46,7 @@ SUBSCRIPTION_BILLING_FIELDS_SELECT = (
 CANONICAL_SUBSCRIPTION_SELECT = (
     "id, user_id, billing_mode, status, plan_type, current_period_start, current_period_end, "
     "renewal_due_at, auto_renew_enabled, payment_collection_mode, "
-    "default_currency, version, "
+    "default_currency, version, erasure_pending, "
     f"{SUBSCRIPTION_BILLING_FIELDS_SELECT}"
 )
 
@@ -142,6 +143,13 @@ def subscriptionRecurringFailures(subscription: dict | None) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def subscriptionErasurePending(subscription: dict | None) -> bool:
+    value = (subscription or {}).get("erasure_pending", False)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
 
 
 def toSubscriptionBillingPayload(

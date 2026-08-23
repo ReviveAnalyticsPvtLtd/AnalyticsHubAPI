@@ -72,7 +72,7 @@ def recalculateSubscriptionDays() -> None:
     client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
     now = datetime.now(timezone.utc)
     subscriptions = client.table("subscriptions") \
-        .select("id, user_id, current_period_start, current_period_end, status, billing_mode, billing_state") \
+        .select("id, user_id, current_period_start, current_period_end, status, billing_mode, billing_state, erasure_pending") \
         .not_.is_("current_period_end", "null") \
         .execute().data
 
@@ -97,6 +97,8 @@ def recalculateSubscriptionDays() -> None:
         logger.error(f"Failed subscription integrity precheck in recalculateSubscriptionDays: {e}")
 
     for subscription in subscriptions:
+        if subscription.get("erasure_pending"):
+            continue
         try:
             billingMode = subscription.get("billing_mode", "monthly_recurring")
             currentStatus = (subscription.get("status") or "").lower()

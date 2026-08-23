@@ -23,6 +23,8 @@ from api.adminModels import (
     AdminLoginResponse,
     AdminLogoutResponse,
     AdminSubscriptionView,
+    AdminUserErasureAcceptedView,
+    AdminUserErasureStatusView,
     AdminUserView,
 )
 import api.adminModels as adminModels
@@ -36,6 +38,7 @@ from api.services.adminAuthService import (
 )
 from api.services.adminAuditService import getAdminAuditService
 from api.services.adminManagementService import getAdminManagementService
+from api.services.userErasureService import getUserErasureService
 from main import (
     admin_exception_handler,
     admin_unhandled_exception_middleware,
@@ -203,6 +206,36 @@ class FakeAdminAuditService:
         return [AUDIT_EVENT_VIEW]
 
 
+class FakeUserErasureService:
+    def start(self, userId, payload, idempotencyKey, admin):
+        if userId == "missing":
+            raise AdminApiError(404, "User not found")
+        return {
+            "requestId": "8cfdb150-417d-47ab-acd1-fef39d2bc14e",
+            "userId": userId,
+            "status": "PENDING",
+            "createdAt": "2026-08-24T10:00:00+00:00",
+        }
+
+    def getStatus(self, requestId):
+        if requestId == "missing":
+            raise AdminApiError(404, "Erasure request not found")
+        return {
+            "requestId": requestId,
+            "status": "IN_PROGRESS",
+            "createdAt": "2026-08-24T10:00:00+00:00",
+            "startedAt": "2026-08-24T10:00:02+00:00",
+            "completedAt": None,
+            "lastErrorCode": None,
+            "steps": [{
+                "name": "inventory",
+                "status": "COMPLETED",
+                "attempts": 1,
+                "lastErrorCode": None,
+            }],
+        }
+
+
 async def fakeVerifyAdmin(request: Request) -> AdminContext:
     if request.headers.get("Authorization") != "Bearer admin-token":
         raise AdminApiError(401, "Authentication required")
@@ -236,6 +269,7 @@ def client():
     app.dependency_overrides[getAdminAuthService] = FakeAdminAuthService
     app.dependency_overrides[getAdminManagementService] = FakeAdminManagementService
     app.dependency_overrides[getAdminAuditService] = FakeAdminAuditService
+    app.dependency_overrides[getUserErasureService] = FakeUserErasureService
     app.dependency_overrides[verifyAdmin] = fakeVerifyAdmin
     app.dependency_overrides[verifyAdminForLogout] = fakeVerifyAdminForLogout
     testClient = TestClient(app, raise_server_exceptions=False)
@@ -301,6 +335,57 @@ def test_user_access_route_bans_with_optional_reason(client):
         "userId": "user-2",
         "banReason": None,
     }
+
+
+def test_user_erasure_start_and_status_contracts(client):
+    requestId = "8cfdb150-417d-47ab-acd1-fef39d2bc14e"
+    started = client.post(
+        "/admin/users/user-2/erasure",
+        json={"confirmation": "ERASE", "reason": ""},
+        headers={**_adminHeaders(), "Idempotency-Key": requestId},
+    )
+
+    assert started.status_code == 202
+    assert started.json() == {
+        "requestId": requestId,
+        "userId": "user-2",
+        "status": "PENDING",
+        "createdAt": "2026-08-24T10:00:00+00:00",
+    }
+
+    status = client.get(
+        f"/admin/user-erasure-requests/{requestId}",
+        headers=_adminHeaders(),
+    )
+    assert status.status_code == 200
+    assert status.json()["status"] == "IN_PROGRESS"
+    assert status.json()["steps"] == [{
+        "name": "inventory",
+        "status": "COMPLETED",
+        "attempts": 1,
+        "lastErrorCode": None,
+    }]
+
+
+def test_user_erasure_start_requires_confirmation_and_idempotency_header(client):
+    withoutHeader = client.post(
+        "/admin/users/user-1/erasure",
+        json={"confirmation": "ERASE"},
+        headers=_adminHeaders(),
+    )
+    wrongConfirmation = client.post(
+        "/admin/users/user-1/erasure",
+        json={"confirmation": "erase"},
+        headers={
+            **_adminHeaders(),
+            "Idempotency-Key": "8cfdb150-417d-47ab-acd1-fef39d2bc14e",
+        },
+    )
+
+    assert withoutHeader.status_code == 422
+    assert withoutHeader.json()["message"] == "Validation failed"
+    assert wrongConfirmation.status_code == 422
+    assert wrongConfirmation.json()["message"] == "Validation failed"
 
 
 def test_subscription_routes_return_only_public_response_fields(client):
@@ -419,6 +504,9 @@ def test_admin_routes_declare_strict_response_allowlists():
         ("/admin/users", "GET"): list[AdminUserView],
         ("/admin/users/{userId}", "PATCH"): AdminUserView,
         ("/admin/users/{userId}/access", "PATCH"): accessView,
+        ("/admin/users/{userId}/erasure", "POST"): AdminUserErasureAcceptedView,
+        ("/admin/user-erasure-requests/{requestId}", "GET"):
+            AdminUserErasureStatusView,
         ("/admin/subscriptions", "GET"): list[AdminSubscriptionView],
         ("/admin/subscriptions/{subscriptionId}", "PATCH"): AdminSubscriptionView,
     }

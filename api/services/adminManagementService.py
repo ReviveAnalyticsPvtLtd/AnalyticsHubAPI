@@ -33,6 +33,9 @@ ADMIN_SUBSCRIPTION_FIELDS = (
     "cancellation_reason", "version", "plan_type", "created_at", "updated_at",
 )
 ADMIN_SUBSCRIPTION_SELECT = ",".join(ADMIN_SUBSCRIPTION_FIELDS)
+ADMIN_SUBSCRIPTION_MUTATION_SELECT = (
+    f"{ADMIN_SUBSCRIPTION_SELECT},erasure_pending"
+)
 ADMIN_SUBSCRIPTION_JSON_FIELDS = (
     "subscribed_experts",
     "pending_removals",
@@ -155,6 +158,46 @@ class AdminManagementService:
             raise AdminApiError(500, "Failed to list subscriptions") from exc
         return [_serializeSubscription(row) for row in rows]
 
+    def _isErasurePending(self, userId: str) -> bool:
+        try:
+            rows = (
+                self.client.table("subscriptions")
+                .select("erasure_pending")
+                .eq("user_id", userId)
+                .execute().data
+            ) or []
+        except Exception as exc:
+            message = str(exc).lower()
+            if "erasure_pending" in message and (
+                "does not exist" in message or "42703" in message
+            ):
+                rows = []
+            else:
+                raise AdminApiError(
+                    500, "Failed to verify user erasure state"
+                ) from exc
+        if rows and rows[0].get("erasure_pending"):
+            return True
+        try:
+            requests = (
+                self.client.table("user_erasure_requests")
+                .select("id")
+                .eq("target_user_id", userId)
+                .neq("status", "COMPLETED")
+                .execute().data
+            ) or []
+        except Exception as exc:
+            message = str(exc).lower()
+            if "user_erasure_requests" in message and (
+                "does not exist" in message
+                or "42p01" in message
+                or "could not find" in message
+                or "schema cache" in message
+            ):
+                return False
+            raise AdminApiError(500, "Failed to verify user erasure state") from exc
+        return bool(requests)
+
     def updateSubscription(
         self,
         subscriptionId: str,
@@ -165,7 +208,7 @@ class AdminManagementService:
         try:
             existingRows = (
                 self.client.table("subscriptions")
-                .select(ADMIN_SUBSCRIPTION_SELECT)
+                .select(ADMIN_SUBSCRIPTION_MUTATION_SELECT)
                 .eq("id", subscriptionId)
                 .execute().data
             )
@@ -182,6 +225,11 @@ class AdminManagementService:
             raise AdminApiError(404, "Subscription not found")
 
         current = existingRows[0]
+        if current.get("erasure_pending"):
+            self._auditSubscriptionUpdate(
+                admin, subscriptionId, changedFields, "conflict"
+            )
+            raise AdminApiError(409, "User erasure is in progress")
         updatePayload = patch.model_dump(include=patch.model_fields_set)
         expertsSupplied = "subscribed_experts" in patch.model_fields_set
         countSupplied = "domain_count" in patch.model_fields_set
@@ -317,6 +365,9 @@ class AdminManagementService:
             raise AdminApiError(404, "User not found")
 
         existingUser = existingRows[0]
+        if self._isErasurePending(userId):
+            self._auditUserUpdate(admin, userId, changedFields, "conflict")
+            raise AdminApiError(409, "User erasure is in progress")
         oldEmail = existingUser["email"]
         emailSupplied = "email" in updatePayload
         emailChanged = (
@@ -420,6 +471,11 @@ class AdminManagementService:
             raise AdminApiError(404, "User not found")
 
         current = existingRows[0]
+        if not patch.banned and self._isErasurePending(userId):
+            self._auditUserAccess(
+                admin, userId, patch.banned, changedFields, "conflict", None
+            )
+            raise AdminApiError(409, "User erasure is in progress")
         sessionsRevoked = 0
         if not patch.banned and bool(current.get("isBanned")):
             try:

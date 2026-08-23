@@ -1,3 +1,4 @@
+from enum import Enum
 from typing import Literal
 
 from pydantic import (
@@ -74,6 +75,61 @@ class AdminUserAccessPatch(_StrictModel):
             normalized = value.strip()
             return normalized or None
         return value
+
+
+class AdminUserErasureStatus(str, Enum):
+    PENDING = "PENDING"
+    IN_PROGRESS = "IN_PROGRESS"
+    PARTIALLY_FAILED = "PARTIALLY_FAILED"
+    COMPLETED = "COMPLETED"
+
+
+class AdminUserErasureStepStatus(str, Enum):
+    PENDING = "PENDING"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    SKIPPED = "SKIPPED"
+    RETAINED = "RETAINED"
+
+
+class AdminUserErasureRequest(_StrictModel):
+    confirmation: Literal["ERASE"]
+    reason: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def normalizeReason(cls, value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            normalized = value.strip()
+            return normalized or None
+        return value
+
+
+class AdminUserErasureAcceptedView(_StrictModel):
+    requestId: str
+    userId: str
+    status: AdminUserErasureStatus
+    createdAt: str
+
+
+class AdminUserErasureStepView(_StrictModel):
+    name: str
+    status: AdminUserErasureStepStatus
+    attempts: int = Field(ge=0)
+    lastErrorCode: str | None = None
+
+
+class AdminUserErasureStatusView(_StrictModel):
+    requestId: str
+    status: AdminUserErasureStatus
+    createdAt: str
+    startedAt: str | None = None
+    completedAt: str | None = None
+    lastErrorCode: str | None = None
+    steps: list[AdminUserErasureStepView]
 
 
 class AdminSubscriptionPatch(_StrictModel):
