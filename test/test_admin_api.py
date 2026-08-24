@@ -1,4 +1,5 @@
 import os
+import inspect
 
 os.environ.setdefault("SUPABASE_URL", "http://localhost")
 os.environ.setdefault("SUPABASE_KEY", "test-key")
@@ -19,6 +20,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from api.adminErrors import AdminApiError
 from api.adminModels import (
     AdminAuditEventView,
+    AdminFreeTrialExtensionResponse,
     AdminLoginRequest,
     AdminLoginResponse,
     AdminLogoutResponse,
@@ -38,6 +40,7 @@ from api.services.adminAuthService import (
 )
 from api.services.adminAuditService import getAdminAuditService
 from api.services.adminManagementService import getAdminManagementService
+from api.services.adminTrialExtensionService import getAdminTrialExtensionService
 from api.services.userErasureService import getUserErasureService
 from main import (
     admin_exception_handler,
@@ -236,6 +239,52 @@ class FakeUserErasureService:
         }
 
 
+class FakeAdminTrialExtensionService:
+    calls: list[dict] = []
+
+    def extend(self, payload, idempotencyKey, admin):
+        FakeAdminTrialExtensionService.calls.append({
+            "payload": payload,
+            "idempotencyKey": idempotencyKey,
+            "admin": admin,
+        })
+        return {
+            "batchId": idempotencyKey,
+            "status": "PARTIAL_SUCCESS",
+            "days": payload.days,
+            "summary": {
+                "requested": 2,
+                "extended": 1,
+                "failed": 1,
+                "creditSyncPending": 0,
+            },
+            "results": [
+                {
+                    "userId": "free-user",
+                    "outcome": "EXTENDED",
+                    "daysAdded": payload.days,
+                    "previousExpiry": "2026-08-25T10:00:00+00:00",
+                    "newExpiry": "2026-08-30T10:00:00+00:00",
+                    "creditsRefreshed": True,
+                    "creditSyncStatus": "SYNCED",
+                    "accessStillBanned": False,
+                    "errorCode": None,
+                },
+                {
+                    "userId": "paid-user",
+                    "outcome": "FAILED",
+                    "daysAdded": None,
+                    "previousExpiry": None,
+                    "newExpiry": None,
+                    "creditsRefreshed": False,
+                    "creditSyncStatus": "NOT_APPLICABLE",
+                    "accessStillBanned": False,
+                    "errorCode": "PAID_SUBSCRIPTION_NOT_ELIGIBLE",
+                },
+            ],
+        }
+
+
 async def fakeVerifyAdmin(request: Request) -> AdminContext:
     if request.headers.get("Authorization") != "Bearer admin-token":
         raise AdminApiError(401, "Authentication required")
@@ -269,6 +318,9 @@ def client():
     app.dependency_overrides[getAdminAuthService] = FakeAdminAuthService
     app.dependency_overrides[getAdminManagementService] = FakeAdminManagementService
     app.dependency_overrides[getAdminAuditService] = FakeAdminAuditService
+    app.dependency_overrides[getAdminTrialExtensionService] = (
+        FakeAdminTrialExtensionService
+    )
     app.dependency_overrides[getUserErasureService] = FakeUserErasureService
     app.dependency_overrides[verifyAdmin] = fakeVerifyAdmin
     app.dependency_overrides[verifyAdminForLogout] = fakeVerifyAdminForLogout
@@ -388,6 +440,58 @@ def test_user_erasure_start_requires_confirmation_and_idempotency_header(client)
     assert wrongConfirmation.json()["message"] == "Validation failed"
 
 
+def test_free_trial_extension_processes_eligible_users_and_reports_failures(client):
+    FakeAdminTrialExtensionService.calls.clear()
+    idempotencyKey = "f53b33cd-219e-4c70-b5c2-43d956591fa5"
+
+    response = client.post(
+        "/admin/free-trial/extensions",
+        json={
+            "userIds": ["free-user", "paid-user"],
+            "days": 5,
+            "reason": "Customer recovery",
+        },
+        headers={**_adminHeaders(), "Idempotency-Key": idempotencyKey},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "PARTIAL_SUCCESS"
+    assert response.json()["summary"] == {
+        "requested": 2,
+        "extended": 1,
+        "failed": 1,
+        "creditSyncPending": 0,
+    }
+    assert response.json()["results"][1]["errorCode"] == (
+        "PAID_SUBSCRIPTION_NOT_ELIGIBLE"
+    )
+    call = FakeAdminTrialExtensionService.calls[-1]
+    assert call["idempotencyKey"] == idempotencyKey
+    assert call["payload"].days == 5
+    assert call["payload"].userIds == ["free-user", "paid-user"]
+    assert call["admin"] == ADMIN_CONTEXT
+
+
+def test_free_trial_extension_requires_auth_and_idempotency_header(client):
+    body = {"userIds": ["free-user"], "days": 4}
+
+    withoutAuth = client.post(
+        "/admin/free-trial/extensions",
+        json=body,
+        headers={"Idempotency-Key": "b0eb9203-836a-41da-b33c-e46bcecc12c3"},
+    )
+    withoutIdempotency = client.post(
+        "/admin/free-trial/extensions",
+        json=body,
+        headers=_adminHeaders(),
+    )
+
+    assert withoutAuth.status_code == 401
+    assert withoutAuth.json() == {"message": "Authentication required"}
+    assert withoutIdempotency.status_code == 422
+    assert withoutIdempotency.json()["message"] == "Validation failed"
+
+
 def test_subscription_routes_return_only_public_response_fields(client):
     listed = client.get("/admin/subscriptions", headers=_adminHeaders())
     assert listed.status_code == 200
@@ -505,6 +609,8 @@ def test_admin_routes_declare_strict_response_allowlists():
         ("/admin/users/{userId}", "PATCH"): AdminUserView,
         ("/admin/users/{userId}/access", "PATCH"): accessView,
         ("/admin/users/{userId}/erasure", "POST"): AdminUserErasureAcceptedView,
+        ("/admin/free-trial/extensions", "POST"):
+            AdminFreeTrialExtensionResponse,
         ("/admin/user-erasure-requests/{requestId}", "GET"):
             AdminUserErasureStatusView,
         ("/admin/subscriptions", "GET"): list[AdminSubscriptionView],
@@ -517,6 +623,17 @@ def test_admin_routes_declare_strict_response_allowlists():
         for method in route.methods
     }
     assert observedModels == expectedModels
+
+
+def test_free_trial_extension_route_runs_blocking_batch_in_threadpool():
+    route = next(
+        route
+        for route in app.routes
+        if isinstance(route, APIRoute)
+        and route.path == "/admin/free-trial/extensions"
+    )
+
+    assert inspect.iscoroutinefunction(route.endpoint) is False
 
 
 def test_billing_admin_routes_still_use_billing_admin_dependency():

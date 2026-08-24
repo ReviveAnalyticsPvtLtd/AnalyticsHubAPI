@@ -134,7 +134,7 @@ class TestLuaScriptText(unittest.TestCase):
         from api.services.credits import creditService as cs
         self.assertIn("'ttop', ttop", cs._DEDUCT_LUA)
         self.assertIn("return {trem, ttop, spill, rolled}", cs._DEDUCT_LUA)
-        self.assertIn("return {trem, ttop, rolled}", cs._PEEK_LUA)
+        self.assertIn("return {trem, ttop, rolled, pend}", cs._PEEK_LUA)
 
 
 class TestTopupBalanceReads(unittest.TestCase):
@@ -323,7 +323,10 @@ class TestTopupLifecycleGuards(unittest.TestCase):
              patch.object(svc, "_peek", return_value={"trem": 500, "ttop": 4000, "rolled": 0}), \
              patch.object(svc, "_dbRow", return_value={"monthly_token_quota": 10000000}):
             svc.reconcile("u1")
-        payload = svc.supabase.table.return_value.update.call_args[0][0]
+        rpcName, payload = svc.supabase.rpc.call_args[0]
+        self.assertEqual(
+            rpcName, "reconcile_credit_balance_if_no_admin_refresh"
+        )
         self.assertNotIn("topup_tokens", payload)
 
     def test_force_reset_with_usage_reset_never_writes_topup_tokens(self):

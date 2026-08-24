@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, Header, Query, Request, status
 
 from api.adminModels import (
     AdminAuditEventView,
+    AdminFreeTrialExtensionRequest,
+    AdminFreeTrialExtensionResponse,
     AdminLoginRequest,
     AdminLoginResponse,
     AdminLogoutResponse,
@@ -31,6 +33,10 @@ from api.services.adminAuthService import (
 from api.services.adminManagementService import (
     AdminManagementService,
     getAdminManagementService,
+)
+from api.services.adminTrialExtensionService import (
+    AdminTrialExtensionService,
+    getAdminTrialExtensionService,
 )
 from api.services.userErasureService import (
     UserErasureService,
@@ -117,6 +123,19 @@ async def getUserErasureStatus(
     service: UserErasureService = Depends(getUserErasureService),
 ):
     return service.getStatus(requestId)
+
+
+@router.post(
+    "/free-trial/extensions",
+    response_model=AdminFreeTrialExtensionResponse,
+)
+def extendFreeTrials(
+    payload: AdminFreeTrialExtensionRequest,
+    idempotencyKey: str = Header(alias="Idempotency-Key"),
+    admin: AdminContext = Depends(verifyAdmin),
+    service: AdminTrialExtensionService = Depends(getAdminTrialExtensionService),
+):
+    return service.extend(payload, idempotencyKey, admin)
 
 
 @router.get("/audit", response_model=list[AdminAuditEventView])

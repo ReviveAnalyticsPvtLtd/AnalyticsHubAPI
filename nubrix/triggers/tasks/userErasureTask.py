@@ -274,7 +274,7 @@ class UserErasureTask:
             "delete_storage": lambda: self.external.deleteStorage(
                 userId, projectIds
             ),
-            "delete_transient_state": lambda: self.external.deleteTransientState(
+            "delete_transient_state": lambda: self._deleteTransientState(
                 userId, projectIds
             ),
             "delete_auth_identity": lambda: self.external.deleteAuthIdentity(userId),
@@ -312,6 +312,7 @@ class UserErasureTask:
     def _verifyAndFinalize(
         self, requestId: str, userId: str, projectIds: list[str]
     ) -> dict:
+        self.external.deleteTransientState(userId, projectIds)
         databaseResiduals = self.repository.verifyDatabaseErasure(userId)
         if any(databaseResiduals.values()):
             raise RuntimeError("database residuals remain")
@@ -319,6 +320,11 @@ class UserErasureTask:
         details = {"databaseResiduals": 0, **externalResiduals}
         self.repository.finalizeRequest(requestId, details)
         return details
+
+    def _deleteTransientState(self, userId: str, projectIds: list[str]) -> dict:
+        cancelled = self.repository.cancelPendingTrialCreditSync(userId)
+        details = self.external.deleteTransientState(userId, projectIds) or {}
+        return {**details, "trialCreditSyncsCancelled": cancelled}
 
     def _stopBilling(self, userId: str, billingCredentials: list[dict]) -> dict:
         details = self.external.stopBilling(billingCredentials)

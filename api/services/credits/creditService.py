@@ -60,7 +60,7 @@ _ACTIVE_LIKE_SUBSCRIPTION_STATUSES = (
 
 _PEEK_LUA = """
 local h = redis.call('HGETALL', KEYS[1])
-if #h == 0 then return {-1, -1, -1} end
+if #h == 0 then return {-1, -1, -1, -1} end
 local m = {}
 for i = 1, #h, 2 do m[h[i]] = h[i+1] end
 local trem = tonumber(m['trem'])
@@ -85,7 +85,7 @@ if ttop < 0 then ttop = 0 end
 if rolled == 1 then
   redis.call('HSET', KEYS[1], 'trem', trem, 'pend', pend, 'pnext', pnext)
 end
-return {trem, ttop, rolled}
+return {trem, ttop, rolled, pend}
 """
 
 _DEDUCT_LUA = """
@@ -173,6 +173,25 @@ redis.call(
 return {newRemaining, used, rolled, tquota}
 """
 
+_TRIAL_REFRESH_LUA = """
+local existingTopup = redis.call('HGET', KEYS[1], 'ttop')
+local existingGeneration = tonumber(redis.call('HGET', KEYS[1], 'tgen')) or -1
+local incomingGeneration = tonumber(ARGV[5])
+if incomingGeneration < existingGeneration then return 0 end
+local topup = existingTopup
+if not topup then topup = ARGV[2] end
+redis.call(
+  'HSET', KEYS[1],
+  'trem', ARGV[1],
+  'ttop', topup,
+  'tquota', ARGV[1],
+  'pend', ARGV[3],
+  'pnext', ARGV[4],
+  'tgen', incomingGeneration
+)
+return 1
+"""
+
 _redis_pool: redis.ConnectionPool | None = None
 
 
@@ -226,10 +245,19 @@ class CreditService:
     def _redis(self) -> redis.Redis:
         global _redis_pool
         if _redis_pool is None:
+            try:
+                socketTimeout = max(
+                    0.1,
+                    float(os.environ.get("REDIS_SOCKET_TIMEOUT_SECONDS", "3")),
+                )
+            except (TypeError, ValueError):
+                socketTimeout = 3.0
             _redis_pool = redis.ConnectionPool(
                 host=os.environ["REDIS_HOST"],
                 port=int(os.environ["REDIS_PORT"]),
                 password=os.environ["REDIS_PASSWORD"],
+                socket_connect_timeout=socketTimeout,
+                socket_timeout=socketTimeout,
             )
         return redis.Redis(connection_pool=_redis_pool)
 
@@ -410,7 +438,12 @@ class CreditService:
             )
             if not res or int(res[0]) == -1:
                 return None
-            return {"trem": int(res[0]), "ttop": int(res[1]), "rolled": int(res[2])}
+            return {
+                "trem": int(res[0]),
+                "ttop": int(res[1]),
+                "rolled": int(res[2]),
+                "periodEndEpoch": int(res[3]),
+            }
         except Exception as e:
             logger.warning(f"Redis peek failed for {userId}: {e}")
             return None
@@ -478,6 +511,32 @@ class CreditService:
             return None
 
     # ---- public API -----------------------------------------------------------
+
+    def refreshTrialCreditsCache(
+        self, userId: str, quota: int, topupTokens: int, periodEnd,
+        generation: int,
+    ) -> str:
+        """Atomically publish a durable admin trial-credit reset to Redis."""
+        try:
+            parsedEnd = (
+                periodEnd
+                if isinstance(periodEnd, datetime)
+                else dateparser.parse(str(periodEnd))
+            )
+            applied = self._redis().eval(
+                _TRIAL_REFRESH_LUA,
+                1,
+                self._redisKey(userId),
+                max(0, int(quota)),
+                max(0, int(topupTokens or 0)),
+                int(parsedEnd.timestamp()),
+                int(creditMath.nextPeriodEnd(parsedEnd).timestamp()),
+                max(0, int(generation)),
+            )
+            return "APPLIED" if int(applied or 0) == 1 else "STALE"
+        except Exception as e:
+            logger.warning(f"Admin trial credit cache refresh failed for {userId}: {e}")
+            return "FAILED"
 
     def initializeCreditBalance(self, userId, planTier, subscriptionId=None,
                                 domainCount=1) -> dict:
@@ -894,22 +953,47 @@ class CreditService:
             if state is None:
                 self._ensureHash(userId)
                 return
-            if state["rolled"]:
-                self._repairPeriod(userId, datetime.now(timezone.utc))
-                refreshedRow = self._dbRow(userId)
-                if refreshedRow:
-                    row = refreshedRow
             tquota = row.get("monthly_token_quota", 0)
             now = datetime.now(timezone.utc)
-            self.supabase.table("credit_balances").update({
-                "remaining_tokens": state["trem"],
-                "used_tokens": preserveDurableUsedTokens(
-                    row.get("used_tokens", 0), tquota, state["trem"],
-                    periodRolled=bool(state["rolled"]),
-                ),
-                "last_reconciled_at": now.isoformat(),
-                "updated_at": now.isoformat(),
-            }).eq("user_id", userId).execute()
+            periodStart = None
+            periodEnd = None
+            if state["rolled"] and state.get("periodEndEpoch") is not None:
+                periodEnd = datetime.fromtimestamp(
+                    state["periodEndEpoch"], tz=timezone.utc
+                )
+                storedEnd = (
+                    dateparser.parse(row["period_end"])
+                    if row.get("period_end")
+                    else None
+                )
+                periodStart = storedEnd or periodEnd - relativedelta(months=1)
+                try:
+                    self._redis().hset(
+                        self._redisKey(userId),
+                        "pnext",
+                        int(creditMath.nextPeriodEnd(periodEnd).timestamp()),
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Redis next-period repair failed for {userId}: {e}"
+                    )
+            usedTokens = preserveDurableUsedTokens(
+                row.get("used_tokens", 0), tquota, state["trem"],
+                periodRolled=bool(state["rolled"]),
+            )
+            self.supabase.rpc(
+                "reconcile_credit_balance_if_no_admin_refresh",
+                {
+                    "p_user_id": userId,
+                    "p_remaining_tokens": state["trem"],
+                    "p_used_tokens": usedTokens,
+                    "p_last_reconciled_at": now.isoformat(),
+                    "p_period_start": (
+                        periodStart.isoformat() if periodStart else None
+                    ),
+                    "p_period_end": periodEnd.isoformat() if periodEnd else None,
+                },
+            ).execute()
         except Exception as e:
             logger.warning(f"Credit reconciliation failed for userId={userId}: {e}")
 

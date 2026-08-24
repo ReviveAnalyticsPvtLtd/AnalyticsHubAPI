@@ -83,6 +83,11 @@ class UserErasureRepository:
                     raise AdminApiError(404, "User not found")
 
                 cursor.execute(
+                    "select pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                    (userId,),
+                )
+
+                cursor.execute(
                     """
                     select id, status
                     from public.user_erasure_requests
@@ -135,6 +140,14 @@ class UserErasureRepository:
                         auto_renew_enabled = false,
                         updated_at = now()
                     where user_id = %s
+                    """,
+                    (userId,),
+                )
+                cursor.execute(
+                    """
+                    update public.admin_free_trial_extension_items
+                    set credit_sync_status = 'CANCELLED', updated_at = now()
+                    where user_id = %s and credit_sync_status = 'PENDING'
                     """,
                     (userId,),
                 )
@@ -478,6 +491,28 @@ class UserErasureRepository:
                         """,
                         (userId, projectIds),
                     )
+                if self._tableExists(
+                    cursor, "admin_free_trial_extension_items"
+                ):
+                    cursor.execute(
+                        """
+                        update public.admin_free_trial_extension_batches
+                        set reason = null, updated_at = now()
+                        where id in (
+                            select batch_id
+                            from public.admin_free_trial_extension_items
+                            where user_id = %s
+                        )
+                        """,
+                        (userId,),
+                    )
+                    cursor.execute(
+                        """
+                        delete from public.admin_free_trial_extension_items
+                        where user_id = %s
+                        """,
+                        (userId,),
+                    )
                 self._deleteByUser(cursor, "Projects", '"ownerUserId"', userId)
                 self._deleteByUser(cursor, "Workspaces", '"ownerId"', userId)
                 self._deleteByUser(cursor, "credit_balances", "user_id", userId)
@@ -507,6 +542,7 @@ class UserErasureRepository:
             ("Invoices", '"userId"'),
             ("billing_events", "user_id"),
             ("WebhookEvents", "user_id"),
+            ("admin_free_trial_extension_items", "user_id"),
         )
         residuals = {}
         connection = self.connectionFactory()
@@ -524,6 +560,31 @@ class UserErasureRepository:
                     if count:
                         residuals[tableName] = count
             return residuals
+        finally:
+            connection.close()
+
+    def cancelPendingTrialCreditSync(self, userId: str) -> int:
+        connection = self.connectionFactory()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "select pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                    (userId,),
+                )
+                cursor.execute(
+                    """
+                    update public.admin_free_trial_extension_items
+                    set credit_sync_status = 'CANCELLED', updated_at = now()
+                    where user_id = %s and credit_sync_status = 'PENDING'
+                    """,
+                    (userId,),
+                )
+                count = int(cursor.rowcount or 0)
+            connection.commit()
+            return count
+        except Exception:
+            connection.rollback()
+            raise
         finally:
             connection.close()
 

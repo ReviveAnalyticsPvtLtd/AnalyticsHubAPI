@@ -2166,6 +2166,87 @@ tokens, or raw errors. `PARTIALLY_FAILED` remains banned and can be resumed by
 the server-only `scripts/manage_user_erasure.py retry` command. See
 `resources/AdminUserEndpointsSetup.md` for deployment and smoke testing.
 
+### 15.4 `POST /api/latest/admin/free-trial/extensions`
+
+Add 1–30 days to one or more free-trial subscriptions and refresh each
+successful user's included free credits in the same operation.
+
+**Headers:**
+
+- `Authorization: Bearer <admin-token>`
+- `Idempotency-Key: <UUID>`
+
+**Request:**
+
+```json
+{
+  "userIds": ["free-user", "paid-user"],
+  "days": 5,
+  "reason": "Optional internal reason"
+}
+```
+
+`userIds` accepts 1–100 users, is trimmed and deduplicated, and limits each
+identifier to 128 characters. `days` must be a
+JSON integer from 1 through 30. `reason` is optional, blank normalizes to `null`,
+and the maximum length is 1,000 characters.
+
+Only subscriptions with `billing_mode=none`, `plan_type=free`, and status
+`trial` or `expired` are eligible. Active trials stack from their existing
+expiry; expired and stale trials restart from the current UTC time. Paid and
+other ineligible users fail individually while eligible users continue.
+
+**Response (200):**
+
+```json
+{
+  "batchId": "f53b33cd-219e-4c70-b5c2-43d956591fa5",
+  "status": "PARTIAL_SUCCESS",
+  "days": 5,
+  "summary": {
+    "requested": 2,
+    "extended": 1,
+    "failed": 1,
+    "creditSyncPending": 0
+  },
+  "results": [
+    {
+      "userId": "free-user",
+      "outcome": "EXTENDED",
+      "daysAdded": 5,
+      "previousExpiry": "2026-08-25T10:00:00+00:00",
+      "newExpiry": "2026-08-30T10:00:00+00:00",
+      "creditsRefreshed": true,
+      "creditSyncStatus": "SYNCED",
+      "accessStillBanned": false,
+      "errorCode": null
+    },
+    {
+      "userId": "paid-user",
+      "outcome": "FAILED",
+      "daysAdded": null,
+      "previousExpiry": null,
+      "newExpiry": null,
+      "creditsRefreshed": false,
+      "creditSyncStatus": "NOT_APPLICABLE",
+      "accessStillBanned": false,
+      "errorCode": "PAID_SUBSCRIPTION_NOT_ELIGIBLE"
+    }
+  ]
+}
+```
+
+Successful users have their free allowance fully refreshed, used monthly tokens
+reset to zero, and credit period restarted while purchased top-up tokens are
+preserved. A temporary Redis failure leaves the durable extension successful
+with `creditSyncStatus: PENDING`; Celery retries automatically. Banned users stay
+banned. Generation fencing marks an older queued cache write `SUPERSEDED`, and
+erasure can mark an unsafe pending write `CANCELLED`. The same idempotency key and
+canonical payload replay safely; a different payload with the same key returns
+`409`.
+
+**Errors:** `401`, `409`, `422`, or `500` when the batch ledger cannot be created.
+
 ---
 
 ## Common Error Responses

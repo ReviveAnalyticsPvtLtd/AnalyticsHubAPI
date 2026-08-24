@@ -132,6 +132,67 @@ class AdminUserErasureStatusView(_StrictModel):
     steps: list[AdminUserErasureStepView]
 
 
+class AdminFreeTrialExtensionRequest(_StrictModel):
+    userIds: list[str] = Field(min_length=1, max_length=100)
+    days: int = Field(ge=1, le=30, strict=True)
+    reason: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("userIds")
+    @classmethod
+    def normalizeUserIds(cls, values: list[str]) -> list[str]:
+        normalized = []
+        seen = set()
+        for value in values:
+            userId = str(value).strip()
+            if not userId:
+                raise ValueError("userIds cannot contain blank values")
+            if len(userId) > 128:
+                raise ValueError("userIds cannot contain values over 128 characters")
+            if userId not in seen:
+                normalized.append(userId)
+                seen.add(userId)
+        return normalized
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def normalizeReason(cls, value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            normalized = value.strip()
+            return normalized or None
+        return value
+
+
+class AdminFreeTrialExtensionSummary(_StrictModel):
+    requested: int = Field(ge=1)
+    extended: int = Field(ge=0)
+    failed: int = Field(ge=0)
+    creditSyncPending: int = Field(ge=0)
+
+
+class AdminFreeTrialExtensionResult(_StrictModel):
+    userId: str
+    outcome: Literal["EXTENDED", "FAILED"]
+    daysAdded: int | None = Field(default=None, ge=1, le=30)
+    previousExpiry: str | None = None
+    newExpiry: str | None = None
+    creditsRefreshed: bool
+    creditSyncStatus: Literal[
+        "SYNCED", "PENDING", "SUPERSEDED", "CANCELLED", "NOT_APPLICABLE"
+    ]
+    accessStillBanned: bool
+    errorCode: str | None = None
+
+
+class AdminFreeTrialExtensionResponse(_StrictModel):
+    batchId: str
+    status: Literal["COMPLETED", "PARTIAL_SUCCESS"]
+    days: int = Field(ge=1, le=30)
+    summary: AdminFreeTrialExtensionSummary
+    results: list[AdminFreeTrialExtensionResult]
+
+
 class AdminSubscriptionPatch(_StrictModel):
     status: AdminSubscriptionStatus | None = None
     subscribed_experts: str | None = None

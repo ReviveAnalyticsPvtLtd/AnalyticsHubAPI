@@ -66,6 +66,10 @@ class FakeRepository:
     def deleteDatabaseData(self, requestId, userId, projectIds):
         self.calls.append(("database", userId))
 
+    def cancelPendingTrialCreditSync(self, userId):
+        self.calls.append(("cancel-trial-credit-sync", userId))
+        return 1
+
     def verifyDatabaseErasure(self, userId):
         self.calls.append(("verify-db", userId))
         return {}
@@ -133,6 +137,8 @@ def test_worker_runs_steps_in_order_and_scrubs_identity_only_after_verification(
     assert all(step["status"] == "COMPLETED" for step in repository.request["steps"])
     assert cleanup.calls[-1][0] == "verify_external"
     assert repository.calls[-1][0] == "finalize"
+    assert ("cancel-trial-credit-sync", "user-1") in repository.calls
+    assert [call[0] for call in cleanup.calls].count("delete_transient_state") == 2
 
 
 def test_worker_records_stable_error_code_and_stops_after_transient_failure():
