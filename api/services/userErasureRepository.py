@@ -75,17 +75,22 @@ class UserErasureRepository:
         try:
             with connection.cursor(cursor_factory=RealDictCursor) as cursor:
                 cursor.execute(
-                    'select 1 as "exists" from public."Users" '
-                    'where "userId" = %s limit 1',
+                    "select pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                    (userId,),
+                )
+                cursor.execute(
+                    """
+                    select "userId", "isBanned", "bannedAt", "bannedBy",
+                           "banReason"
+                    from public."Users"
+                    where "userId" = %s
+                    limit 1
+                    for update
+                    """,
                     (userId,),
                 )
                 if cursor.fetchone() is None:
                     raise AdminApiError(404, "User not found")
-
-                cursor.execute(
-                    "select pg_advisory_xact_lock(hashtextextended(%s, 0))",
-                    (userId,),
-                )
 
                 cursor.execute(
                     """
@@ -102,6 +107,33 @@ class UserErasureRepository:
                     raise AdminApiError(
                         409, "User already has an active erasure request"
                     )
+
+                cursor.execute(
+                    """
+                    update public."Users"
+                    set "isBanned" = true,
+                        "bannedAt" = case
+                            when not "isBanned" or "bannedAt" is null then now()
+                            else "bannedAt"
+                        end,
+                        "bannedBy" = case
+                            when not "isBanned" or "bannedBy" is null then %s
+                            else "bannedBy"
+                        end,
+                        "banReason" = case
+                            when not "isBanned" then %s
+                            else coalesce(%s, "banReason")
+                        end
+                    where "userId" = %s
+                    """,
+                    (adminId, reason, reason, userId),
+                )
+                if int(cursor.rowcount or 0) != 1:
+                    raise RuntimeError("erasure subject disappeared while locked")
+                cursor.execute(
+                    'delete from public."Sessions" where "userId" = %s',
+                    (userId,),
+                )
 
                 cursor.execute(
                     f"""

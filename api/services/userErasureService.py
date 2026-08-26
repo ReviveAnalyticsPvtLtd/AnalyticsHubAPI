@@ -97,12 +97,6 @@ class UserErasureService:
             self._enqueueBestEffort(existing["id"])
             return self._accepted(existing, userId)
 
-        self.accessService.setUserAccess(
-            userId,
-            AdminUserAccessPatch(banned=True, reason=payload.reason),
-            admin,
-        )
-
         try:
             request = self.repository.createRequest(
                 userId=userId,
@@ -116,6 +110,15 @@ class UserErasureService:
         except Exception as exc:
             logger.error("User erasure request persistence failed: {}", type(exc).__name__)
             raise AdminApiError(500, "Failed to start user erasure") from exc
+
+        accessPatch = {"banned": True}
+        if payload.reason is not None:
+            accessPatch["reason"] = payload.reason
+        self.accessService.setUserAccess(
+            userId,
+            AdminUserAccessPatch.model_validate(accessPatch),
+            admin,
+        )
 
         queued = self._enqueueBestEffort(request["id"])
         self.auditService.record(

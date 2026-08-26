@@ -93,7 +93,7 @@ def _service(monkeypatch, repository=None, queue=None):
     )
 
 
-def test_start_erasure_bans_before_persisting_and_queues_durable_request(monkeypatch):
+def test_start_erasure_persists_atomic_ban_before_external_auth_sync_and_queue(monkeypatch):
     service, _repository, access, audit, events = _service(monkeypatch)
 
     result = service.start(
@@ -106,7 +106,7 @@ def test_start_erasure_bans_before_persisting_and_queues_durable_request(monkeyp
         ADMIN,
     )
 
-    assert [event[0] for event in events] == ["ban", "create", "queue"]
+    assert [event[0] for event in events] == ["create", "ban", "queue"]
     assert access.calls[0][1].banned is True
     assert access.calls[0][1].reason == "Customer request"
     assert result == {

@@ -41,6 +41,63 @@ class RecordingAuditService:
         self.calls.append(kwargs)
 
 
+class FakeRestoreRepository:
+    def __init__(self, client):
+        self.client = client
+        self.calls = []
+
+    def restoreUserAccess(self, userId):
+        self.calls.append(userId)
+        user = next(
+            (row for row in self.client.rows["Users"] if row["userId"] == userId),
+            None,
+        )
+        if user is None:
+            raise AdminApiError(404, "User not found")
+        if any(
+            row.get("user_id") == userId and row.get("erasure_pending")
+            for row in self.client.rows["subscriptions"]
+        ) or any(
+            row.get("target_user_id") == userId
+            and row.get("status") != "COMPLETED"
+            for row in self.client.rows["user_erasure_requests"]
+        ):
+            raise AdminApiError(409, "User erasure is in progress")
+
+        sessionsRevoked = 0
+        if user.get("isBanned"):
+            if self.client.failSessionDelete:
+                from api.services.adminUserAccessRepository import (
+                    AdminUserAccessRestoreError,
+                )
+
+                raise AdminUserAccessRestoreError("session_revocation")
+            sessionsRevoked = sum(
+                row.get("userId") == userId for row in self.client.rows["Sessions"]
+            )
+            self.client.deletes.append(("Sessions", [("userId", userId)]))
+            self.client.rows["Sessions"] = [
+                row for row in self.client.rows["Sessions"]
+                if row.get("userId") != userId
+            ]
+            update = {
+                "isBanned": False,
+                "bannedAt": None,
+                "bannedBy": None,
+                "banReason": None,
+            }
+            user.update(update)
+            self.client.updates.append(("Users", update, [("userId", userId)]))
+        return {
+            "userId": user["userId"],
+            "isBanned": bool(user.get("isBanned")),
+            "bannedAt": user.get("bannedAt"),
+            "bannedBy": user.get("bannedBy"),
+            "banReason": user.get("banReason"),
+            "sessionsRevoked": sessionsRevoked,
+        }
+
+
 @pytest.fixture(autouse=True)
 def stubDurableAudit():
     """
@@ -151,7 +208,10 @@ def test_erasure_pending_blocks_user_edits_unban_and_subscription_edits():
             ADMIN_CONTEXT,
         )
     with pytest.raises(AdminApiError) as unban:
-        AdminManagementService(client=client).setUserAccess(
+        AdminManagementService(
+            client=client,
+            userAccessRepository=FakeRestoreRepository(client),
+        ).setUserAccess(
             "user-1",
             accessPatch.model_validate({"banned": False}),
             ADMIN_CONTEXT,
@@ -191,7 +251,10 @@ def test_active_erasure_ledger_blocks_unban_even_without_subscription_row():
     accessPatch = getattr(adminModels, "AdminUserAccessPatch")
 
     with pytest.raises(AdminApiError) as captured:
-        AdminManagementService(client=client).setUserAccess(
+        AdminManagementService(
+            client=client,
+            userAccessRepository=FakeRestoreRepository(client),
+        ).setUserAccess(
             "user-1",
             accessPatch.model_validate({"banned": False}),
             ADMIN_CONTEXT,
@@ -499,7 +562,11 @@ def test_unban_user_revokes_residual_sessions_before_clearing_ban_snapshot():
         {"id": "other-session", "userId": "user-2"},
     ]
 
-    result = AdminManagementService(client=client).setUserAccess(
+    restoreRepository = FakeRestoreRepository(client)
+    result = AdminManagementService(
+        client=client,
+        userAccessRepository=restoreRepository,
+    ).setUserAccess(
         "user-1",
         patchModel.model_validate({"banned": False}),
         ADMIN_CONTEXT,
@@ -518,6 +585,7 @@ def test_unban_user_revokes_residual_sessions_before_clearing_ban_snapshot():
     assert [row["id"] for row in client.rows["Sessions"]] == ["other-session"]
     assert result["isBanned"] is False
     assert result["sessionsRevoked"] == 1
+    assert restoreRepository.calls == ["user-1"]
 
 
 def test_unban_keeps_user_banned_when_residual_session_revocation_fails(
@@ -539,6 +607,7 @@ def test_unban_keeps_user_banned_when_residual_session_revocation_fails(
         AdminManagementService(
             client=client,
             auditService=stubDurableAudit,
+            userAccessRepository=FakeRestoreRepository(client),
         ).setUserAccess(
             "user-1",
             patchModel.model_validate({"banned": False}),

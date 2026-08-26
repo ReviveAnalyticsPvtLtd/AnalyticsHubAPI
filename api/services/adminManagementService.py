@@ -10,6 +10,7 @@ from api.adminModels import (
     AdminUserPatch,
 )
 from api.services.adminAuthService import AdminContext
+from api.services.adminUserAccessRepository import AdminUserAccessRestoreError
 from api.services.subscriptions.subscriptionFieldUtils import (
     mapBillingModeToPlanType,
     normalizeDomainList,
@@ -112,11 +113,60 @@ def _escapeIlikeLiteral(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+def _failedAccessResult(userId: str, errorCode: str) -> dict:
+    return {
+        "userId": userId,
+        "outcome": "FAILED",
+        "isBanned": None,
+        "bannedAt": None,
+        "bannedBy": None,
+        "banReason": None,
+        "sessionsRevoked": 0,
+        "supabaseAuthSynced": False,
+        "warnings": [],
+        "errorCode": errorCode,
+    }
+
+
+def _accessBatchErrorCode(exc: AdminApiError) -> str:
+    if exc.statusCode == 404:
+        return "USER_NOT_FOUND"
+    if exc.statusCode == 409:
+        return "ERASURE_IN_PROGRESS"
+    return "ACCESS_UPDATE_FAILED"
+
+
+def _serializeAccessBatch(results: list[dict]) -> dict:
+    updated = sum(item["outcome"] == "UPDATED" for item in results)
+    failed = len(results) - updated
+    withWarnings = sum(
+        item["outcome"] == "UPDATED" and bool(item["warnings"])
+        for item in results
+    )
+    return {
+        "status": "COMPLETED" if not failed else "PARTIAL_SUCCESS",
+        "summary": {
+            "requested": len(results),
+            "updated": updated,
+            "failed": failed,
+            "withWarnings": withWarnings,
+        },
+        "results": results,
+    }
+
+
 class AdminManagementService:
-    def __init__(self, client=None, creditService=None, auditService=None):
+    def __init__(
+        self,
+        client=None,
+        creditService=None,
+        auditService=None,
+        userAccessRepository=None,
+    ):
         self._client = client
         self._creditService = creditService
         self._auditService = auditService
+        self._userAccessRepository = userAccessRepository
 
     @property
     def client(self):
@@ -138,6 +188,16 @@ class AdminManagementService:
             from api.services.adminAuditService import getAdminAuditService
             self._auditService = getAdminAuditService()
         return self._auditService
+
+    @property
+    def userAccessRepository(self):
+        if self._userAccessRepository is None:
+            from api.services.adminUserAccessRepository import (
+                getAdminUserAccessRepository,
+            )
+
+            self._userAccessRepository = getAdminUserAccessRepository()
+        return self._userAccessRepository
 
     def listUsers(self) -> list[dict]:
         try:
@@ -470,31 +530,44 @@ class AdminManagementService:
             )
             raise AdminApiError(404, "User not found")
 
-        current = existingRows[0]
-        if not patch.banned and self._isErasurePending(userId):
-            self._auditUserAccess(
-                admin, userId, patch.banned, changedFields, "conflict", None
-            )
-            raise AdminApiError(409, "User erasure is in progress")
         sessionsRevoked = 0
-        if not patch.banned and bool(current.get("isBanned")):
+        current = existingRows[0]
+        if not patch.banned:
             try:
-                revokedRows = (
-                    self.client.table("Sessions")
-                    .delete()
-                    .eq("userId", userId)
-                    .execute().data
-                ) or []
-                sessionsRevoked = len(revokedRows)
+                restored = self.userAccessRepository.restoreUserAccess(userId)
+            except AdminApiError as exc:
+                outcome = (
+                    "conflict"
+                    if exc.statusCode == 409
+                    else "not_found"
+                    if exc.statusCode == 404
+                    else "failed"
+                )
+                self._auditUserAccess(
+                    admin, userId, patch.banned, changedFields, outcome, None
+                )
+                raise
+            except AdminUserAccessRestoreError as exc:
+                if exc.stage == "session_revocation":
+                    self._auditUserAccess(
+                        admin,
+                        userId,
+                        patch.banned,
+                        changedFields,
+                        "side_effect_failed",
+                        None,
+                        details={"failedSideEffects": ["session_revocation"]},
+                    )
+                    raise AdminApiError(
+                        500, "Failed to restore user access"
+                    ) from exc
+                self._auditUserAccess(
+                    admin, userId, patch.banned, changedFields, "failed", None
+                )
+                raise AdminApiError(500, "Failed to update user access") from exc
             except Exception as exc:
                 self._auditUserAccess(
-                    admin,
-                    userId,
-                    patch.banned,
-                    changedFields,
-                    "side_effect_failed",
-                    None,
-                    details={"failedSideEffects": ["session_revocation"]},
+                    admin, userId, patch.banned, changedFields, "failed", None
                 )
                 raise AdminApiError(500, "Failed to restore user access") from exc
 
@@ -527,21 +600,24 @@ class AdminManagementService:
                 "bannedBy": None,
                 "banReason": None,
             }
-
-        try:
-            updatedRows = (
-                self.client.table("Users")
-                .update(updatePayload)
-                .eq("userId", userId)
-                .execute().data
-            )
-            if not updatedRows:
-                raise RuntimeError("Users access update returned no row")
-        except Exception as exc:
-            self._auditUserAccess(
-                admin, userId, patch.banned, changedFields, "failed", reason
-            )
-            raise AdminApiError(500, "Failed to update user access") from exc
+        if patch.banned:
+            try:
+                updatedRows = (
+                    self.client.table("Users")
+                    .update(updatePayload)
+                    .eq("userId", userId)
+                    .execute().data
+                )
+                if not updatedRows:
+                    raise RuntimeError("Users access update returned no row")
+            except Exception as exc:
+                self._auditUserAccess(
+                    admin, userId, patch.banned, changedFields, "failed", reason
+                )
+                raise AdminApiError(500, "Failed to update user access") from exc
+        else:
+            sessionsRevoked = int(restored.get("sessionsRevoked") or 0)
+            updatedRows = [restored]
 
         warnings = []
         failedSideEffects = []
@@ -594,6 +670,22 @@ class AdminManagementService:
             "supabaseAuthSynced": supabaseAuthSynced,
             "warnings": warnings,
         }
+
+    def setUsersAccess(self, patch, admin: AdminContext) -> dict:
+        results = []
+        for userId in patch.userIds:
+            try:
+                item = self.setUserAccess(
+                    userId,
+                    AdminUserAccessPatch(banned=patch.banned, reason=patch.reason),
+                    admin,
+                )
+                results.append({**item, "outcome": "UPDATED", "errorCode": None})
+            except AdminApiError as exc:
+                results.append(_failedAccessResult(userId, _accessBatchErrorCode(exc)))
+            except Exception:
+                results.append(_failedAccessResult(userId, "ACCESS_UPDATE_FAILED"))
+        return _serializeAccessBatch(results)
 
     def _fetchAll(
         self,

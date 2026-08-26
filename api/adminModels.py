@@ -1,5 +1,6 @@
 from enum import Enum
 from typing import Literal
+import re
 
 from pydantic import (
     BaseModel,
@@ -77,6 +78,66 @@ class AdminUserAccessPatch(_StrictModel):
         return value
 
 
+def _normalizeAdminUserIds(values: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        userId = str(value).strip()
+        if not userId or len(userId) > 128:
+            raise ValueError("userIds contains an invalid value")
+        if userId not in seen:
+            seen.add(userId)
+            normalized.append(userId)
+    return normalized
+
+
+class AdminUserAccessBatchRequest(_StrictModel):
+    userIds: list[str] = Field(min_length=1, max_length=100)
+    banned: bool
+    reason: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("userIds")
+    @classmethod
+    def normalizeUserIds(cls, values: list[str]) -> list[str]:
+        return _normalizeAdminUserIds(values)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def normalizeReason(cls, value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+
+class AdminUserAccessBatchResult(_StrictModel):
+    userId: str
+    outcome: Literal["UPDATED", "FAILED"]
+    isBanned: bool | None = None
+    bannedAt: str | None = None
+    bannedBy: str | None = None
+    banReason: str | None = None
+    sessionsRevoked: int = Field(ge=0)
+    supabaseAuthSynced: bool
+    warnings: list[str]
+    errorCode: str | None = None
+
+
+class AdminUserAccessBatchSummary(_StrictModel):
+    requested: int = Field(ge=1)
+    updated: int = Field(ge=0)
+    failed: int = Field(ge=0)
+    withWarnings: int = Field(ge=0)
+
+
+class AdminUserAccessBatchResponse(_StrictModel):
+    status: Literal["COMPLETED", "PARTIAL_SUCCESS"]
+    summary: AdminUserAccessBatchSummary
+    results: list[AdminUserAccessBatchResult]
+
+
 class AdminUserErasureStatus(str, Enum):
     PENDING = "PENDING"
     IN_PROGRESS = "IN_PROGRESS"
@@ -91,6 +152,81 @@ class AdminUserErasureStepStatus(str, Enum):
     FAILED = "FAILED"
     SKIPPED = "SKIPPED"
     RETAINED = "RETAINED"
+
+
+class AdminUserErasureBatchStatus(str, Enum):
+    PREVIEWED = "PREVIEWED"
+    IN_PROGRESS = "IN_PROGRESS"
+    PARTIALLY_FAILED = "PARTIALLY_FAILED"
+    COMPLETED = "COMPLETED"
+    EXPIRED = "EXPIRED"
+
+
+class AdminUserErasureBatchItemStatus(str, Enum):
+    READY = "READY"
+    ALREADY_IN_PROGRESS = "ALREADY_IN_PROGRESS"
+    ALREADY_COMPLETED = "ALREADY_COMPLETED"
+    USER_NOT_FOUND = "USER_NOT_FOUND"
+    PENDING = "PENDING"
+    IN_PROGRESS = "IN_PROGRESS"
+    PARTIALLY_FAILED = "PARTIALLY_FAILED"
+    COMPLETED = "COMPLETED"
+
+
+class AdminUserErasureBatchPreviewRequest(_StrictModel):
+    userIds: list[str] = Field(min_length=1, max_length=25)
+    reason: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("userIds")
+    @classmethod
+    def normalizeUserIds(cls, values: list[str]) -> list[str]:
+        return _normalizeAdminUserIds(values)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def normalizeReason(cls, value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+
+class AdminUserErasureBatchConfirmRequest(_StrictModel):
+    confirmation: str
+
+    @field_validator("confirmation")
+    @classmethod
+    def validateConfirmation(cls, value: str) -> str:
+        if not re.fullmatch(r"ERASE 1 USER|ERASE (?:[2-9]|1[0-9]|2[0-5]) USERS", value):
+            raise ValueError("confirmation must be in the form ERASE N USERS")
+        return value
+
+
+class AdminUserErasureBatchItemView(_StrictModel):
+    itemId: str
+    userId: str | None = None
+    status: AdminUserErasureBatchItemStatus
+    requestId: str | None = None
+    errorCode: str | None = None
+
+
+class AdminUserErasureBatchSummary(_StrictModel):
+    requested: int = Field(ge=1)
+    ready: int = Field(ge=0)
+    alreadyInProgress: int = Field(ge=0)
+    alreadyCompleted: int = Field(ge=0)
+    notFound: int = Field(ge=0)
+
+
+class AdminUserErasureBatchView(_StrictModel):
+    batchId: str
+    status: AdminUserErasureBatchStatus
+    expiresAt: str
+    requiredConfirmation: str | None = None
+    summary: AdminUserErasureBatchSummary
+    results: list[AdminUserErasureBatchItemView]
 
 
 class AdminUserErasureRequest(_StrictModel):

@@ -26,6 +26,7 @@ from api.adminModels import (
     AdminLogoutResponse,
     AdminSubscriptionView,
     AdminUserErasureAcceptedView,
+    AdminUserErasureBatchView,
     AdminUserErasureStatusView,
     AdminUserView,
 )
@@ -177,6 +178,47 @@ class FakeAdminManagementService:
             "userId": userId,
             "isBanned": payload.banned,
             "banReason": payload.reason,
+        }
+
+    def setUsersAccess(self, payload, admin: AdminContext) -> dict:
+        results = []
+        for userId in payload.userIds:
+            if userId == "missing":
+                results.append({
+                    "userId": userId,
+                    "outcome": "FAILED",
+                    "isBanned": None,
+                    "bannedAt": None,
+                    "bannedBy": None,
+                    "banReason": None,
+                    "sessionsRevoked": 0,
+                    "supabaseAuthSynced": False,
+                    "warnings": [],
+                    "errorCode": "USER_NOT_FOUND",
+                })
+            else:
+                results.append({
+                    "userId": userId,
+                    "outcome": "UPDATED",
+                    "isBanned": payload.banned,
+                    "bannedAt": None,
+                    "bannedBy": None,
+                    "banReason": payload.reason,
+                    "sessionsRevoked": 1,
+                    "supabaseAuthSynced": True,
+                    "warnings": [],
+                    "errorCode": None,
+                })
+        updated = sum(item["outcome"] == "UPDATED" for item in results)
+        return {
+            "status": "COMPLETED" if updated == len(results) else "PARTIAL_SUCCESS",
+            "summary": {
+                "requested": len(results),
+                "updated": updated,
+                "failed": len(results) - updated,
+                "withWarnings": 0,
+            },
+            "results": results,
         }
 
 
@@ -387,6 +429,37 @@ def test_user_access_route_bans_with_optional_reason(client):
         "userId": "user-2",
         "banReason": None,
     }
+
+
+def test_batch_user_access_route_requires_auth_and_resolves_static_path(client):
+    body = {"userIds": ["user-2", "missing"], "banned": True}
+
+    withoutAuth = client.patch("/admin/users/access", json=body)
+    response = client.patch(
+        "/admin/users/access", json=body, headers=_adminHeaders()
+    )
+
+    assert withoutAuth.status_code == 401
+    assert response.status_code == 200
+    assert response.json()["status"] == "PARTIAL_SUCCESS"
+    assert [item["outcome"] for item in response.json()["results"]] == [
+        "UPDATED", "FAILED"
+    ]
+
+
+def test_batch_user_access_route_rejects_invalid_strict_requests(client):
+    emptyUsers = client.patch(
+        "/admin/users/access", json={"userIds": [], "banned": True},
+        headers=_adminHeaders(),
+    )
+    extraField = client.patch(
+        "/admin/users/access",
+        json={"userIds": ["user-1"], "banned": True, "unexpected": True},
+        headers=_adminHeaders(),
+    )
+
+    assert emptyUsers.status_code == 422
+    assert extraField.status_code == 422
 
 
 def test_user_erasure_start_and_status_contracts(client):
@@ -601,18 +674,26 @@ def test_unknown_admin_path_uses_admin_error_shape(client, path):
 
 def test_admin_routes_declare_strict_response_allowlists():
     accessView = getattr(adminModels, "AdminUserAccessView")
+    accessBatchResponse = getattr(adminModels, "AdminUserAccessBatchResponse")
     expectedModels = {
         ("/admin/auth/login", "POST"): AdminLoginResponse,
         ("/admin/auth/logout", "POST"): AdminLogoutResponse,
         ("/admin/audit", "GET"): list[AdminAuditEventView],
         ("/admin/users", "GET"): list[AdminUserView],
         ("/admin/users/{userId}", "PATCH"): AdminUserView,
+        ("/admin/users/access", "PATCH"): accessBatchResponse,
         ("/admin/users/{userId}/access", "PATCH"): accessView,
         ("/admin/users/{userId}/erasure", "POST"): AdminUserErasureAcceptedView,
         ("/admin/free-trial/extensions", "POST"):
             AdminFreeTrialExtensionResponse,
         ("/admin/user-erasure-requests/{requestId}", "GET"):
             AdminUserErasureStatusView,
+        ("/admin/user-erasure-batches", "POST"):
+            AdminUserErasureBatchView,
+        ("/admin/user-erasure-batches/{batchId}/confirm", "POST"):
+            AdminUserErasureBatchView,
+        ("/admin/user-erasure-batches/{batchId}", "GET"):
+            AdminUserErasureBatchView,
         ("/admin/subscriptions", "GET"): list[AdminSubscriptionView],
         ("/admin/subscriptions/{subscriptionId}", "PATCH"): AdminSubscriptionView,
     }

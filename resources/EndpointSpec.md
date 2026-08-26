@@ -2095,7 +2095,73 @@ When a banned user attempts login or uses a previously issued token, the
 product API returns `403` with `errorCode: "ACCOUNT_ACCESS_REVOKED"` and tells
 the user to contact NubrixAI Support.
 
-### 15.2 `POST /api/latest/admin/users/{userId}/erasure`
+### 15.2 `PATCH /api/latest/admin/users/access`
+
+Apply one shared ban/restoration state to 1 through 100 users with partial
+success. IDs are trimmed, deduplicated in first-seen order, and limited to 128
+characters. `reason` is optional, blank-normalized to `null`, and limited to
+1,000 characters.
+
+**Request:**
+
+```json
+{
+  "userIds": ["user-1", "missing-user", "user-2"],
+  "banned": true,
+  "reason": "Optional internal reason"
+}
+```
+
+**Response (200):**
+
+```json
+{
+  "status": "PARTIAL_SUCCESS",
+  "summary": {
+    "requested": 3,
+    "updated": 2,
+    "failed": 1,
+    "withWarnings": 0
+  },
+  "results": [
+    {
+      "userId": "user-1",
+      "outcome": "UPDATED",
+      "isBanned": true,
+      "bannedAt": "2026-08-26T10:00:00+00:00",
+      "bannedBy": "admin-1",
+      "banReason": null,
+      "sessionsRevoked": 1,
+      "supabaseAuthSynced": true,
+      "warnings": [],
+      "errorCode": null
+    },
+    {
+      "userId": "missing-user",
+      "outcome": "FAILED",
+      "isBanned": null,
+      "bannedAt": null,
+      "bannedBy": null,
+      "banReason": null,
+      "sessionsRevoked": 0,
+      "supabaseAuthSynced": false,
+      "warnings": [],
+      "errorCode": "USER_NOT_FOUND"
+    }
+  ]
+}
+```
+
+Every target is attempted. Successful database updates use `UPDATED`, even when
+Supabase Auth synchronization adds a warning. Per-user error codes are
+`USER_NOT_FOUND`, `ERASURE_IN_PROGRESS`, and `ACCESS_UPDATE_FAILED`. Overall
+status is `COMPLETED` only when no item failed; otherwise it is
+`PARTIAL_SUCCESS`.
+
+**Errors:** `401` for administrator authentication, `422` for an invalid strict
+batch body, or a request-level `500` before per-user processing can begin.
+
+### 15.3 `POST /api/latest/admin/users/{userId}/erasure`
 
 Start the automatic, durable user-erasure workflow. The endpoint first applies
 the authoritative access ban, freezes billing, persists all workflow steps,
@@ -2137,7 +2203,7 @@ retained billing/audit records are anonymized.
 
 **Errors:** `401`, `404`, `409`, `422`, `500`, or `503` when rollout is disabled.
 
-### 15.3 `GET /api/latest/admin/user-erasure-requests/{requestId}`
+### 15.4 `GET /api/latest/admin/user-erasure-requests/{requestId}`
 
 Read the sanitized workflow state. Possible request states are `PENDING`,
 `IN_PROGRESS`, `PARTIALLY_FAILED`, and `COMPLETED`.
@@ -2166,7 +2232,132 @@ tokens, or raw errors. `PARTIALLY_FAILED` remains banned and can be resumed by
 the server-only `scripts/manage_user_erasure.py retry` command. See
 `resources/AdminUserEndpointsSetup.md` for deployment and smoke testing.
 
-### 15.4 `POST /api/latest/admin/free-trial/extensions`
+### 15.5 `POST /api/latest/admin/user-erasure-batches`
+
+Create a non-destructive erasure preview for 1 through 25 users. This endpoint
+does not ban users, revoke sessions, freeze subscriptions, queue work, or alter
+Storage/Auth/Redis state.
+
+**Headers:**
+
+- `Authorization: Bearer <admin-token>`
+- `Idempotency-Key: <UUID>`
+
+**Request:**
+
+```json
+{
+  "userIds": ["ready-user", "active-user", "missing-user"],
+  "reason": "Optional internal reason"
+}
+```
+
+IDs are trimmed and deduplicated in first-seen order. `reason` is optional,
+blank-normalized to `null`, and limited to 1,000 characters. The idempotency
+hash uses the canonical sorted subject set plus the normalized reason; the
+response preserves first-seen order.
+
+**Response (201):**
+
+```json
+{
+  "batchId": "414c6f2b-a630-49c2-89eb-444514479384",
+  "status": "PREVIEWED",
+  "expiresAt": "2026-08-26T10:15:00+00:00",
+  "requiredConfirmation": "ERASE 1 USER",
+  "summary": {
+    "requested": 3,
+    "ready": 1,
+    "alreadyInProgress": 1,
+    "alreadyCompleted": 0,
+    "notFound": 1
+  },
+  "results": [
+    {
+      "itemId": "item-ready",
+      "userId": "ready-user",
+      "status": "READY",
+      "requestId": null,
+      "errorCode": null
+    },
+    {
+      "itemId": "item-active",
+      "userId": "active-user",
+      "status": "ALREADY_IN_PROGRESS",
+      "requestId": "existing-request-id",
+      "errorCode": null
+    },
+    {
+      "itemId": "item-missing",
+      "userId": "missing-user",
+      "status": "USER_NOT_FOUND",
+      "requestId": null,
+      "errorCode": "USER_NOT_FOUND"
+    }
+  ]
+}
+```
+
+The preview expires after 15 minutes. `requiredConfirmation` is singular for
+one ready user and plural for 2–25 ready users. It is `null` when no user is
+ready; such a preview cannot be confirmed. Replaying the same canonical request
+with the same key returns the original preview; another payload with that key
+returns `409`.
+
+**Errors:** `401`; `409` for idempotency conflict; `422` for invalid body or
+idempotency header; `500` for unavailable fingerprint/persistence setup; `503`
+when `USER_ERASURE_ENABLED` is not `true`.
+
+### 15.6 `POST /api/latest/admin/user-erasure-batches/{batchId}/confirm`
+
+Irreversibly confirm a valid preview. Only its creator may confirm, and the
+creator's current admin session must be active and no more than 10 minutes old.
+
+**Request:**
+
+```json
+{
+  "confirmation": "ERASE 1 USER"
+}
+```
+
+The phrase must exactly match `requiredConfirmation`. Confirmation atomically
+locks subjects in stable user-ID order, revalidates expected races, bans each
+still-ready user, deletes product sessions, freezes billing, cancels pending
+trial-credit sync, and creates or links the durable per-user erasure requests.
+Supabase Auth, Storage, Redis, and Celery are never called inside that database
+transaction.
+
+**Response (202):** the same `AdminUserErasureBatchView` schema, normally with
+`status: "IN_PROGRESS"`, `requiredConfirmation: null`, stable child
+`requestId` values, and item statuses derived from `PENDING`, `IN_PROGRESS`,
+`PARTIALLY_FAILED`, or `COMPLETED` child requests. Replaying confirmation returns
+the same links and may safely requeue unfinished requests. A queue failure does
+not roll back durable confirmation; the automatic recovery sweep resumes it.
+
+**Errors:** `401`; `403` for a different creator or stale/revoked admin session;
+`404` for an unknown batch; `409` for expired, non-confirmable, or no-ready
+preview; `422` for malformed batch ID or an incorrect phrase; `500` for an
+unexpected transaction failure; `503` when initiation is disabled.
+
+### 15.7 `GET /api/latest/admin/user-erasure-batches/{batchId}`
+
+Return the fresh sanitized batch view with HTTP `200`. Batch states are
+`PREVIEWED`, `IN_PROGRESS`, `PARTIALLY_FAILED`, `COMPLETED`, and `EXPIRED`.
+Item states include the four preview classifications plus `PENDING`,
+`IN_PROGRESS`, `PARTIALLY_FAILED`, and `COMPLETED` linked-request states.
+
+Status remains readable when new erasure initiation is disabled. The one-minute
+reconciliation sweep expires previews and derives aggregate state. A completed
+child's `userId` becomes `null`; a terminal batch clears every remaining
+`userId` and its optional stored reason. Responses never expose subject
+fingerprints, request hashes, creator/session metadata, raw errors, or the
+reason.
+
+**Errors:** `401`, `404`, `422` for malformed batch ID, or a safe `500` read
+failure.
+
+### 15.8 `POST /api/latest/admin/free-trial/extensions`
 
 Add 1–30 days to one or more free-trial subscriptions and refresh each
 successful user's included free credits in the same operation.

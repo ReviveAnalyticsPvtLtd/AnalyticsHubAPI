@@ -7,6 +7,7 @@ class FakeCursor:
     def __init__(self, state):
         self.state = state
         self.current = None
+        self.rowcount = 0
 
     def __enter__(self):
         return self
@@ -17,8 +18,31 @@ class FakeCursor:
     def execute(self, query, params=None):
         normalized = " ".join(str(query).split()).lower()
         self.state["executed"].append((normalized, params))
+        self.current = None
+        self.rowcount = 0
+        if self.state.get("failOn") and self.state["failOn"] in normalized:
+            raise RuntimeError("database unavailable")
         if 'from public."users"' in normalized:
-            self.current = {"exists": 1} if self.state["userExists"] else None
+            self.current = (
+                dict(self.state["userRow"])
+                if self.state["userExists"]
+                else None
+            )
+        elif 'update public."users"' in normalized:
+            wasBanned = bool(self.state["userRow"].get("isBanned"))
+            self.state["userRow"].update({
+                "isBanned": True,
+                "bannedAt": self.state["userRow"].get("bannedAt") or "now",
+                "bannedBy": self.state["userRow"].get("bannedBy") or params[0],
+                "banReason": (
+                    self.state["userRow"].get("banReason")
+                    if wasBanned and params[2] is None
+                    else params[1]
+                ),
+            })
+            self.rowcount = 1
+        elif 'delete from public."sessions"' in normalized:
+            self.rowcount = self.state["sessionCount"]
         elif "where idempotency_key = %s" in normalized:
             self.current = self.state.get("idempotencyRow")
         elif "status <> 'completed'" in normalized and "target_user_id" in normalized:
@@ -57,6 +81,14 @@ class FakeConnection:
             "executed": [],
             "executemany": [],
             "userExists": True,
+            "userRow": {
+                "userId": "user-1",
+                "isBanned": False,
+                "bannedAt": None,
+                "bannedBy": None,
+                "banReason": None,
+            },
+            "sessionCount": 2,
             **overrides,
         }
         self.commits = 0
@@ -114,6 +146,97 @@ def test_create_request_persists_all_steps_and_freezes_billing_transactionally()
         and "auto_renew_enabled = false" in query
         for query, _params in connection.state["executed"]
     )
+
+
+def test_create_request_locks_then_bans_and_revokes_sessions_before_workflow_mutations():
+    connection = FakeConnection()
+
+    _repository(connection).createRequest(
+        userId="user-1",
+        subjectFingerprint="a" * 64,
+        adminId="admin-1",
+        idempotencyKey="8cfdb150-417d-47ab-acd1-fef39d2bc14e",
+        reason="support request",
+    )
+
+    calls = connection.state["executed"]
+    sql = [query for query, _params in calls]
+    lockIndex = next(i for i, query in enumerate(sql) if "pg_advisory_xact_lock" in query)
+    userReadIndex = next(i for i, query in enumerate(sql) if 'from public."users"' in query)
+    banIndex = next(i for i, query in enumerate(sql) if 'update public."users"' in query)
+    sessionIndex = next(i for i, query in enumerate(sql) if 'delete from public."sessions"' in query)
+    requestIndex = next(i for i, query in enumerate(sql) if "insert into public.user_erasure_requests" in query)
+    subscriptionIndex = next(i for i, query in enumerate(sql) if "update public.subscriptions" in query)
+
+    assert lockIndex < userReadIndex < banIndex < sessionIndex
+    assert sessionIndex < requestIndex
+    assert sessionIndex < subscriptionIndex
+    assert calls[lockIndex][1] == ("user-1",)
+    assert calls[userReadIndex][1] == ("user-1",)
+    assert "for update" in sql[userReadIndex]
+    assert calls[banIndex][1] == (
+        "admin-1", "support request", "support request", "user-1"
+    )
+    assert calls[sessionIndex][1] == ("user-1",)
+    assert connection.state["userRow"]["isBanned"] is True
+    assert connection.commits == 1
+    assert connection.rollbacks == 0
+
+
+def test_create_request_rolls_back_if_atomic_session_revocation_fails():
+    connection = FakeConnection(failOn='delete from public."sessions"')
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        _repository(connection).createRequest(
+            "user-1",
+            "a" * 64,
+            "admin-1",
+            "8cfdb150-417d-47ab-acd1-fef39d2bc14e",
+            None,
+        )
+
+    assert connection.commits == 0
+    assert connection.rollbacks == 1
+    assert connection.closed == 1
+    assert not any(
+        "insert into public.user_erasure_requests" in query
+        for query, _params in connection.state["executed"]
+    )
+
+
+def test_atomic_ban_clears_stale_reason_on_transition_but_preserves_existing_ban_reason():
+    transitioning = FakeConnection(userRow={
+        "userId": "user-1",
+        "isBanned": False,
+        "bannedAt": None,
+        "bannedBy": None,
+        "banReason": "stale-reason",
+    })
+    alreadyBanned = FakeConnection(userRow={
+        "userId": "user-1",
+        "isBanned": True,
+        "bannedAt": "2026-08-20T00:00:00+00:00",
+        "bannedBy": "admin-original",
+        "banReason": "existing-reason",
+    })
+
+    for connection in (transitioning, alreadyBanned):
+        _repository(connection).createRequest(
+            "user-1",
+            "a" * 64,
+            "admin-new",
+            "8cfdb150-417d-47ab-acd1-fef39d2bc14e",
+            None,
+        )
+
+    transitionSql, transitionParams = next(
+        call for call in transitioning.state["executed"]
+        if 'update public."users"' in call[0]
+    )
+    assert 'case when not "isbanned"' in transitionSql
+    assert transitionParams == ("admin-new", None, None, "user-1")
+    assert transitioning.state["userRow"]["banReason"] is None
+    assert alreadyBanned.state["userRow"]["banReason"] == "existing-reason"
 
 
 def test_create_request_rejects_missing_user_and_active_workflow():
