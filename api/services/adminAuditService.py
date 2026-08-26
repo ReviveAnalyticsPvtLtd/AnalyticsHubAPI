@@ -40,7 +40,8 @@ ADMIN_AUDIT_DEFAULT_PAGE_SIZE = 50
 ADMIN_AUDIT_SYSTEM_ACTOR = "system"
 ADMIN_AUDIT_FIELDS = (
     "id", "admin_id", "admin_email", "session_id", "actor_type", "action",
-    "target_type", "target_id", "changed_fields", "outcome", "created_at",
+    "target_type", "target_id", "changed_fields", "details", "outcome",
+    "created_at",
 )
 ADMIN_AUDIT_SELECT = ",".join(ADMIN_AUDIT_FIELDS)
 
@@ -67,6 +68,7 @@ class AdminAuditService:
         admin: AdminContext | None = None,
         actorEmail: str | None = None,
         emitLog: bool = True,
+        details: dict | None = None,
     ) -> None:
         """
         Write one audit record to both the log stream and the durable table.
@@ -87,6 +89,8 @@ class AdminAuditService:
             emitLog (bool): Whether to emit the structured `admin_audit` log
                 line. Callers that already emit their own line pass False so a
                 single event does not appear twice in the log stream.
+            details (dict | None): Internal structured context that is safe to
+                retain in the administrator-only audit table.
         """
         fields = list(changedFields or [])
         if admin is not None:
@@ -127,6 +131,7 @@ class AdminAuditService:
                 "target_type": targetType,
                 "target_id": targetId,
                 "changed_fields": fields,
+                "details": dict(details or {}),
                 "outcome": outcome,
                 "created_at": self.nowProvider().isoformat(),
             }).execute()
@@ -185,6 +190,9 @@ def _serializeAuditEvent(row: dict) -> dict:
     result = {field: row.get(field) for field in ADMIN_AUDIT_FIELDS}
     result["changed_fields"] = json.dumps(
         result["changed_fields"] or [], separators=(",", ":")
+    )
+    result["details"] = json.dumps(
+        result["details"] or {}, separators=(",", ":"), sort_keys=True
     )
     return result
 

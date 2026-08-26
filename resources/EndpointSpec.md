@@ -17,6 +17,7 @@ All endpoints are mounted under `/api/latest/`. Authentication is via `Authoriza
 12. [Billing Admin](#12-billing-admin)
 13. [Webhooks](#13-webhooks)
 14. [Credits](#14-credits)
+15. [Admin Panel](#15-admin-panel)
 
 ---
 
@@ -2030,6 +2031,471 @@ unconfigured or its metrics endpoint returns an unexpected shape.
 
 ---
 
+## 15. Admin Panel
+
+All routes under `/api/latest/admin/` use the isolated administrator bearer
+token issued by `POST /api/latest/admin/auth/login`.
+
+### 15.1 `PATCH /api/latest/admin/users/{userId}/access`
+
+Ban a product user or restore their access. Banning is effective immediately:
+the authoritative flag is written to `Users`, all Nubrix product sessions are
+revoked, and Supabase Auth is synchronized as a defense-in-depth control.
+
+**Request:**
+```json
+{
+  "banned": true,
+  "reason": "Optional internal reason"
+}
+```
+
+`reason` is optional, accepts `null` or an empty string, and is limited to
+1,000 characters. It is retained for administrators and audit history but is
+never returned to the banned user.
+
+To restore access:
+```json
+{
+  "banned": false
+}
+```
+
+Restoring access does not restore any prior session. Residual sessions are
+revoked before the ban flag is cleared, and the user must log in again to
+receive a fresh token. If residual session cleanup fails, the user remains
+banned and the endpoint returns `500`.
+
+**Response (200):**
+```json
+{
+  "userId": "2f5a3428-82a5-41d9-ae80-5388842953bc",
+  "isBanned": true,
+  "bannedAt": "2026-08-23T15:39:03+00:00",
+  "bannedBy": "f1998e72-e414-4694-8873-211b2136f25f",
+  "banReason": null,
+  "sessionsRevoked": 2,
+  "supabaseAuthSynced": true,
+  "warnings": []
+}
+```
+
+If Nubrix session cleanup or Supabase Auth synchronization fails, the database
+ban remains authoritative. The response contains a safe warning and the audit
+outcome is recorded as `side_effect_failed`.
+
+**Errors:**
+- `401` — Missing, invalid, expired, or revoked administrator session
+- `404` — Product user not found
+- `422` — Invalid payload or reason longer than 1,000 characters
+- `500` — The authoritative state could not be written, or sessions could not
+  be safely revoked before restoring access
+
+When a banned user attempts login or uses a previously issued token, the
+product API returns `403` with `errorCode: "ACCOUNT_ACCESS_REVOKED"` and tells
+the user to contact NubrixAI Support.
+
+### 15.2 `PATCH /api/latest/admin/users/access`
+
+Apply one shared ban/restoration state to 1 through 100 users with partial
+success. IDs are trimmed, deduplicated in first-seen order, and limited to 128
+characters. `reason` is optional, blank-normalized to `null`, and limited to
+1,000 characters.
+
+**Request:**
+
+```json
+{
+  "userIds": ["user-1", "missing-user", "user-2"],
+  "banned": true,
+  "reason": "Optional internal reason"
+}
+```
+
+**Response (200):**
+
+```json
+{
+  "status": "PARTIAL_SUCCESS",
+  "summary": {
+    "requested": 3,
+    "updated": 2,
+    "failed": 1,
+    "withWarnings": 0
+  },
+  "results": [
+    {
+      "userId": "user-1",
+      "outcome": "UPDATED",
+      "isBanned": true,
+      "bannedAt": "2026-08-26T10:00:00+00:00",
+      "bannedBy": "admin-1",
+      "banReason": null,
+      "sessionsRevoked": 1,
+      "supabaseAuthSynced": true,
+      "warnings": [],
+      "errorCode": null
+    },
+    {
+      "userId": "missing-user",
+      "outcome": "FAILED",
+      "isBanned": null,
+      "bannedAt": null,
+      "bannedBy": null,
+      "banReason": null,
+      "sessionsRevoked": 0,
+      "supabaseAuthSynced": false,
+      "warnings": [],
+      "errorCode": "USER_NOT_FOUND"
+    }
+  ]
+}
+```
+
+Every target is attempted. Successful database updates use `UPDATED`, even when
+Supabase Auth synchronization adds a warning. Per-user error codes are
+`USER_NOT_FOUND`, `ERASURE_IN_PROGRESS`, and `ACCESS_UPDATE_FAILED`. Overall
+status is `COMPLETED` only when no item failed; otherwise it is
+`PARTIAL_SUCCESS`.
+
+**Errors:** `401` for administrator authentication, `422` for an invalid strict
+batch body, or a request-level `500` before per-user processing can begin.
+
+### 15.3 `POST /api/latest/admin/users/{userId}/erasure`
+
+Start the automatic, durable user-erasure workflow. The endpoint first applies
+the authoritative access ban, freezes billing, persists all workflow steps,
+and queues Celery. It is disabled unless `USER_ERASURE_ENABLED=true`.
+
+**Headers:**
+
+- `Authorization: Bearer <admin-token>`
+- `Idempotency-Key: <UUID>`
+
+**Request:**
+
+```json
+{
+  "confirmation": "ERASE",
+  "reason": "Optional internal reason"
+}
+```
+
+`confirmation` must be the literal `ERASE`. `reason` is optional, blank values
+normalize to `null`, and the maximum length is 1,000 characters.
+
+**Response (202):**
+
+```json
+{
+  "requestId": "8cfdb150-417d-47ab-acd1-fef39d2bc14e",
+  "status": "PENDING",
+  "userId": "2f5a3428-82a5-41d9-ae80-5388842953bc",
+  "createdAt": "2026-08-24T10:00:00+00:00"
+}
+```
+
+Reusing the same idempotency key for the same user returns the same request.
+Reusing it for another user returns `409`. A user may have only one active
+erasure request. The workflow automatically cleans owned database data,
+Supabase Storage and Auth, Redis/cache state, and local billing credentials;
+retained billing/audit records are anonymized.
+
+**Errors:** `401`, `404`, `409`, `422`, `500`, or `503` when rollout is disabled.
+
+### 15.4 `GET /api/latest/admin/user-erasure-requests/{requestId}`
+
+Read the sanitized workflow state. Possible request states are `PENDING`,
+`IN_PROGRESS`, `PARTIALLY_FAILED`, and `COMPLETED`.
+
+```json
+{
+  "requestId": "8cfdb150-417d-47ab-acd1-fef39d2bc14e",
+  "status": "IN_PROGRESS",
+  "createdAt": "2026-08-24T10:00:00+00:00",
+  "startedAt": "2026-08-24T10:00:02+00:00",
+  "completedAt": null,
+  "lastErrorCode": null,
+  "steps": [
+    {
+      "name": "revoke_access",
+      "status": "COMPLETED",
+      "attempts": 1,
+      "lastErrorCode": null
+    }
+  ]
+}
+```
+
+The response never exposes email, reason, object paths, provider payloads,
+tokens, or raw errors. `PARTIALLY_FAILED` remains banned and can be resumed by
+the server-only `scripts/manage_user_erasure.py retry` command. See
+`resources/AdminUserEndpointsSetup.md` for deployment and smoke testing.
+
+### 15.5 `POST /api/latest/admin/user-erasure-batches`
+
+Create a non-destructive erasure preview for 1 through 25 users. This endpoint
+does not ban users, revoke sessions, freeze subscriptions, queue work, or alter
+Storage/Auth/Redis state.
+
+**Headers:**
+
+- `Authorization: Bearer <admin-token>`
+- `Idempotency-Key: <UUID>`
+
+**Request:**
+
+```json
+{
+  "userIds": ["ready-user", "active-user", "missing-user"],
+  "reason": "Optional internal reason"
+}
+```
+
+IDs are trimmed and deduplicated in first-seen order. `reason` is optional,
+blank-normalized to `null`, and limited to 1,000 characters. The idempotency
+hash uses the canonical sorted subject set plus the normalized reason; the
+response preserves first-seen order.
+
+**Response (201):**
+
+```json
+{
+  "batchId": "414c6f2b-a630-49c2-89eb-444514479384",
+  "status": "PREVIEWED",
+  "expiresAt": "2026-08-26T10:15:00+00:00",
+  "requiredConfirmation": "ERASE 1 USER",
+  "summary": {
+    "requested": 3,
+    "ready": 1,
+    "alreadyInProgress": 1,
+    "alreadyCompleted": 0,
+    "notFound": 1
+  },
+  "results": [
+    {
+      "itemId": "item-ready",
+      "userId": "ready-user",
+      "status": "READY",
+      "requestId": null,
+      "errorCode": null
+    },
+    {
+      "itemId": "item-active",
+      "userId": "active-user",
+      "status": "ALREADY_IN_PROGRESS",
+      "requestId": "existing-request-id",
+      "errorCode": null
+    },
+    {
+      "itemId": "item-missing",
+      "userId": "missing-user",
+      "status": "USER_NOT_FOUND",
+      "requestId": null,
+      "errorCode": "USER_NOT_FOUND"
+    }
+  ]
+}
+```
+
+The preview expires after 15 minutes. `requiredConfirmation` is singular for
+one ready user and plural for 2–25 ready users. It is `null` when no user is
+ready; such a preview cannot be confirmed. Replaying the same canonical request
+with the same key returns the original preview; another payload with that key
+returns `409`.
+
+**Errors:** `401`; `409` for idempotency conflict; `422` for invalid body or
+idempotency header; `500` for unavailable fingerprint/persistence setup; `503`
+when `USER_ERASURE_ENABLED` is not `true`.
+
+### 15.6 `POST /api/latest/admin/user-erasure-batches/{batchId}/confirm`
+
+Irreversibly confirm a valid preview. Only its creator may confirm, and the
+creator's current admin session must be active and no more than 10 minutes old.
+
+**Request:**
+
+```json
+{
+  "confirmation": "ERASE 1 USER"
+}
+```
+
+The phrase must exactly match `requiredConfirmation`. Confirmation atomically
+locks subjects in stable user-ID order, revalidates expected races, bans each
+still-ready user, deletes product sessions, freezes billing, cancels pending
+trial-credit sync, and creates or links the durable per-user erasure requests.
+Supabase Auth, Storage, Redis, and Celery are never called inside that database
+transaction.
+
+**Response (202):** the same `AdminUserErasureBatchView` schema, normally with
+`status: "IN_PROGRESS"`, `requiredConfirmation: null`, stable child
+`requestId` values, and item statuses derived from `PENDING`, `IN_PROGRESS`,
+`PARTIALLY_FAILED`, or `COMPLETED` child requests. Replaying confirmation returns
+the same links and may safely requeue unfinished requests. A queue failure does
+not roll back durable confirmation; the automatic recovery sweep resumes it.
+
+**Errors:** `401`; `403` for a different creator or stale/revoked admin session;
+`404` for an unknown batch; `409` for expired, non-confirmable, or no-ready
+preview; `422` for malformed batch ID or an incorrect phrase; `500` for an
+unexpected transaction failure; `503` when initiation is disabled.
+
+### 15.7 `GET /api/latest/admin/user-erasure-batches/{batchId}`
+
+Return the fresh sanitized batch view with HTTP `200`. Batch states are
+`PREVIEWED`, `IN_PROGRESS`, `PARTIALLY_FAILED`, `COMPLETED`, and `EXPIRED`.
+Item states include the four preview classifications plus `PENDING`,
+`IN_PROGRESS`, `PARTIALLY_FAILED`, and `COMPLETED` linked-request states.
+
+Status remains readable when new erasure initiation is disabled. The one-minute
+reconciliation sweep expires previews and derives aggregate state. A completed
+child's `userId` becomes `null`; a terminal batch clears every remaining
+`userId` and its optional stored reason. Responses never expose subject
+fingerprints, request hashes, creator/session metadata, raw errors, or the
+reason.
+
+**Errors:** `401`, `404`, `422` for malformed batch ID, or a safe `500` read
+failure.
+
+### 15.8 `POST /api/latest/admin/free-trial/extensions`
+
+Add 1–30 days to one or more free-trial subscriptions and refresh each
+successful user's included free credits in the same operation.
+
+**Headers:**
+
+- `Authorization: Bearer <admin-token>`
+- `Idempotency-Key: <UUID>`
+
+**Request:**
+
+```json
+{
+  "userIds": ["free-user", "paid-user"],
+  "days": 5,
+  "reason": "Optional internal reason"
+}
+```
+
+`userIds` accepts 1–100 users, is trimmed and deduplicated, and limits each
+identifier to 128 characters. `days` must be a
+JSON integer from 1 through 30. `reason` is optional, blank normalizes to `null`,
+and the maximum length is 1,000 characters.
+
+Only subscriptions with `billing_mode=none`, `plan_type=free`, and status
+`trial` or `expired` are eligible. Active trials stack from their existing
+expiry; expired and stale trials restart from the current UTC time. Paid and
+other ineligible users fail individually while eligible users continue.
+
+**Response (200):**
+
+```json
+{
+  "batchId": "f53b33cd-219e-4c70-b5c2-43d956591fa5",
+  "status": "PARTIAL_SUCCESS",
+  "days": 5,
+  "summary": {
+    "requested": 2,
+    "extended": 1,
+    "failed": 1,
+    "creditSyncPending": 0
+  },
+  "results": [
+    {
+      "userId": "free-user",
+      "outcome": "EXTENDED",
+      "daysAdded": 5,
+      "previousExpiry": "2026-08-25T10:00:00+00:00",
+      "newExpiry": "2026-08-30T10:00:00+00:00",
+      "creditsRefreshed": true,
+      "creditSyncStatus": "SYNCED",
+      "accessStillBanned": false,
+      "errorCode": null
+    },
+    {
+      "userId": "paid-user",
+      "outcome": "FAILED",
+      "daysAdded": null,
+      "previousExpiry": null,
+      "newExpiry": null,
+      "creditsRefreshed": false,
+      "creditSyncStatus": "NOT_APPLICABLE",
+      "accessStillBanned": false,
+      "errorCode": "PAID_SUBSCRIPTION_NOT_ELIGIBLE"
+    }
+  ]
+}
+```
+
+Successful users have their free allowance fully refreshed, used monthly tokens
+reset to zero, and credit period restarted while purchased top-up tokens are
+preserved. A temporary Redis failure leaves the durable extension successful
+with `creditSyncStatus: PENDING`; Celery retries automatically. Banned users stay
+banned. Generation fencing marks an older queued cache write `SUPERSEDED`, and
+erasure can mark an unsafe pending write `CANCELLED`. The same idempotency key and
+canonical payload replay safely; a different payload with the same key returns
+`409`.
+
+**Errors:** `401`, `409`, `422`, or `500` when the batch ledger cannot be created.
+
+### 15.9 `GET /api/latest/admin/overview/user-signups`
+
+Return new-user signup counts bucketed over a trailing time period, shaped for a
+line chart. Values are computed fresh on every request, so the frontend can poll
+it (React Query `refetchInterval`) for a live view.
+
+**Headers:**
+
+- `Authorization: Bearer <admin-token>`
+
+**Query parameters:**
+
+- `period` — one of `7d`, `14d`, `30d`, `90d`, `6m`, `1y`. Defaults to `30d`.
+
+Bucket granularity is derived from the period, so the client only sends a
+period:
+
+| `period` | `granularity` | Buckets | Label format |
+| --- | --- | --- | --- |
+| `7d`, `14d`, `30d` | `day` | 7, 14, 30 | `YYYY-MM-DD` |
+| `90d` | `week` | 13 | `YYYY-MM-DD` (week start) |
+| `6m` | `week` | 26 | `YYYY-MM-DD` (week start) |
+| `1y` | `month` | 12 | `YYYY-MM` |
+
+Weekly periods are rounded to whole weeks (13 and 26 seven-day buckets) so every
+bucket spans the same number of days. Daily buckets are UTC calendar days ending
+with the current day; monthly buckets are UTC calendar months ending with the
+current month.
+
+**Response:**
+
+```json
+{
+  "period": "30d",
+  "granularity": "day",
+  "timezone": "UTC",
+  "rangeStart": "2026-07-28T00:00:00+00:00",
+  "rangeEnd": "2026-08-27T00:00:00+00:00",
+  "lastUpdatedAt": "2026-08-26T14:30:00+00:00",
+  "totalSignups": 128,
+  "chart": {
+    "labels": ["2026-07-28", "2026-07-29"],
+    "datasets": [{ "label": "New users", "data": [1, 3] }]
+  }
+}
+```
+
+`chart` matches the Chart.js-shaped wire contract the frontend already consumes
+(`ChartData` in `src/types/chartTypes.ts`), so it can be passed straight to the
+line chart component with no reshaping. Buckets with no signups are zero-filled
+so the line has no gaps. `rangeEnd` is exclusive. `lastUpdatedAt` is the instant
+the response was computed, for a freshness indicator between polls.
+
+**Errors:** `401`, `422` for an unsupported `period`, or a safe `500` read
+failure.
+
+---
+
 ## Common Error Responses
 
 All endpoints (except webhook) return errors in a flat shape:
@@ -2060,8 +2526,8 @@ All endpoints (except `/auth/signUp`, `/auth/login`, `/auth/loginWithProvider`, 
 JWT requirements:
 - Algorithm: HS256
 - Secret: `SECRET_KEY` env var
-- Required claim: `email`
-- Optional claims: `userId`, `exp`, `sub_status`, `plan_type`
+- Required claims: `email`, `userId`
+- Optional claims: `exp`, `sub_status`, `plan_type`
 
 ---
 

@@ -147,6 +147,8 @@ class WebhookService:
         """
         nowTime = utcNow()
         nowIso = str(nowTime)
+        userId = self._extractWebhookUserId(event)
+        ownership = {"user_id": userId} if userId else {}
         try:
             self.client.table("WebhookEvents").insert({
                 "razorpayEventId": eventId,
@@ -156,6 +158,7 @@ class WebhookService:
                 "attempts": 1,
                 "lastAttemptAt": nowIso,
                 "errorMessage": None,
+                **ownership,
             }).execute()
             logger.info(f"Webhook event claimed for processing: {eventId}")
             return True
@@ -188,6 +191,7 @@ class WebhookService:
                     "errorMessage": None,
                     "payload": event,
                     "eventType": eventType,
+                    **ownership,
                 }).eq("razorpayEventId", eventId) \
                  .eq("status", "processing") \
                  .eq("lastAttemptAt", lastAttemptAt) \
@@ -205,6 +209,7 @@ class WebhookService:
                     "errorMessage": None,
                     "payload": event,
                     "eventType": eventType,
+                    **ownership,
                 }).eq("razorpayEventId", eventId) \
                  .eq("status", "failed") \
                  .execute()
@@ -215,6 +220,23 @@ class WebhookService:
                 return False
             logger.info(f"Webhook event skipped with unsupported status '{status}': {eventId}")
             return False
+
+    @staticmethod
+    def _extractWebhookUserId(event: dict) -> str | None:
+        payload = event.get("payload") if isinstance(event, dict) else None
+        if not isinstance(payload, dict):
+            return None
+        for entityName in ("payment", "order", "invoice", "token"):
+            wrapper = payload.get(entityName)
+            entity = wrapper.get("entity") if isinstance(wrapper, dict) else None
+            notes = entity.get("notes") if isinstance(entity, dict) else None
+            if not isinstance(notes, dict):
+                continue
+            for fieldName in ("userId", "user_id"):
+                value = notes.get(fieldName)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        return None
 
     def _markWebhookEventCompleted(self, eventId: str) -> None:
         """

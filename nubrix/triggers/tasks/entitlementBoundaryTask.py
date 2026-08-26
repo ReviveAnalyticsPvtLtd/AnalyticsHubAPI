@@ -13,6 +13,7 @@ from api.services.subscriptions.paymentValidationService import parseUtc, utcNow
 from api.services.subscriptions.subscriptionFieldUtils import (
     CANONICAL_SUBSCRIPTION_SELECT,
     subscriptionExperts,
+    subscriptionErasurePending,
     subscriptionPendingRemovals,
 )
 from api.commons import client as supabaseClient
@@ -48,6 +49,9 @@ class EntitlementBoundaryTask:
 
         for subscription in subscriptions or []:
             try:
+                if subscriptionErasurePending(subscription):
+                    skipped += 1
+                    continue
                 pendingRemovals = subscriptionPendingRemovals(subscription)
                 if not pendingRemovals:
                     skipped += 1

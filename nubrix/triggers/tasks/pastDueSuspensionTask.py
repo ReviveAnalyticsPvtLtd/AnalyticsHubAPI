@@ -26,6 +26,7 @@ __all__ = ["PastDueSuspensionTask"]
 
 from api.services.billing.invoiceService import transitionToPastDue, transitionToSuspended
 from api.services.billing.billingEventService import BillingEventService
+from api.services.subscriptions.subscriptionFieldUtils import subscriptionErasurePending
 from api.commons import client
 from utils.logger import logger
 import datetime
@@ -92,7 +93,7 @@ class PastDueSuspensionTask:
 
         subscriptions = (
             self.client.table("subscriptions")
-            .select("id, user_id, current_period_end, status, billing_mode")
+            .select("id, user_id, current_period_end, status, billing_mode, erasure_pending")
             .eq("billing_mode", "annual_prepaid")
             .in_("status", ["active", "renewal_upcoming", "payment_pending"])
             .lte("current_period_end", now.isoformat())
@@ -101,6 +102,9 @@ class PastDueSuspensionTask:
         )
 
         for subscription in subscriptions:
+            if subscriptionErasurePending(subscription):
+                skipped += 1
+                continue
             subscriptionId = subscription["id"]
             try:
                 invoices = (
@@ -148,7 +152,7 @@ class PastDueSuspensionTask:
 
         subscriptions = (
             self.client.table("subscriptions")
-            .select("id, user_id, current_period_end, status, billing_mode")
+            .select("id, user_id, current_period_end, status, billing_mode, erasure_pending")
             .eq("billing_mode", "annual_prepaid")
             .eq("status", "past_due")
             .lte("current_period_end", bufferCutoff)
@@ -157,6 +161,9 @@ class PastDueSuspensionTask:
         )
 
         for subscription in subscriptions:
+            if subscriptionErasurePending(subscription):
+                skipped += 1
+                continue
             subscriptionId = subscription["id"]
             userId = subscription.get("user_id", "")
             try:

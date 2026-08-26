@@ -21,6 +21,7 @@ from api.commons import client
 from utils.logger import logger
 from api.services.billing.billingEventService import BillingEventService
 from api.services.billing.invoiceService import buildDashboardRenewalUrl
+from api.services.subscriptions.subscriptionFieldUtils import subscriptionErasurePending
 import datetime
 import requests
 import json
@@ -105,6 +106,18 @@ class RenewalLifecycleTask:
             elif dueDate == str(today):
                 template = "renewal_reminder_due_today"
             else:
+                continue
+
+            subscriptionRows = (
+                self.client.table("subscriptions")
+                .select("erasure_pending")
+                .eq("id", invoice.get("subscription_id"))
+                .limit(1)
+                .execute()
+                .data
+            ) or []
+            if not subscriptionRows or subscriptionErasurePending(subscriptionRows[0]):
+                skipped += 1
                 continue
 
             sendLogKey = f"{invoiceId}:{template}:{today}"

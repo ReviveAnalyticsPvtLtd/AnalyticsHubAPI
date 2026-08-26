@@ -1,4 +1,5 @@
 import os
+import inspect
 
 os.environ.setdefault("SUPABASE_URL", "http://localhost")
 os.environ.setdefault("SUPABASE_KEY", "test-key")
@@ -19,12 +20,18 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from api.adminErrors import AdminApiError
 from api.adminModels import (
     AdminAuditEventView,
+    AdminFreeTrialExtensionResponse,
     AdminLoginRequest,
     AdminLoginResponse,
     AdminLogoutResponse,
     AdminSubscriptionView,
+    AdminUserErasureAcceptedView,
+    AdminUserErasureBatchView,
+    AdminUserErasureStatusView,
+    AdminUserSignupOverviewView,
     AdminUserView,
 )
+import api.adminModels as adminModels
 from api.routers import admin
 from api.routers.billingAdmin import verifyBillingAdmin
 from api.services.adminAuthService import (
@@ -35,6 +42,9 @@ from api.services.adminAuthService import (
 )
 from api.services.adminAuditService import getAdminAuditService
 from api.services.adminManagementService import getAdminManagementService
+from api.services.adminOverviewService import getAdminOverviewService
+from api.services.adminTrialExtensionService import getAdminTrialExtensionService
+from api.services.userErasureService import getUserErasureService
 from main import (
     admin_exception_handler,
     admin_unhandled_exception_middleware,
@@ -69,6 +79,21 @@ USER_VIEW = {
     "country": "IN",
     "goals": "Reporting",
     "source": "email",
+    "isBanned": False,
+    "bannedAt": None,
+    "bannedBy": None,
+    "banReason": None,
+}
+
+USER_ACCESS_VIEW = {
+    "userId": "user-1",
+    "isBanned": True,
+    "bannedAt": "2026-08-23T00:00:00+00:00",
+    "bannedBy": "admin-1",
+    "banReason": None,
+    "sessionsRevoked": 2,
+    "supabaseAuthSynced": True,
+    "warnings": [],
 }
 
 SUBSCRIPTION_VIEW = {
@@ -147,6 +172,57 @@ class FakeAdminManagementService:
             **payload.model_dump(exclude_unset=True),
         }
 
+    def setUserAccess(self, userId: str, payload, admin: AdminContext) -> dict:
+        if userId == "missing":
+            raise AdminApiError(404, "User not found")
+        return {
+            **USER_ACCESS_VIEW,
+            "userId": userId,
+            "isBanned": payload.banned,
+            "banReason": payload.reason,
+        }
+
+    def setUsersAccess(self, payload, admin: AdminContext) -> dict:
+        results = []
+        for userId in payload.userIds:
+            if userId == "missing":
+                results.append({
+                    "userId": userId,
+                    "outcome": "FAILED",
+                    "isBanned": None,
+                    "bannedAt": None,
+                    "bannedBy": None,
+                    "banReason": None,
+                    "sessionsRevoked": 0,
+                    "supabaseAuthSynced": False,
+                    "warnings": [],
+                    "errorCode": "USER_NOT_FOUND",
+                })
+            else:
+                results.append({
+                    "userId": userId,
+                    "outcome": "UPDATED",
+                    "isBanned": payload.banned,
+                    "bannedAt": None,
+                    "bannedBy": None,
+                    "banReason": payload.reason,
+                    "sessionsRevoked": 1,
+                    "supabaseAuthSynced": True,
+                    "warnings": [],
+                    "errorCode": None,
+                })
+        updated = sum(item["outcome"] == "UPDATED" for item in results)
+        return {
+            "status": "COMPLETED" if updated == len(results) else "PARTIAL_SUCCESS",
+            "summary": {
+                "requested": len(results),
+                "updated": updated,
+                "failed": len(results) - updated,
+                "withWarnings": 0,
+            },
+            "results": results,
+        }
+
 
 AUDIT_EVENT_VIEW = {
     "id": "audit-1",
@@ -158,6 +234,7 @@ AUDIT_EVENT_VIEW = {
     "target_type": "user",
     "target_id": "user-1",
     "changed_fields": '["email"]',
+    "details": "{}",
     "outcome": "success",
     "created_at": "2026-08-17T00:00:00+00:00",
 }
@@ -174,6 +251,107 @@ class FakeAdminAuditService:
             "outcome": outcome,
         })
         return [AUDIT_EVENT_VIEW]
+
+
+class FakeUserErasureService:
+    def start(self, userId, payload, idempotencyKey, admin):
+        if userId == "missing":
+            raise AdminApiError(404, "User not found")
+        return {
+            "requestId": "8cfdb150-417d-47ab-acd1-fef39d2bc14e",
+            "userId": userId,
+            "status": "PENDING",
+            "createdAt": "2026-08-24T10:00:00+00:00",
+        }
+
+    def getStatus(self, requestId):
+        if requestId == "missing":
+            raise AdminApiError(404, "Erasure request not found")
+        return {
+            "requestId": requestId,
+            "status": "IN_PROGRESS",
+            "createdAt": "2026-08-24T10:00:00+00:00",
+            "startedAt": "2026-08-24T10:00:02+00:00",
+            "completedAt": None,
+            "lastErrorCode": None,
+            "steps": [{
+                "name": "inventory",
+                "status": "COMPLETED",
+                "attempts": 1,
+                "lastErrorCode": None,
+            }],
+        }
+
+
+class FakeAdminTrialExtensionService:
+    calls: list[dict] = []
+
+    def extend(self, payload, idempotencyKey, admin):
+        FakeAdminTrialExtensionService.calls.append({
+            "payload": payload,
+            "idempotencyKey": idempotencyKey,
+            "admin": admin,
+        })
+        return {
+            "batchId": idempotencyKey,
+            "status": "PARTIAL_SUCCESS",
+            "days": payload.days,
+            "summary": {
+                "requested": 2,
+                "extended": 1,
+                "failed": 1,
+                "creditSyncPending": 0,
+            },
+            "results": [
+                {
+                    "userId": "free-user",
+                    "outcome": "EXTENDED",
+                    "daysAdded": payload.days,
+                    "previousExpiry": "2026-08-25T10:00:00+00:00",
+                    "newExpiry": "2026-08-30T10:00:00+00:00",
+                    "creditsRefreshed": True,
+                    "creditSyncStatus": "SYNCED",
+                    "accessStillBanned": False,
+                    "errorCode": None,
+                },
+                {
+                    "userId": "paid-user",
+                    "outcome": "FAILED",
+                    "daysAdded": None,
+                    "previousExpiry": None,
+                    "newExpiry": None,
+                    "creditsRefreshed": False,
+                    "creditSyncStatus": "NOT_APPLICABLE",
+                    "accessStillBanned": False,
+                    "errorCode": "PAID_SUBSCRIPTION_NOT_ELIGIBLE",
+                },
+            ],
+        }
+
+
+SIGNUP_OVERVIEW_VIEW = {
+    "period": "30d",
+    "granularity": "day",
+    "timezone": "UTC",
+    "rangeStart": "2026-07-28T00:00:00+00:00",
+    "rangeEnd": "2026-08-27T00:00:00+00:00",
+    "lastUpdatedAt": "2026-08-26T14:30:00+00:00",
+    "totalSignups": 4,
+    "chart": {
+        "labels": ["2026-07-28", "2026-07-29"],
+        "datasets": [{"label": "New users", "data": [1, 3]}],
+    },
+}
+
+
+class FakeAdminOverviewService:
+    """Records the period the route forwards without touching a backend."""
+
+    requestedPeriods: list[str] = []
+
+    def getUserSignupOverview(self, period):
+        FakeAdminOverviewService.requestedPeriods.append(period)
+        return {**SIGNUP_OVERVIEW_VIEW, "period": period}
 
 
 async def fakeVerifyAdmin(request: Request) -> AdminContext:
@@ -209,6 +387,11 @@ def client():
     app.dependency_overrides[getAdminAuthService] = FakeAdminAuthService
     app.dependency_overrides[getAdminManagementService] = FakeAdminManagementService
     app.dependency_overrides[getAdminAuditService] = FakeAdminAuditService
+    app.dependency_overrides[getAdminOverviewService] = FakeAdminOverviewService
+    app.dependency_overrides[getAdminTrialExtensionService] = (
+        FakeAdminTrialExtensionService
+    )
+    app.dependency_overrides[getUserErasureService] = FakeUserErasureService
     app.dependency_overrides[verifyAdmin] = fakeVerifyAdmin
     app.dependency_overrides[verifyAdminForLogout] = fakeVerifyAdminForLogout
     testClient = TestClient(app, raise_server_exceptions=False)
@@ -259,6 +442,155 @@ def test_user_routes_return_only_public_response_fields(client):
         "userId": "user-2",
         "fullName": "Updated User",
     }
+
+
+def test_user_access_route_bans_with_optional_reason(client):
+    response = client.patch(
+        "/admin/users/user-2/access",
+        json={"banned": True, "reason": ""},
+        headers=_adminHeaders(),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        **USER_ACCESS_VIEW,
+        "userId": "user-2",
+        "banReason": None,
+    }
+
+
+def test_batch_user_access_route_requires_auth_and_resolves_static_path(client):
+    body = {"userIds": ["user-2", "missing"], "banned": True}
+
+    withoutAuth = client.patch("/admin/users/access", json=body)
+    response = client.patch(
+        "/admin/users/access", json=body, headers=_adminHeaders()
+    )
+
+    assert withoutAuth.status_code == 401
+    assert response.status_code == 200
+    assert response.json()["status"] == "PARTIAL_SUCCESS"
+    assert [item["outcome"] for item in response.json()["results"]] == [
+        "UPDATED", "FAILED"
+    ]
+
+
+def test_batch_user_access_route_rejects_invalid_strict_requests(client):
+    emptyUsers = client.patch(
+        "/admin/users/access", json={"userIds": [], "banned": True},
+        headers=_adminHeaders(),
+    )
+    extraField = client.patch(
+        "/admin/users/access",
+        json={"userIds": ["user-1"], "banned": True, "unexpected": True},
+        headers=_adminHeaders(),
+    )
+
+    assert emptyUsers.status_code == 422
+    assert extraField.status_code == 422
+
+
+def test_user_erasure_start_and_status_contracts(client):
+    requestId = "8cfdb150-417d-47ab-acd1-fef39d2bc14e"
+    started = client.post(
+        "/admin/users/user-2/erasure",
+        json={"confirmation": "ERASE", "reason": ""},
+        headers={**_adminHeaders(), "Idempotency-Key": requestId},
+    )
+
+    assert started.status_code == 202
+    assert started.json() == {
+        "requestId": requestId,
+        "userId": "user-2",
+        "status": "PENDING",
+        "createdAt": "2026-08-24T10:00:00+00:00",
+    }
+
+    status = client.get(
+        f"/admin/user-erasure-requests/{requestId}",
+        headers=_adminHeaders(),
+    )
+    assert status.status_code == 200
+    assert status.json()["status"] == "IN_PROGRESS"
+    assert status.json()["steps"] == [{
+        "name": "inventory",
+        "status": "COMPLETED",
+        "attempts": 1,
+        "lastErrorCode": None,
+    }]
+
+
+def test_user_erasure_start_requires_confirmation_and_idempotency_header(client):
+    withoutHeader = client.post(
+        "/admin/users/user-1/erasure",
+        json={"confirmation": "ERASE"},
+        headers=_adminHeaders(),
+    )
+    wrongConfirmation = client.post(
+        "/admin/users/user-1/erasure",
+        json={"confirmation": "erase"},
+        headers={
+            **_adminHeaders(),
+            "Idempotency-Key": "8cfdb150-417d-47ab-acd1-fef39d2bc14e",
+        },
+    )
+
+    assert withoutHeader.status_code == 422
+    assert withoutHeader.json()["message"] == "Validation failed"
+    assert wrongConfirmation.status_code == 422
+    assert wrongConfirmation.json()["message"] == "Validation failed"
+
+
+def test_free_trial_extension_processes_eligible_users_and_reports_failures(client):
+    FakeAdminTrialExtensionService.calls.clear()
+    idempotencyKey = "f53b33cd-219e-4c70-b5c2-43d956591fa5"
+
+    response = client.post(
+        "/admin/free-trial/extensions",
+        json={
+            "userIds": ["free-user", "paid-user"],
+            "days": 5,
+            "reason": "Customer recovery",
+        },
+        headers={**_adminHeaders(), "Idempotency-Key": idempotencyKey},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "PARTIAL_SUCCESS"
+    assert response.json()["summary"] == {
+        "requested": 2,
+        "extended": 1,
+        "failed": 1,
+        "creditSyncPending": 0,
+    }
+    assert response.json()["results"][1]["errorCode"] == (
+        "PAID_SUBSCRIPTION_NOT_ELIGIBLE"
+    )
+    call = FakeAdminTrialExtensionService.calls[-1]
+    assert call["idempotencyKey"] == idempotencyKey
+    assert call["payload"].days == 5
+    assert call["payload"].userIds == ["free-user", "paid-user"]
+    assert call["admin"] == ADMIN_CONTEXT
+
+
+def test_free_trial_extension_requires_auth_and_idempotency_header(client):
+    body = {"userIds": ["free-user"], "days": 4}
+
+    withoutAuth = client.post(
+        "/admin/free-trial/extensions",
+        json=body,
+        headers={"Idempotency-Key": "b0eb9203-836a-41da-b33c-e46bcecc12c3"},
+    )
+    withoutIdempotency = client.post(
+        "/admin/free-trial/extensions",
+        json=body,
+        headers=_adminHeaders(),
+    )
+
+    assert withoutAuth.status_code == 401
+    assert withoutAuth.json() == {"message": "Authentication required"}
+    assert withoutIdempotency.status_code == 422
+    assert withoutIdempotency.json()["message"] == "Validation failed"
 
 
 def test_subscription_routes_return_only_public_response_fields(client):
@@ -369,12 +701,28 @@ def test_unknown_admin_path_uses_admin_error_shape(client, path):
 
 
 def test_admin_routes_declare_strict_response_allowlists():
+    accessView = getattr(adminModels, "AdminUserAccessView")
+    accessBatchResponse = getattr(adminModels, "AdminUserAccessBatchResponse")
     expectedModels = {
         ("/admin/auth/login", "POST"): AdminLoginResponse,
         ("/admin/auth/logout", "POST"): AdminLogoutResponse,
         ("/admin/audit", "GET"): list[AdminAuditEventView],
+        ("/admin/overview/user-signups", "GET"): AdminUserSignupOverviewView,
         ("/admin/users", "GET"): list[AdminUserView],
         ("/admin/users/{userId}", "PATCH"): AdminUserView,
+        ("/admin/users/access", "PATCH"): accessBatchResponse,
+        ("/admin/users/{userId}/access", "PATCH"): accessView,
+        ("/admin/users/{userId}/erasure", "POST"): AdminUserErasureAcceptedView,
+        ("/admin/free-trial/extensions", "POST"):
+            AdminFreeTrialExtensionResponse,
+        ("/admin/user-erasure-requests/{requestId}", "GET"):
+            AdminUserErasureStatusView,
+        ("/admin/user-erasure-batches", "POST"):
+            AdminUserErasureBatchView,
+        ("/admin/user-erasure-batches/{batchId}/confirm", "POST"):
+            AdminUserErasureBatchView,
+        ("/admin/user-erasure-batches/{batchId}", "GET"):
+            AdminUserErasureBatchView,
         ("/admin/subscriptions", "GET"): list[AdminSubscriptionView],
         ("/admin/subscriptions/{subscriptionId}", "PATCH"): AdminSubscriptionView,
     }
@@ -385,6 +733,17 @@ def test_admin_routes_declare_strict_response_allowlists():
         for method in route.methods
     }
     assert observedModels == expectedModels
+
+
+def test_free_trial_extension_route_runs_blocking_batch_in_threadpool():
+    route = next(
+        route
+        for route in app.routes
+        if isinstance(route, APIRoute)
+        and route.path == "/admin/free-trial/extensions"
+    )
+
+    assert inspect.iscoroutinefunction(route.endpoint) is False
 
 
 def test_billing_admin_routes_still_use_billing_admin_dependency():
@@ -454,3 +813,59 @@ def test_audit_rejects_negative_offset(client):
 
     assert response.status_code == 422
     assert "offset" in response.json()["errors"]
+
+
+def test_signup_overview_returns_chart_payload(client):
+    FakeAdminOverviewService.requestedPeriods = []
+
+    response = client.get(
+        "/admin/overview/user-signups", headers=_adminHeaders()
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["chart"]["labels"] == ["2026-07-28", "2026-07-29"]
+    assert body["chart"]["datasets"] == [
+        {"label": "New users", "data": [1, 3]}
+    ]
+    assert body["totalSignups"] == 4
+
+
+def test_signup_overview_defaults_to_thirty_days(client):
+    FakeAdminOverviewService.requestedPeriods = []
+
+    client.get("/admin/overview/user-signups", headers=_adminHeaders())
+
+    assert FakeAdminOverviewService.requestedPeriods == ["30d"]
+
+
+def test_signup_overview_forwards_the_requested_period(client):
+    FakeAdminOverviewService.requestedPeriods = []
+
+    response = client.get(
+        "/admin/overview/user-signups?period=1y", headers=_adminHeaders()
+    )
+
+    assert response.status_code == 200
+    assert FakeAdminOverviewService.requestedPeriods == ["1y"]
+
+
+def test_signup_overview_rejects_an_unsupported_period(client):
+    response = client.get(
+        "/admin/overview/user-signups?period=3w", headers=_adminHeaders()
+    )
+
+    assert response.status_code == 422
+
+
+def test_signup_overview_requires_admin_authentication(client):
+    response = client.get("/admin/overview/user-signups")
+
+    assert response.status_code == 401
+
+
+def test_signup_overview_view_rejects_unknown_fields():
+    with pytest.raises(Exception):
+        AdminUserSignupOverviewView(
+            **{**SIGNUP_OVERVIEW_VIEW, "unexpected": "value"}
+        )

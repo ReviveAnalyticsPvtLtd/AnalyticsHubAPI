@@ -2,6 +2,7 @@ import unittest
 
 from pydantic import ValidationError
 
+import api.adminModels as adminModels
 from api.adminErrors import AdminApiError, requestValidationErrors
 from api.adminModels import AdminLoginRequest, AdminSubscriptionPatch, AdminUserPatch
 
@@ -35,6 +36,27 @@ class AdminModelTests(unittest.TestCase):
         ):
             with self.subTest(payload=payload), self.assertRaises(ValidationError):
                 AdminSubscriptionPatch.model_validate(payload)
+
+    def test_user_access_patch_accepts_optional_and_blank_reason(self):
+        patchModel = getattr(adminModels, "AdminUserAccessPatch")
+
+        omitted = patchModel.model_validate({"banned": True})
+        blank = patchModel.model_validate({"banned": True, "reason": "   "})
+        restored = patchModel.model_validate({"banned": False, "reason": None})
+
+        self.assertIsNone(omitted.reason)
+        self.assertIsNone(blank.reason)
+        self.assertIsNone(restored.reason)
+
+    def test_user_access_patch_rejects_unknown_fields_and_long_reason(self):
+        patchModel = getattr(adminModels, "AdminUserAccessPatch")
+
+        for payload in (
+            {"banned": True, "unexpected": "value"},
+            {"banned": True, "reason": "x" * 1001},
+        ):
+            with self.subTest(payload=payload), self.assertRaises(ValidationError):
+                patchModel.model_validate(payload)
 
     def test_safe_admin_error_does_not_expose_internal_exception(self):
         error = AdminApiError(422, "Validation failed", {"email": "Invalid email format"})

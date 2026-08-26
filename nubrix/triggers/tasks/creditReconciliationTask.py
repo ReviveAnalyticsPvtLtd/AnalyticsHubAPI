@@ -94,6 +94,10 @@ class CreditReconciliationTask:
     Supabase credit_balances table.
     """
 
+    def __init__(self, client=None, creditService=None):
+        self._client = client
+        self._creditService = creditService
+
     def execute(self) -> dict:
         """
         Query all credit_balances rows and reconcile each user's
@@ -105,8 +109,14 @@ class CreditReconciliationTask:
         logger.info("Credit reconciliation task started")
 
         try:
-            from api.commons import client
-            from api.services.credits.creditService import creditService
+            if self._client is None:
+                from api.commons import client
+            else:
+                client = self._client
+            if self._creditService is None:
+                from api.services.credits.creditService import creditService
+            else:
+                creditService = self._creditService
 
             rows = (
                 client.table("credit_balances")
@@ -136,7 +146,10 @@ class CreditReconciliationTask:
                 f"topupChecked={sweepResult['checked']}, "
                 f"topupGranted={sweepResult['granted']}"
             )
-            return {"reconciledCount": reconciledCount, "topupSweep": sweepResult}
+            return {
+                "reconciledCount": reconciledCount,
+                "topupSweep": sweepResult,
+            }
         except Exception as e:
             logger.error(f"Credit reconciliation task failed: {e}")
             return {"error": str(e), "reconciledCount": 0}

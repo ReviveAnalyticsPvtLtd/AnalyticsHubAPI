@@ -12,7 +12,13 @@ __all__ = ["router"]
 
 
 from utils.exceptionHandler import CustomException, raiseHttpException
-from fastapi import status, APIRouter, Depends, WebSocket, WebSocketDisconnect
+from fastapi import (
+    status,
+    APIRouter,
+    Depends,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from api.models import SpeechToTextModel, ImageToInsightsModel, UpdateDashboardInsightStatus
 from fastapi.security import HTTPAuthorizationCredentials
 from api.services.utilityService import utilityService
@@ -25,6 +31,13 @@ router = APIRouter()
 """
 Router for utility-related endpoints.
 """
+
+
+def _websocketTokenIsValid(credentials: HTTPAuthorizationCredentials) -> bool:
+    try:
+        return bool(verifyToken(token=credentials))
+    except Exception:
+        return False
 
 @router.post("/getSpeechTranscript")
 async def getSpeechTranscript(speechToText: SpeechToTextModel, user: UserContext = Depends(requireCredits("speech_to_text"))):
@@ -135,17 +148,25 @@ async def getTaskStatus(websocket: WebSocket):
     """
     await websocket.accept()
     token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
     credentials = HTTPAuthorizationCredentials(scheme = "Bearer", credentials = token)
-    if not token or not verifyToken(token = credentials):
+    if not _websocketTokenIsValid(credentials):
         await websocket.close(code = status.WS_1008_POLICY_VIOLATION)
-        return 
+        return
     await websocket.send_json({"status": "RUNNING"})
     try:
         taskId = websocket.query_params.get("taskId")
         r = celeryApp.AsyncResult(taskId)
         while not r.ready():
             await asyncio.sleep(5)
-            continue            
+            if not _websocketTokenIsValid(credentials):
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                return
+        if not _websocketTokenIsValid(credentials):
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
         await websocket.send_json({
             "taskId": r.task_id,
             "status": r.status,

@@ -19,6 +19,9 @@ from nubrix.triggers.tasks.subscriptionExpiryTask import SubscriptionExpiryTask
 from nubrix.triggers.tasks.creditReconciliationTask import CreditReconciliationTask
 from nubrix.triggers.tasks.adminSessionCleanupTask import AdminSessionCleanupTask
 from nubrix.triggers.tasks.billingTask import DailyBillingTask
+from nubrix.triggers.tasks.userErasureTask import UserErasureTask
+from nubrix.triggers.tasks.userErasureBatchTask import UserErasureBatchTask
+from nubrix.triggers.tasks.adminTrialCreditSyncTask import AdminTrialCreditSyncTask
 from celery.schedules import crontab
 from celery import Celery
 import os
@@ -73,6 +76,30 @@ def runCreditReconciliation():
 def runAdminSessionCleanup():
     return AdminSessionCleanupTask().execute()
 
+@celeryApp.task(name=f"{APP_NAME}.userErasure")
+def runUserErasure(requestId: str):
+    return UserErasureTask().execute(requestId)
+
+@celeryApp.task(name=f"{APP_NAME}.userErasureSweep")
+def runUserErasureSweep():
+    return UserErasureTask().sweep()
+
+@celeryApp.task(name=f"{APP_NAME}.userErasureBatchReconcile")
+def reconcileUserErasureBatch(batchId: str):
+    return UserErasureBatchTask().reconcile(batchId)
+
+@celeryApp.task(name=f"{APP_NAME}.userErasureBatchSweep")
+def sweepUserErasureBatches():
+    return UserErasureBatchTask().sweep()
+
+@celeryApp.task(name=f"{APP_NAME}.adminTrialCreditSync")
+def syncAdminTrialCredits(itemId: str):
+    return AdminTrialCreditSyncTask().execute(itemId)
+
+@celeryApp.task(name=f"{APP_NAME}.adminTrialCreditSyncSweep")
+def sweepAdminTrialCreditSync():
+    return AdminTrialCreditSyncTask().sweep()
+
 
 celeryApp.conf.beat_schedule = {
     "daily-billing-midnight": {"task": f"{APP_NAME}.dailyBilling", "schedule": crontab(minute=0, hour=0)},
@@ -85,5 +112,8 @@ celeryApp.conf.beat_schedule = {
     "subscription-expiry-daily": {"task": f"{APP_NAME}.subscriptionExpiry", "schedule": crontab(minute=0, hour=1)},
     "credit-reconciliation-hourly": {"task": f"{APP_NAME}.creditReconciliation", "schedule": crontab(minute=0)},
     "admin-session-cleanup-daily": {"task": f"{APP_NAME}.adminSessionCleanup", "schedule": crontab(minute=0, hour=3)},
+    "user-erasure-recovery-every-minute": {"task": f"{APP_NAME}.userErasureSweep", "schedule": crontab(minute="*")},
+    "user-erasure-batch-reconciliation-every-minute": {"task": f"{APP_NAME}.userErasureBatchSweep", "schedule": crontab(minute="*")},
+    "admin-trial-credit-sync-every-minute": {"task": f"{APP_NAME}.adminTrialCreditSyncSweep", "schedule": crontab(minute="*")},
 }
 celeryApp.conf.timezone = "UTC"

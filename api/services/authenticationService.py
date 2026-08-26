@@ -14,7 +14,7 @@ __author__ = "Rauhan Ahmed Siddiqui"
 __all__ = ["authenticationService"]
 
 
-from utils.exceptionHandler import CustomException
+from utils.exceptionHandler import CustomException, accountAccessRevokedException
 from utils.logger import logger
 from api.commons import client
 from api.services.subscriptions.subscriptionFieldUtils import mapBillingModeToPlanType
@@ -346,7 +346,7 @@ class AuthenticationService:
                     uiMessage="Please confirm your email address before logging in."
                 )
             userRows = self.client.table("Users") \
-                .select("userId, email, password, onboarded, currentWorkspaceId, profileImage") \
+                .select("userId, email, password, onboarded, currentWorkspaceId, profileImage, isBanned") \
                 .eq("email", loginDetails.email) \
                 .limit(1) \
                 .execute().data
@@ -394,6 +394,8 @@ class AuthenticationService:
                         statusCode=401,
                         uiMessage="The email or password you entered is incorrect. If you originally signed up using a social provider, please click 'Continue with Google/Microsoft' below."
                     )
+            if dataSlice.get("isBanned"):
+                raise accountAccessRevokedException(str(dataSlice["userId"]))
             sessionStartTime = datetime.datetime.now(datetime.timezone.utc)
             expiresAt = sessionStartTime + datetime.timedelta(hours=24)
             subscription = self._ensureSubscriptionSnapshot(dataSlice["userId"])
@@ -495,6 +497,8 @@ class AuthenticationService:
 
             if response.data:
                 userData = response.data[0]
+                if userData.get("isBanned"):
+                    raise accountAccessRevokedException(str(userData["userId"]))
                 subscription = self._ensureSubscriptionSnapshot(userData["userId"])
                 subscriptionDaysLeft = self._refreshLifecycleSnapshot(
                     userData["userId"],
