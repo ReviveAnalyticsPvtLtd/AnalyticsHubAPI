@@ -2438,6 +2438,62 @@ canonical payload replay safely; a different payload with the same key returns
 
 **Errors:** `401`, `409`, `422`, or `500` when the batch ledger cannot be created.
 
+### 15.9 `GET /api/latest/admin/overview/user-signups`
+
+Return new-user signup counts bucketed over a trailing time period, shaped for a
+line chart. Values are computed fresh on every request, so the frontend can poll
+it (React Query `refetchInterval`) for a live view.
+
+**Headers:**
+
+- `Authorization: Bearer <admin-token>`
+
+**Query parameters:**
+
+- `period` — one of `7d`, `14d`, `30d`, `90d`, `6m`, `1y`. Defaults to `30d`.
+
+Bucket granularity is derived from the period, so the client only sends a
+period:
+
+| `period` | `granularity` | Buckets | Label format |
+| --- | --- | --- | --- |
+| `7d`, `14d`, `30d` | `day` | 7, 14, 30 | `YYYY-MM-DD` |
+| `90d` | `week` | 13 | `YYYY-MM-DD` (week start) |
+| `6m` | `week` | 26 | `YYYY-MM-DD` (week start) |
+| `1y` | `month` | 12 | `YYYY-MM` |
+
+Weekly periods are rounded to whole weeks (13 and 26 seven-day buckets) so every
+bucket spans the same number of days. Daily buckets are UTC calendar days ending
+with the current day; monthly buckets are UTC calendar months ending with the
+current month.
+
+**Response:**
+
+```json
+{
+  "period": "30d",
+  "granularity": "day",
+  "timezone": "UTC",
+  "rangeStart": "2026-07-28T00:00:00+00:00",
+  "rangeEnd": "2026-08-27T00:00:00+00:00",
+  "lastUpdatedAt": "2026-08-26T14:30:00+00:00",
+  "totalSignups": 128,
+  "chart": {
+    "labels": ["2026-07-28", "2026-07-29"],
+    "datasets": [{ "label": "New users", "data": [1, 3] }]
+  }
+}
+```
+
+`chart` matches the Chart.js-shaped wire contract the frontend already consumes
+(`ChartData` in `src/types/chartTypes.ts`), so it can be passed straight to the
+line chart component with no reshaping. Buckets with no signups are zero-filled
+so the line has no gaps. `rangeEnd` is exclusive. `lastUpdatedAt` is the instant
+the response was computed, for a freshness indicator between polls.
+
+**Errors:** `401`, `422` for an unsupported `period`, or a safe `500` read
+failure.
+
 ---
 
 ## Common Error Responses

@@ -28,6 +28,7 @@ from api.adminModels import (
     AdminUserErasureAcceptedView,
     AdminUserErasureBatchView,
     AdminUserErasureStatusView,
+    AdminUserSignupOverviewView,
     AdminUserView,
 )
 import api.adminModels as adminModels
@@ -41,6 +42,7 @@ from api.services.adminAuthService import (
 )
 from api.services.adminAuditService import getAdminAuditService
 from api.services.adminManagementService import getAdminManagementService
+from api.services.adminOverviewService import getAdminOverviewService
 from api.services.adminTrialExtensionService import getAdminTrialExtensionService
 from api.services.userErasureService import getUserErasureService
 from main import (
@@ -327,6 +329,31 @@ class FakeAdminTrialExtensionService:
         }
 
 
+SIGNUP_OVERVIEW_VIEW = {
+    "period": "30d",
+    "granularity": "day",
+    "timezone": "UTC",
+    "rangeStart": "2026-07-28T00:00:00+00:00",
+    "rangeEnd": "2026-08-27T00:00:00+00:00",
+    "lastUpdatedAt": "2026-08-26T14:30:00+00:00",
+    "totalSignups": 4,
+    "chart": {
+        "labels": ["2026-07-28", "2026-07-29"],
+        "datasets": [{"label": "New users", "data": [1, 3]}],
+    },
+}
+
+
+class FakeAdminOverviewService:
+    """Records the period the route forwards without touching a backend."""
+
+    requestedPeriods: list[str] = []
+
+    def getUserSignupOverview(self, period):
+        FakeAdminOverviewService.requestedPeriods.append(period)
+        return {**SIGNUP_OVERVIEW_VIEW, "period": period}
+
+
 async def fakeVerifyAdmin(request: Request) -> AdminContext:
     if request.headers.get("Authorization") != "Bearer admin-token":
         raise AdminApiError(401, "Authentication required")
@@ -360,6 +387,7 @@ def client():
     app.dependency_overrides[getAdminAuthService] = FakeAdminAuthService
     app.dependency_overrides[getAdminManagementService] = FakeAdminManagementService
     app.dependency_overrides[getAdminAuditService] = FakeAdminAuditService
+    app.dependency_overrides[getAdminOverviewService] = FakeAdminOverviewService
     app.dependency_overrides[getAdminTrialExtensionService] = (
         FakeAdminTrialExtensionService
     )
@@ -679,6 +707,7 @@ def test_admin_routes_declare_strict_response_allowlists():
         ("/admin/auth/login", "POST"): AdminLoginResponse,
         ("/admin/auth/logout", "POST"): AdminLogoutResponse,
         ("/admin/audit", "GET"): list[AdminAuditEventView],
+        ("/admin/overview/user-signups", "GET"): AdminUserSignupOverviewView,
         ("/admin/users", "GET"): list[AdminUserView],
         ("/admin/users/{userId}", "PATCH"): AdminUserView,
         ("/admin/users/access", "PATCH"): accessBatchResponse,
@@ -784,3 +813,59 @@ def test_audit_rejects_negative_offset(client):
 
     assert response.status_code == 422
     assert "offset" in response.json()["errors"]
+
+
+def test_signup_overview_returns_chart_payload(client):
+    FakeAdminOverviewService.requestedPeriods = []
+
+    response = client.get(
+        "/admin/overview/user-signups", headers=_adminHeaders()
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["chart"]["labels"] == ["2026-07-28", "2026-07-29"]
+    assert body["chart"]["datasets"] == [
+        {"label": "New users", "data": [1, 3]}
+    ]
+    assert body["totalSignups"] == 4
+
+
+def test_signup_overview_defaults_to_thirty_days(client):
+    FakeAdminOverviewService.requestedPeriods = []
+
+    client.get("/admin/overview/user-signups", headers=_adminHeaders())
+
+    assert FakeAdminOverviewService.requestedPeriods == ["30d"]
+
+
+def test_signup_overview_forwards_the_requested_period(client):
+    FakeAdminOverviewService.requestedPeriods = []
+
+    response = client.get(
+        "/admin/overview/user-signups?period=1y", headers=_adminHeaders()
+    )
+
+    assert response.status_code == 200
+    assert FakeAdminOverviewService.requestedPeriods == ["1y"]
+
+
+def test_signup_overview_rejects_an_unsupported_period(client):
+    response = client.get(
+        "/admin/overview/user-signups?period=3w", headers=_adminHeaders()
+    )
+
+    assert response.status_code == 422
+
+
+def test_signup_overview_requires_admin_authentication(client):
+    response = client.get("/admin/overview/user-signups")
+
+    assert response.status_code == 401
+
+
+def test_signup_overview_view_rejects_unknown_fields():
+    with pytest.raises(Exception):
+        AdminUserSignupOverviewView(
+            **{**SIGNUP_OVERVIEW_VIEW, "unexpected": "value"}
+        )

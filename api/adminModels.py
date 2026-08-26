@@ -418,3 +418,30 @@ class AdminSubscriptionView(_StrictModel):
     plan_type: str
     created_at: str
     updated_at: str
+
+
+AdminOverviewPeriod = Literal["7d", "14d", "30d", "90d", "6m", "1y"]
+AdminOverviewGranularity = Literal["day", "week", "month"]
+
+
+class AdminSignupDataset(_StrictModel):
+    """One Chart.js-shaped series; the frontend maps this straight to ECharts."""
+
+    label: str
+    data: list[int]
+
+
+class AdminSignupChart(_StrictModel):
+    labels: list[str]
+    datasets: list[AdminSignupDataset]
+
+
+class AdminUserSignupOverviewView(_StrictModel):
+    period: AdminOverviewPeriod
+    granularity: AdminOverviewGranularity
+    timezone: str
+    rangeStart: str
+    rangeEnd: str
+    lastUpdatedAt: str
+    totalSignups: int
+    chart: AdminSignupChart
