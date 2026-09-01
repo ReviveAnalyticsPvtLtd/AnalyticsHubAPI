@@ -107,7 +107,7 @@ class AdminTrialExtensionService:
                 "Admin trial-extension persistence failed: {}",
                 type(exc).__name__,
             )
-            raise AdminApiError(500, "Failed to extend free trials") from exc
+            raise AdminApiError(500, "Failed to extend free trial") from exc
 
         if str(extension.get("request_hash") or "") != requestHash:
             raise AdminApiError(409, "Idempotency key is already in use")

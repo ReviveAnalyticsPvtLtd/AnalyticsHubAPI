@@ -236,3 +236,22 @@ def test_invalid_idempotency_key_is_rejected_before_database_work():
 
     assert error.value.statusCode == 422
     assert repository.extension is None
+
+
+def test_extension_persistence_failure_uses_single_user_error_message():
+    repository = FakeRepository()
+
+    def failCreate(**_kwargs):
+        raise RuntimeError("database unavailable")
+
+    repository.createOrGetExtension = failCreate
+
+    with pytest.raises(AdminApiError) as error:
+        buildService(repository).extend(
+            AdminFreeTrialExtensionRequest(userId="free-user", days=5),
+            KEY,
+            ADMIN,
+        )
+
+    assert error.value.statusCode == 500
+    assert error.value.message == "Failed to extend free trial"

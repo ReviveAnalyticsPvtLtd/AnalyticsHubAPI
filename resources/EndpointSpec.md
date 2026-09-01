@@ -2149,8 +2149,8 @@ the durable workflow automatically. Sanitized `user.erasure.complete` and
 
 ### 15.3 `POST /api/latest/admin/free-trial/extensions`
 
-Add 1–30 days to one or more free-trial subscriptions and refresh each
-successful user's included free credits in the same operation.
+Add 1–30 days to one free-trial subscription and refresh that user's included
+free credits in the same operation.
 
 **Headers:**
 
@@ -2161,72 +2161,55 @@ successful user's included free credits in the same operation.
 
 ```json
 {
-  "userIds": ["free-user", "paid-user"],
+  "userId": "free-user",
   "days": 5,
   "reason": "Optional internal reason"
 }
 ```
 
-`userIds` accepts 1–100 users, is trimmed and deduplicated, and limits each
-identifier to 128 characters. `days` must be a
-JSON integer from 1 through 30. `reason` is optional, blank normalizes to `null`,
-and the maximum length is 1,000 characters.
+`userId` is required, trimmed, must not be blank, and is limited to 128
+characters. `days` must be a JSON integer from 1 through 30. `reason` is
+optional, blank normalizes to `null`, and the maximum length is 1,000
+characters.
 
 Only subscriptions with `billing_mode=none`, `plan_type=free`, and status
 `trial` or `expired` are eligible. Active trials stack from their existing
-expiry; expired and stale trials restart from the current UTC time. Paid and
-other ineligible users fail individually while eligible users continue.
+expiry; expired and stale trials restart from the current UTC time. An
+ineligible request returns a single `FAILED` result without modifying the
+subscription.
 
 **Response (200):**
 
 ```json
 {
-  "batchId": "f53b33cd-219e-4c70-b5c2-43d956591fa5",
-  "status": "PARTIAL_SUCCESS",
-  "days": 5,
-  "summary": {
-    "requested": 2,
-    "extended": 1,
-    "failed": 1,
-    "creditSyncPending": 0
-  },
-  "results": [
-    {
-      "userId": "free-user",
-      "outcome": "EXTENDED",
-      "daysAdded": 5,
-      "previousExpiry": "2026-08-25T10:00:00+00:00",
-      "newExpiry": "2026-08-30T10:00:00+00:00",
-      "creditsRefreshed": true,
-      "creditSyncStatus": "SYNCED",
-      "accessStillBanned": false,
-      "errorCode": null
-    },
-    {
-      "userId": "paid-user",
-      "outcome": "FAILED",
-      "daysAdded": null,
-      "previousExpiry": null,
-      "newExpiry": null,
-      "creditsRefreshed": false,
-      "creditSyncStatus": "NOT_APPLICABLE",
-      "accessStillBanned": false,
-      "errorCode": "PAID_SUBSCRIPTION_NOT_ELIGIBLE"
-    }
-  ]
+  "extensionId": "f53b33cd-219e-4c70-b5c2-43d956591fa5",
+  "userId": "free-user",
+  "outcome": "EXTENDED",
+  "daysAdded": 5,
+  "previousExpiry": "2026-08-25T10:00:00+00:00",
+  "newExpiry": "2026-08-30T10:00:00+00:00",
+  "creditsRefreshed": true,
+  "creditSyncStatus": "SYNCED",
+  "accessStillBanned": false,
+  "errorCode": null
 }
 ```
 
-Successful users have their free allowance fully refreshed, used monthly tokens
-reset to zero, and credit period restarted while purchased top-up tokens are
-preserved. A temporary Redis failure leaves the durable extension successful
-with `creditSyncStatus: PENDING`; Celery retries automatically. Banned users stay
-banned. Generation fencing marks an older queued cache write `SUPERSEDED`, and
-erasure can mark an unsafe pending write `CANCELLED`. The same idempotency key and
-canonical payload replay safely; a different payload with the same key returns
-`409`.
+A successful extension fully refreshes the user's free allowance, resets used
+monthly tokens to zero, and restarts the credit period while preserving purchased
+top-up tokens. A temporary Redis failure leaves the durable extension successful
+with `creditSyncStatus: PENDING`; Celery retries automatically. A banned user
+stays banned. Generation fencing marks an older queued cache write `SUPERSEDED`,
+and erasure can mark an unsafe pending write `CANCELLED`.
 
-**Errors:** `401`, `409`, `422`, or `500` when the batch ledger cannot be created.
+`outcome` is `EXTENDED` or `FAILED`. Failure codes are `USER_NOT_FOUND`,
+`SUBSCRIPTION_NOT_FOUND`, `USER_ERASURE_PENDING`,
+`PAID_SUBSCRIPTION_NOT_ELIGIBLE`, `FREE_TRIAL_NOT_ELIGIBLE`, and
+`EXTENSION_FAILED`. The same idempotency key and canonical payload replay safely;
+a different payload with the same key returns `409`.
+
+**Errors:** `401`, `409`, `422`, or `500` when the extension operation cannot be
+persisted.
 
 ### 15.4 `GET /api/latest/admin/overview/user-signups`
 
