@@ -12,7 +12,7 @@ from datetime import datetime
 from loguru import logger
 
 from api.adminErrors import AdminApiError
-from api.adminModels import AdminUserAccessPatch, AdminUserErasureRequest
+from api.adminModels import AdminUserErasureRequest
 from api.services.adminAuthService import AdminContext
 
 
@@ -34,12 +34,10 @@ class UserErasureService:
     def __init__(
         self,
         repository=None,
-        accessService=None,
         auditService=None,
         enqueue=None,
     ):
         self._repository = repository
-        self._accessService = accessService
         self._auditService = auditService
         self.enqueue = enqueue or _defaultEnqueue
 
@@ -50,14 +48,6 @@ class UserErasureService:
 
             self._repository = getUserErasureRepository()
         return self._repository
-
-    @property
-    def accessService(self):
-        if self._accessService is None:
-            from api.services.adminManagementService import getAdminManagementService
-
-            self._accessService = getAdminManagementService()
-        return self._accessService
 
     @property
     def auditService(self):
@@ -111,15 +101,6 @@ class UserErasureService:
             logger.error("User erasure request persistence failed: {}", type(exc).__name__)
             raise AdminApiError(500, "Failed to start user erasure") from exc
 
-        accessPatch = {"banned": True}
-        if payload.reason is not None:
-            accessPatch["reason"] = payload.reason
-        self.accessService.setUserAccess(
-            userId,
-            AdminUserAccessPatch.model_validate(accessPatch),
-            admin,
-        )
-
         queued = self._enqueueBestEffort(request["id"])
         self.auditService.record(
             action="user.erasure.start",
@@ -134,38 +115,6 @@ class UserErasureService:
             },
         )
         return self._accepted(request, userId)
-
-    def getStatus(self, requestId: str) -> dict:
-        try:
-            normalizedId = str(uuid.UUID(str(requestId)))
-        except (TypeError, ValueError, AttributeError):
-            normalizedId = str(requestId)
-
-        try:
-            request = self.repository.getRequest(normalizedId)
-        except Exception as exc:
-            logger.error("User erasure status lookup failed: {}", type(exc).__name__)
-            raise AdminApiError(500, "Failed to read erasure status") from exc
-        if request is None:
-            raise AdminApiError(404, "Erasure request not found")
-
-        return {
-            "requestId": str(request["id"]),
-            "status": request["status"],
-            "createdAt": _iso(request["created_at"]),
-            "startedAt": _iso(request.get("started_at")),
-            "completedAt": _iso(request.get("completed_at")),
-            "lastErrorCode": request.get("last_error_code"),
-            "steps": [
-                {
-                    "name": step["step_name"],
-                    "status": step["status"],
-                    "attempts": int(step.get("attempt_count") or 0),
-                    "lastErrorCode": step.get("last_error_code"),
-                }
-                for step in request.get("steps", [])
-            ],
-        }
 
     def _subjectFingerprint(self, userId: str) -> str:
         secret = os.environ.get("USER_ERASURE_HMAC_SECRET")

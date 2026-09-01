@@ -15,11 +15,7 @@ from api.adminModels import (
     AdminUserAccessPatch,
     AdminUserAccessView,
     AdminUserErasureAcceptedView,
-    AdminUserErasureBatchConfirmRequest,
-    AdminUserErasureBatchPreviewRequest,
-    AdminUserErasureBatchView,
     AdminUserErasureRequest,
-    AdminUserErasureStatusView,
     AdminUserPatch,
     AdminUserSignupOverviewView,
     AdminUserView,
@@ -52,10 +48,6 @@ from api.services.adminTrialExtensionService import (
 from api.services.userErasureService import (
     UserErasureService,
     getUserErasureService,
-)
-from api.services.userErasureBatchService import (
-    UserErasureBatchService,
-    getUserErasureBatchService,
 )
 
 
@@ -113,46 +105,6 @@ def setUsersAccess(
     return service.setUsersAccess(payload, admin)
 
 
-@router.post(
-    "/user-erasure-batches",
-    response_model=AdminUserErasureBatchView,
-    status_code=status.HTTP_201_CREATED,
-)
-def previewUserErasureBatch(
-    payload: AdminUserErasureBatchPreviewRequest,
-    idempotencyKey: str = Header(alias="Idempotency-Key"),
-    admin: AdminContext = Depends(verifyAdmin),
-    service: UserErasureBatchService = Depends(getUserErasureBatchService),
-):
-    return service.preview(payload, idempotencyKey, admin)
-
-
-@router.post(
-    "/user-erasure-batches/{batchId}/confirm",
-    response_model=AdminUserErasureBatchView,
-    status_code=status.HTTP_202_ACCEPTED,
-)
-def confirmUserErasureBatch(
-    batchId: str,
-    payload: AdminUserErasureBatchConfirmRequest,
-    admin: AdminContext = Depends(verifyAdmin),
-    service: UserErasureBatchService = Depends(getUserErasureBatchService),
-):
-    return service.confirm(batchId, payload, admin)
-
-
-@router.get(
-    "/user-erasure-batches/{batchId}",
-    response_model=AdminUserErasureBatchView,
-)
-def getUserErasureBatchStatus(
-    batchId: str,
-    admin: AdminContext = Depends(verifyAdmin),
-    service: UserErasureBatchService = Depends(getUserErasureBatchService),
-):
-    return service.getStatus(batchId, admin)
-
-
 @router.patch("/users/{userId}", response_model=AdminUserView)
 async def updateUser(
     userId: str,
@@ -189,18 +141,6 @@ async def startUserErasure(
     service: UserErasureService = Depends(getUserErasureService),
 ):
     return service.start(userId, payload, idempotencyKey, admin)
-
-
-@router.get(
-    "/user-erasure-requests/{requestId}",
-    response_model=AdminUserErasureStatusView,
-)
-async def getUserErasureStatus(
-    requestId: str,
-    _admin: AdminContext = Depends(verifyAdmin),
-    service: UserErasureService = Depends(getUserErasureService),
-):
-    return service.getStatus(requestId)
 
 
 @router.post(

@@ -350,7 +350,7 @@ class UserErasureRepository:
         stepName: str,
         errorCode: str,
         maxAttempts: int,
-    ) -> None:
+    ) -> bool:
         connection = self.connectionFactory()
         try:
             with connection.cursor() as cursor:
@@ -391,6 +391,7 @@ class UserErasureRepository:
                     (errorCode, nextRetry, requestId),
                 )
             connection.commit()
+            return nextRetry is not None
         except Exception:
             connection.rollback()
             raise

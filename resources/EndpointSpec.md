@@ -2201,163 +2201,15 @@ erasure request. The workflow automatically cleans owned database data,
 Supabase Storage and Auth, Redis/cache state, and local billing credentials;
 retained billing/audit records are anonymized.
 
+The returned `requestId` is for audit and log correlation. There is no erasure
+status, batch-erasure, or manual-retry API. Celery and the recovery sweep retry
+the durable workflow automatically. Sanitized `user.erasure.complete` and
+`user.erasure.failed` outcomes are available through the existing
+`GET /api/latest/admin/audit?targetType=user_erasure_request` endpoint.
+
 **Errors:** `401`, `404`, `409`, `422`, `500`, or `503` when rollout is disabled.
 
-### 15.4 `GET /api/latest/admin/user-erasure-requests/{requestId}`
-
-Read the sanitized workflow state. Possible request states are `PENDING`,
-`IN_PROGRESS`, `PARTIALLY_FAILED`, and `COMPLETED`.
-
-```json
-{
-  "requestId": "8cfdb150-417d-47ab-acd1-fef39d2bc14e",
-  "status": "IN_PROGRESS",
-  "createdAt": "2026-08-24T10:00:00+00:00",
-  "startedAt": "2026-08-24T10:00:02+00:00",
-  "completedAt": null,
-  "lastErrorCode": null,
-  "steps": [
-    {
-      "name": "revoke_access",
-      "status": "COMPLETED",
-      "attempts": 1,
-      "lastErrorCode": null
-    }
-  ]
-}
-```
-
-The response never exposes email, reason, object paths, provider payloads,
-tokens, or raw errors. `PARTIALLY_FAILED` remains banned and can be resumed by
-the server-only `scripts/manage_user_erasure.py retry` command. See
-`resources/AdminUserEndpointsSetup.md` for deployment and smoke testing.
-
-### 15.5 `POST /api/latest/admin/user-erasure-batches`
-
-Create a non-destructive erasure preview for 1 through 25 users. This endpoint
-does not ban users, revoke sessions, freeze subscriptions, queue work, or alter
-Storage/Auth/Redis state.
-
-**Headers:**
-
-- `Authorization: Bearer <admin-token>`
-- `Idempotency-Key: <UUID>`
-
-**Request:**
-
-```json
-{
-  "userIds": ["ready-user", "active-user", "missing-user"],
-  "reason": "Optional internal reason"
-}
-```
-
-IDs are trimmed and deduplicated in first-seen order. `reason` is optional,
-blank-normalized to `null`, and limited to 1,000 characters. The idempotency
-hash uses the canonical sorted subject set plus the normalized reason; the
-response preserves first-seen order.
-
-**Response (201):**
-
-```json
-{
-  "batchId": "414c6f2b-a630-49c2-89eb-444514479384",
-  "status": "PREVIEWED",
-  "expiresAt": "2026-08-26T10:15:00+00:00",
-  "requiredConfirmation": "ERASE 1 USER",
-  "summary": {
-    "requested": 3,
-    "ready": 1,
-    "alreadyInProgress": 1,
-    "alreadyCompleted": 0,
-    "notFound": 1
-  },
-  "results": [
-    {
-      "itemId": "item-ready",
-      "userId": "ready-user",
-      "status": "READY",
-      "requestId": null,
-      "errorCode": null
-    },
-    {
-      "itemId": "item-active",
-      "userId": "active-user",
-      "status": "ALREADY_IN_PROGRESS",
-      "requestId": "existing-request-id",
-      "errorCode": null
-    },
-    {
-      "itemId": "item-missing",
-      "userId": "missing-user",
-      "status": "USER_NOT_FOUND",
-      "requestId": null,
-      "errorCode": "USER_NOT_FOUND"
-    }
-  ]
-}
-```
-
-The preview expires after 15 minutes. `requiredConfirmation` is singular for
-one ready user and plural for 2–25 ready users. It is `null` when no user is
-ready; such a preview cannot be confirmed. Replaying the same canonical request
-with the same key returns the original preview; another payload with that key
-returns `409`.
-
-**Errors:** `401`; `409` for idempotency conflict; `422` for invalid body or
-idempotency header; `500` for unavailable fingerprint/persistence setup; `503`
-when `USER_ERASURE_ENABLED` is not `true`.
-
-### 15.6 `POST /api/latest/admin/user-erasure-batches/{batchId}/confirm`
-
-Irreversibly confirm a valid preview. Only its creator may confirm, and the
-creator's current admin session must be active and no more than 10 minutes old.
-
-**Request:**
-
-```json
-{
-  "confirmation": "ERASE 1 USER"
-}
-```
-
-The phrase must exactly match `requiredConfirmation`. Confirmation atomically
-locks subjects in stable user-ID order, revalidates expected races, bans each
-still-ready user, deletes product sessions, freezes billing, cancels pending
-trial-credit sync, and creates or links the durable per-user erasure requests.
-Supabase Auth, Storage, Redis, and Celery are never called inside that database
-transaction.
-
-**Response (202):** the same `AdminUserErasureBatchView` schema, normally with
-`status: "IN_PROGRESS"`, `requiredConfirmation: null`, stable child
-`requestId` values, and item statuses derived from `PENDING`, `IN_PROGRESS`,
-`PARTIALLY_FAILED`, or `COMPLETED` child requests. Replaying confirmation returns
-the same links and may safely requeue unfinished requests. A queue failure does
-not roll back durable confirmation; the automatic recovery sweep resumes it.
-
-**Errors:** `401`; `403` for a different creator or stale/revoked admin session;
-`404` for an unknown batch; `409` for expired, non-confirmable, or no-ready
-preview; `422` for malformed batch ID or an incorrect phrase; `500` for an
-unexpected transaction failure; `503` when initiation is disabled.
-
-### 15.7 `GET /api/latest/admin/user-erasure-batches/{batchId}`
-
-Return the fresh sanitized batch view with HTTP `200`. Batch states are
-`PREVIEWED`, `IN_PROGRESS`, `PARTIALLY_FAILED`, `COMPLETED`, and `EXPIRED`.
-Item states include the four preview classifications plus `PENDING`,
-`IN_PROGRESS`, `PARTIALLY_FAILED`, and `COMPLETED` linked-request states.
-
-Status remains readable when new erasure initiation is disabled. The one-minute
-reconciliation sweep expires previews and derives aggregate state. A completed
-child's `userId` becomes `null`; a terminal batch clears every remaining
-`userId` and its optional stored reason. Responses never expose subject
-fingerprints, request hashes, creator/session metadata, raw errors, or the
-reason.
-
-**Errors:** `401`, `404`, `422` for malformed batch ID, or a safe `500` read
-failure.
-
-### 15.8 `POST /api/latest/admin/free-trial/extensions`
+### 15.4 `POST /api/latest/admin/free-trial/extensions`
 
 Add 1–30 days to one or more free-trial subscriptions and refresh each
 successful user's included free credits in the same operation.
@@ -2438,7 +2290,7 @@ canonical payload replay safely; a different payload with the same key returns
 
 **Errors:** `401`, `409`, `422`, or `500` when the batch ledger cannot be created.
 
-### 15.9 `GET /api/latest/admin/overview/user-signups`
+### 15.5 `GET /api/latest/admin/overview/user-signups`
 
 Return new-user signup counts bucketed over a trailing time period, shaped for a
 line chart. Values are computed fresh on every request, so the frontend can poll

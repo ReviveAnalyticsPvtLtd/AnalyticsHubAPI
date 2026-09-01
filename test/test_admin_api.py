@@ -26,8 +26,6 @@ from api.adminModels import (
     AdminLogoutResponse,
     AdminSubscriptionView,
     AdminUserErasureAcceptedView,
-    AdminUserErasureBatchView,
-    AdminUserErasureStatusView,
     AdminUserSignupOverviewView,
     AdminUserView,
 )
@@ -264,25 +262,6 @@ class FakeUserErasureService:
             "createdAt": "2026-08-24T10:00:00+00:00",
         }
 
-    def getStatus(self, requestId):
-        if requestId == "missing":
-            raise AdminApiError(404, "Erasure request not found")
-        return {
-            "requestId": requestId,
-            "status": "IN_PROGRESS",
-            "createdAt": "2026-08-24T10:00:00+00:00",
-            "startedAt": "2026-08-24T10:00:02+00:00",
-            "completedAt": None,
-            "lastErrorCode": None,
-            "steps": [{
-                "name": "inventory",
-                "status": "COMPLETED",
-                "attempts": 1,
-                "lastErrorCode": None,
-            }],
-        }
-
-
 class FakeAdminTrialExtensionService:
     calls: list[dict] = []
 
@@ -490,7 +469,7 @@ def test_batch_user_access_route_rejects_invalid_strict_requests(client):
     assert extraField.status_code == 422
 
 
-def test_user_erasure_start_and_status_contracts(client):
+def test_user_erasure_start_contract(client):
     requestId = "8cfdb150-417d-47ab-acd1-fef39d2bc14e"
     started = client.post(
         "/admin/users/user-2/erasure",
@@ -505,20 +484,6 @@ def test_user_erasure_start_and_status_contracts(client):
         "status": "PENDING",
         "createdAt": "2026-08-24T10:00:00+00:00",
     }
-
-    status = client.get(
-        f"/admin/user-erasure-requests/{requestId}",
-        headers=_adminHeaders(),
-    )
-    assert status.status_code == 200
-    assert status.json()["status"] == "IN_PROGRESS"
-    assert status.json()["steps"] == [{
-        "name": "inventory",
-        "status": "COMPLETED",
-        "attempts": 1,
-        "lastErrorCode": None,
-    }]
-
 
 def test_user_erasure_start_requires_confirmation_and_idempotency_header(client):
     withoutHeader = client.post(
@@ -715,14 +680,6 @@ def test_admin_routes_declare_strict_response_allowlists():
         ("/admin/users/{userId}/erasure", "POST"): AdminUserErasureAcceptedView,
         ("/admin/free-trial/extensions", "POST"):
             AdminFreeTrialExtensionResponse,
-        ("/admin/user-erasure-requests/{requestId}", "GET"):
-            AdminUserErasureStatusView,
-        ("/admin/user-erasure-batches", "POST"):
-            AdminUserErasureBatchView,
-        ("/admin/user-erasure-batches/{batchId}/confirm", "POST"):
-            AdminUserErasureBatchView,
-        ("/admin/user-erasure-batches/{batchId}", "GET"):
-            AdminUserErasureBatchView,
         ("/admin/subscriptions", "GET"): list[AdminSubscriptionView],
         ("/admin/subscriptions/{subscriptionId}", "PATCH"): AdminSubscriptionView,
     }
@@ -733,6 +690,17 @@ def test_admin_routes_declare_strict_response_allowlists():
         for method in route.methods
     }
     assert observedModels == expectedModels
+
+
+def test_admin_does_not_expose_single_user_erasure_status_route():
+    routes = {
+        (route.path, method)
+        for route in app.routes
+        if isinstance(route, APIRoute)
+        for method in route.methods
+    }
+    assert ("/admin/user-erasure-requests/{requestId}", "GET") not in routes
+    assert ("/admin/users/{userId}/erasure", "POST") in routes
 
 
 def test_free_trial_extension_route_runs_blocking_batch_in_threadpool():

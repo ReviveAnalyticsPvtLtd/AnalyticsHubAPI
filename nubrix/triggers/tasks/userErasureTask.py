@@ -6,6 +6,10 @@ import os
 import uuid
 
 from api.commons import client as supabaseClient
+from api.services.adminAuditService import (
+    ADMIN_AUDIT_SYSTEM_ACTOR,
+    getAdminAuditService,
+)
 from api.services.userErasureRepository import (
     ERASURE_STEP_NAMES,
     getUserErasureRepository,
@@ -212,12 +216,14 @@ class UserErasureTask:
         self,
         repository=None,
         externalCleanup=None,
+        auditService=None,
         enqueue=None,
         maxAttempts: int | None = None,
         leaseSeconds: int | None = None,
     ):
         self.repository = repository or getUserErasureRepository()
         self.external = externalCleanup or UserErasureExternalCleanup()
+        self.audit = auditService or getAdminAuditService()
         self.enqueue = enqueue or self._enqueue
         self.maxAttempts = maxAttempts or int(
             os.environ.get("USER_ERASURE_MAX_ATTEMPTS", "5")
@@ -296,9 +302,23 @@ class UserErasureTask:
                     self.repository.completeStep(requestId, stepName, details)
             except Exception:
                 errorCode = _ERROR_CODES[stepName]
-                self.repository.failStep(
+                retryScheduled = self.repository.failStep(
                     requestId, stepName, errorCode, self.maxAttempts
                 )
+                if not retryScheduled:
+                    self.audit.record(
+                        action="user.erasure.failed",
+                        targetType="user_erasure_request",
+                        targetId=requestId,
+                        changedFields=["status", "last_error_code"],
+                        outcome="failed",
+                        actorEmail=ADMIN_AUDIT_SYSTEM_ACTOR,
+                        details={
+                            "status": "PARTIALLY_FAILED",
+                            "step": stepName,
+                            "errorCode": errorCode,
+                        },
+                    )
                 logger.error(
                     "User erasure step failed: request={}, step={}, code={}",
                     requestId,
@@ -307,6 +327,15 @@ class UserErasureTask:
                 )
                 return {"requestId": requestId, "status": "PARTIALLY_FAILED"}
 
+        self.audit.record(
+            action="user.erasure.complete",
+            targetType="user_erasure_request",
+            targetId=requestId,
+            changedFields=["status", "target_user_id", "reason"],
+            outcome="success",
+            actorEmail=ADMIN_AUDIT_SYSTEM_ACTOR,
+            details={"status": "COMPLETED"},
+        )
         return {"requestId": requestId, "status": "COMPLETED"}
 
     def _verifyAndFinalize(

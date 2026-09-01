@@ -50,17 +50,6 @@ class FakeRepository:
         return self.requests.get(requestId)
 
 
-class FakeAccessService:
-    def __init__(self, events):
-        self.events = events
-        self.calls = []
-
-    def setUserAccess(self, userId, payload, admin):
-        self.events.append(("ban", userId))
-        self.calls.append((userId, payload, admin))
-        return {"isBanned": True}
-
-
 class FakeAudit:
     def __init__(self):
         self.calls = []
@@ -76,25 +65,22 @@ def _service(monkeypatch, repository=None, queue=None):
     monkeypatch.setenv("USER_ERASURE_HMAC_SECRET", "independent-test-secret")
     events = []
     repository = repository or FakeRepository(events)
-    access = FakeAccessService(events)
     audit = FakeAudit()
     queue = queue or (lambda requestId: events.append(("queue", requestId)))
     return (
         UserErasureService(
             repository=repository,
-            accessService=access,
             auditService=audit,
             enqueue=queue,
         ),
         repository,
-        access,
         audit,
         events,
     )
 
 
-def test_start_erasure_persists_atomic_ban_before_external_auth_sync_and_queue(monkeypatch):
-    service, _repository, access, audit, events = _service(monkeypatch)
+def test_start_erasure_queues_after_durable_request_without_duplicate_access_call(monkeypatch):
+    service, _repository, audit, events = _service(monkeypatch)
 
     result = service.start(
         "user-1",
@@ -106,9 +92,7 @@ def test_start_erasure_persists_atomic_ban_before_external_auth_sync_and_queue(m
         ADMIN,
     )
 
-    assert [event[0] for event in events] == ["create", "ban", "queue"]
-    assert access.calls[0][1].banned is True
-    assert access.calls[0][1].reason == "Customer request"
+    assert [event[0] for event in events] == ["create", "queue"]
     assert result == {
         "requestId": "request-1",
         "userId": "user-1",
@@ -124,8 +108,8 @@ def test_start_erasure_persists_atomic_ban_before_external_auth_sync_and_queue(m
     assert len(audit.calls[-1]["details"]["targetFingerprint"]) == 64
 
 
-def test_start_erasure_replays_same_idempotency_key_without_rebanning(monkeypatch):
-    service, repository, access, _audit, events = _service(monkeypatch)
+def test_start_erasure_replays_same_idempotency_key_without_recreating_request(monkeypatch):
+    service, repository, _audit, events = _service(monkeypatch)
     payload = AdminUserErasureRequest.model_validate({"confirmation": "ERASE"})
     key = "8cfdb150-417d-47ab-acd1-fef39d2bc14e"
 
@@ -133,14 +117,13 @@ def test_start_erasure_replays_same_idempotency_key_without_rebanning(monkeypatc
     second = service.start("user-1", payload, key, ADMIN)
 
     assert second == first
-    assert len(access.calls) == 1
     assert [event[0] for event in events].count("create") == 1
     assert [event[0] for event in events].count("queue") == 2
     assert repository.findByIdempotency(key)["target_user_id"] == "user-1"
 
 
 def test_start_erasure_rejects_idempotency_key_reused_for_another_user(monkeypatch):
-    service, _repository, access, _audit, _events = _service(monkeypatch)
+    service, _repository, _audit, _events = _service(monkeypatch)
     payload = AdminUserErasureRequest.model_validate({"confirmation": "ERASE"})
     key = "8cfdb150-417d-47ab-acd1-fef39d2bc14e"
     service.start("user-1", payload, key, ADMIN)
@@ -150,7 +133,6 @@ def test_start_erasure_rejects_idempotency_key_reused_for_another_user(monkeypat
 
     assert captured.value.statusCode == 409
     assert captured.value.message == "Idempotency key is already in use"
-    assert len(access.calls) == 1
 
 
 def test_start_erasure_is_disabled_by_default(monkeypatch):
@@ -163,7 +145,6 @@ def test_start_erasure_is_disabled_by_default(monkeypatch):
 
     service = UserErasureService(
         repository=repository,
-        accessService=FakeAccessService(events),
         auditService=FakeAudit(),
         enqueue=lambda requestId: events.append(("queue", requestId)),
     )
@@ -185,7 +166,7 @@ def test_queue_failure_keeps_request_accepted_and_records_safe_warning(monkeypat
     def unavailable(_requestId):
         raise RuntimeError("redis://password-must-not-leak")
 
-    service, repository, _access, audit, _events = _service(
+    service, repository, audit, _events = _service(
         monkeypatch,
         queue=unavailable,
     )
@@ -201,48 +182,3 @@ def test_queue_failure_keeps_request_accepted_and_records_safe_warning(monkeypat
     assert audit.calls[-1]["outcome"] == "side_effect_failed"
     assert audit.calls[-1]["details"]["queued"] is False
     assert "password" not in repr(audit.calls[-1])
-
-
-def test_get_status_returns_sanitized_steps_and_404(monkeypatch):
-    repository = FakeRepository()
-    repository.requests["request-1"] = {
-        "id": "request-1",
-        "target_user_id": "user-1",
-        "reason": "must-not-leak",
-        "resource_manifest": {"paths": ["must-not-leak.csv"]},
-        "status": "IN_PROGRESS",
-        "created_at": "2026-08-24T10:00:00+00:00",
-        "started_at": "2026-08-24T10:00:02+00:00",
-        "completed_at": None,
-        "last_error_code": None,
-        "steps": [{
-            "step_name": "inventory",
-            "status": "COMPLETED",
-            "attempt_count": 1,
-            "last_error_code": None,
-        }],
-    }
-    service, *_ = _service(monkeypatch, repository=repository)
-
-    result = service.getStatus("request-1")
-
-    assert result == {
-        "requestId": "request-1",
-        "status": "IN_PROGRESS",
-        "createdAt": "2026-08-24T10:00:00+00:00",
-        "startedAt": "2026-08-24T10:00:02+00:00",
-        "completedAt": None,
-        "lastErrorCode": None,
-        "steps": [{
-            "name": "inventory",
-            "status": "COMPLETED",
-            "attempts": 1,
-            "lastErrorCode": None,
-        }],
-    }
-    assert "must-not-leak" not in repr(result)
-
-    with pytest.raises(AdminApiError) as captured:
-        service.getStatus("missing")
-    assert captured.value.statusCode == 404
-    assert captured.value.message == "Erasure request not found"

@@ -5,7 +5,7 @@ from api.services.userErasureRepository import ERASURE_STEP_NAMES
 
 
 class FakeRepository:
-    def __init__(self, failedStep=None):
+    def __init__(self, failedStep=None, retryScheduled=False):
         self.request = {
             "id": "request-1",
             "target_user_id": "user-1",
@@ -16,6 +16,7 @@ class FakeRepository:
             ],
         }
         self.failedStep = failedStep
+        self.retryScheduled = retryScheduled
         self.calls = []
         self.scrubbed = False
 
@@ -52,6 +53,7 @@ class FakeRepository:
     def failStep(self, requestId, stepName, errorCode, maxAttempts):
         self.calls.append(("failed", stepName, errorCode))
         self.request["status"] = "PARTIALLY_FAILED"
+        return self.retryScheduled
 
     def freezeBilling(self, userId):
         self.calls.append(("billing", userId))
@@ -118,10 +120,22 @@ class FakeExternalCleanup:
         return {}
 
 
-def _task(repository, cleanup):
+class FakeAudit:
+    def __init__(self):
+        self.calls = []
+
+    def record(self, **kwargs):
+        self.calls.append(kwargs)
+
+
+def _task(repository, cleanup, audit=None):
     from nubrix.triggers.tasks.userErasureTask import UserErasureTask
 
-    return UserErasureTask(repository=repository, externalCleanup=cleanup)
+    return UserErasureTask(
+        repository=repository,
+        externalCleanup=cleanup,
+        auditService=audit or FakeAudit(),
+    )
 
 
 def test_worker_runs_steps_in_order_and_scrubs_identity_only_after_verification():
@@ -153,6 +167,56 @@ def test_worker_records_stable_error_code_and_stops_after_transient_failure():
     assert failure == ("failed", "delete_storage", "STORAGE_DELETE_FAILED")
     assert "provider secret" not in str(failure)
     assert not any(call[0] == "database" for call in repository.calls)
+
+
+def test_worker_audits_sanitized_completion():
+    repository = FakeRepository()
+    audit = FakeAudit()
+
+    result = _task(repository, FakeExternalCleanup(), audit).execute("request-1")
+
+    assert result == {"requestId": "request-1", "status": "COMPLETED"}
+    assert audit.calls == [{
+        "action": "user.erasure.complete",
+        "targetType": "user_erasure_request",
+        "targetId": "request-1",
+        "changedFields": ["status", "target_user_id", "reason"],
+        "outcome": "success",
+        "actorEmail": "system",
+        "details": {"status": "COMPLETED"},
+    }]
+    assert "user-1" not in repr(audit.calls)
+
+
+def test_worker_audits_only_terminal_failure_with_safe_code():
+    retryingAudit = FakeAudit()
+    _task(
+        FakeRepository(retryScheduled=True),
+        FakeExternalCleanup(failStep="delete_storage"),
+        retryingAudit,
+    ).execute("request-1")
+    assert retryingAudit.calls == []
+
+    terminalAudit = FakeAudit()
+    _task(
+        FakeRepository(retryScheduled=False),
+        FakeExternalCleanup(failStep="delete_storage"),
+        terminalAudit,
+    ).execute("request-1")
+    assert terminalAudit.calls == [{
+        "action": "user.erasure.failed",
+        "targetType": "user_erasure_request",
+        "targetId": "request-1",
+        "changedFields": ["status", "last_error_code"],
+        "outcome": "failed",
+        "actorEmail": "system",
+        "details": {
+            "status": "PARTIALLY_FAILED",
+            "step": "delete_storage",
+            "errorCode": "STORAGE_DELETE_FAILED",
+        },
+    }]
+    assert "provider secret" not in repr(terminalAudit.calls)
 
 
 def test_worker_skips_completed_steps_when_resuming():
