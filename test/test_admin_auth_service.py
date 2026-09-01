@@ -26,7 +26,7 @@ from api.services.adminAuthService import (
 )
 
 
-ADMIN_SECRET = "admin-only-secret-for-tests"
+TEST_SECRET_KEY = "product-secret-for-tests"
 ADMIN_ID = "4fa8af6f-71f4-4b05-b26f-fc89ac72a371"
 OTHER_ADMIN_ID = "130516b0-f229-4f37-98b6-6e0be8ff9dd4"
 VALID_PASSWORD = "correct horse battery"
@@ -209,8 +209,7 @@ def passwordHasher():
 
 @pytest.fixture
 def authFixture(monkeypatch, passwordHasher):
-    monkeypatch.setenv("ADMIN_JWT_SECRET", ADMIN_SECRET)
-    monkeypatch.setenv("SECRET_KEY", "product-secret-must-never-be-used")
+    monkeypatch.setenv("SECRET_KEY", TEST_SECRET_KEY)
     admins = [
         {
             "id": ADMIN_ID,
@@ -256,7 +255,7 @@ def assertUnauthorized(call):
 
 
 def persistTokenSession(authFixture, claims):
-    token = jwt.encode(claims, ADMIN_SECRET, algorithm="HS256")
+    token = jwt.encode(claims, TEST_SECRET_KEY, algorithm="HS256")
     sessionId = claims.get("jti")
     if isinstance(sessionId, str):
         authFixture.client.rows["admin_sessions"].append({
@@ -306,7 +305,7 @@ def test_login_issues_eight_hour_admin_token_and_persists_only_digest(authFixtur
 
     payload = jwt.decode(
         response["token"],
-        ADMIN_SECRET,
+        TEST_SECRET_KEY,
         algorithms=["HS256"],
         audience="nubrix-admin-api",
         issuer="nubrix-admin",
@@ -325,6 +324,23 @@ def test_login_issues_eight_hour_admin_token_and_persists_only_digest(authFixtur
         response["token"].encode("utf-8")
     ).hexdigest()
     assert response["token"] not in repr(authFixture.client.rows)
+
+
+def test_admin_tokens_always_use_product_secret(authFixture, monkeypatch):
+    monkeypatch.setenv("ADMIN_JWT_SECRET", "unused-admin-secret")
+    response = authFixture.service.login(
+        "admin@example.com", VALID_PASSWORD, "203.0.113.10"
+    )
+
+    payload = jwt.decode(
+        response["token"],
+        TEST_SECRET_KEY,
+        algorithms=["HS256"],
+        audience="nubrix-admin-api",
+        issuer="nubrix-admin",
+    )
+
+    assert payload["sub"] == ADMIN_ID
 
 
 def test_invalid_inactive_and_unknown_credentials_share_one_response(authFixture):
@@ -361,7 +377,7 @@ def test_unknown_user_dummy_hash_is_created_once_per_service(authFixture):
 
 
 def test_login_rehashes_and_persists_an_outdated_password(monkeypatch):
-    monkeypatch.setenv("ADMIN_JWT_SECRET", ADMIN_SECRET)
+    monkeypatch.setenv("SECRET_KEY", TEST_SECRET_KEY)
     oldHasher = PasswordHash((
         Argon2Hasher(time_cost=1, memory_cost=8192, parallelism=1),
     ))
@@ -486,7 +502,7 @@ def test_verify_rejects_product_expired_revoked_and_hash_mismatch_tokens(authFix
             "iat": int(FIXED_NOW.timestamp()),
             "exp": int((FIXED_NOW + timedelta(hours=1)).timestamp()),
         },
-        ADMIN_SECRET,
+        TEST_SECRET_KEY,
         algorithm="HS256",
     )
     expiredToken = jwt.encode(
@@ -499,7 +515,7 @@ def test_verify_rejects_product_expired_revoked_and_hash_mismatch_tokens(authFix
             "iat": int((FIXED_NOW - timedelta(hours=9)).timestamp()),
             "exp": int((FIXED_NOW - timedelta(hours=1)).timestamp()),
         },
-        ADMIN_SECRET,
+        TEST_SECRET_KEY,
         algorithm="HS256",
     )
     revoked = authFixture.service.login(
@@ -526,7 +542,7 @@ def test_verify_requires_matching_live_session_and_active_admin(authFixture):
             "iat": int(FIXED_NOW.timestamp()),
             "exp": int((FIXED_NOW + timedelta(hours=8)).timestamp()),
         },
-        ADMIN_SECRET,
+        TEST_SECRET_KEY,
         algorithm="HS256",
     )
     assertUnauthorized(lambda: authFixture.service.verifyToken(missingSession))
@@ -719,7 +735,6 @@ def test_fastapi_dependencies_use_injected_admin_service(authFixture):
 def test_missing_secret_500_releases_both_throttle_reservations(
     authFixture, monkeypatch
 ):
-    monkeypatch.delenv("ADMIN_JWT_SECRET")
     monkeypatch.delenv("SECRET_KEY")
 
     with pytest.raises(AdminApiError) as captured:
@@ -780,29 +795,7 @@ def test_throttle_rollback_failure_does_not_mask_original_error_or_log_secrets(
     assert "must-not-be-logged" not in loggedArguments
 
 
-def test_admin_secret_falls_back_to_product_secret_with_a_warning(
-    authFixture, monkeypatch
-):
-    monkeypatch.delenv("ADMIN_JWT_SECRET")
-
-    with patch("api.services.adminAuthService.logger.warning") as warnLog:
-        response = authFixture.service.login(
-            "admin@example.com", VALID_PASSWORD, "203.0.113.10"
-        )
-
-    assert response["admin"]["id"] == ADMIN_ID
-    assert warnLog.called
-    warning = repr(warnLog.call_args_list)
-    assert "ADMIN_JWT_SECRET" in warning
-    assert "product-secret-must-never-be-used" not in warning
-    assert VALID_PASSWORD not in warning
-    assert "admin@example.com" not in warning
-    assert "203.0.113.10" not in warning
-
-
-def test_token_signed_with_fallback_secret_verifies(authFixture, monkeypatch):
-    monkeypatch.delenv("ADMIN_JWT_SECRET")
-
+def test_token_signed_with_secret_key_verifies(authFixture):
     response = authFixture.service.login(
         "admin@example.com", VALID_PASSWORD, "203.0.113.10"
     )
@@ -811,20 +804,7 @@ def test_token_signed_with_fallback_secret_verifies(authFixture, monkeypatch):
     assert context.adminId == ADMIN_ID
 
 
-def test_token_issued_under_admin_secret_is_rejected_after_switching_to_fallback(
-    authFixture, monkeypatch
-):
-    issued = authFixture.service.login(
-        "admin@example.com", VALID_PASSWORD, "203.0.113.10"
-    )["token"]
-
-    monkeypatch.delenv("ADMIN_JWT_SECRET")
-
-    assertUnauthorized(lambda: authFixture.service.verifyToken(issued))
-
-
-def test_missing_both_secrets_is_unavailable(authFixture, monkeypatch):
-    monkeypatch.delenv("ADMIN_JWT_SECRET")
+def test_missing_secret_key_is_unavailable(authFixture, monkeypatch):
     monkeypatch.delenv("SECRET_KEY")
 
     with patch("api.services.adminAuthService.logger.error") as errorLog:
@@ -842,15 +822,14 @@ def test_missing_both_secrets_is_unavailable(authFixture, monkeypatch):
 
 
 def test_product_token_cannot_be_replayed_on_admin_routes_under_shared_secret(
-    authFixture, monkeypatch
+    authFixture,
 ):
     """
     A product token signed with SECRET_KEY must not authenticate an admin.
 
-    This is the property that makes the shared-secret fallback tolerable, so it
-    is asserted directly rather than assumed.
+    Admin tokens use the product SECRET_KEY, but admin verification still
+    requires admin-specific claims and a matching persisted session.
     """
-    monkeypatch.delenv("ADMIN_JWT_SECRET")
     productToken = jwt.encode(
         {
             "userId": ADMIN_ID,
@@ -858,7 +837,7 @@ def test_product_token_cannot_be_replayed_on_admin_routes_under_shared_secret(
             "exp": int((FIXED_NOW + timedelta(hours=8)).timestamp()),
             "iat": int(FIXED_NOW.timestamp()),
         },
-        "product-secret-must-never-be-used",
+        TEST_SECRET_KEY,
         algorithm="HS256",
     )
 
