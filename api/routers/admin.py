@@ -10,8 +10,6 @@ from api.adminModels import (
     AdminLogoutResponse,
     AdminSubscriptionPatch,
     AdminSubscriptionView,
-    AdminUserAccessBatchRequest,
-    AdminUserAccessBatchResponse,
     AdminUserAccessPatch,
     AdminUserAccessView,
     AdminUserErasureAcceptedView,
@@ -91,18 +89,6 @@ async def listUsers(
     service: AdminManagementService = Depends(getAdminManagementService),
 ):
     return service.listUsers()
-
-
-@router.patch(
-    "/users/access",
-    response_model=AdminUserAccessBatchResponse,
-)
-def setUsersAccess(
-    payload: AdminUserAccessBatchRequest,
-    admin: AdminContext = Depends(verifyAdmin),
-    service: AdminManagementService = Depends(getAdminManagementService),
-):
-    return service.setUsersAccess(payload, admin)
 
 
 @router.patch("/users/{userId}", response_model=AdminUserView)

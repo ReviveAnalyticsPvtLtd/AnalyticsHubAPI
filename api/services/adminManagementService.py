@@ -113,48 +113,6 @@ def _escapeIlikeLiteral(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def _failedAccessResult(userId: str, errorCode: str) -> dict:
-    return {
-        "userId": userId,
-        "outcome": "FAILED",
-        "isBanned": None,
-        "bannedAt": None,
-        "bannedBy": None,
-        "banReason": None,
-        "sessionsRevoked": 0,
-        "supabaseAuthSynced": False,
-        "warnings": [],
-        "errorCode": errorCode,
-    }
-
-
-def _accessBatchErrorCode(exc: AdminApiError) -> str:
-    if exc.statusCode == 404:
-        return "USER_NOT_FOUND"
-    if exc.statusCode == 409:
-        return "ERASURE_IN_PROGRESS"
-    return "ACCESS_UPDATE_FAILED"
-
-
-def _serializeAccessBatch(results: list[dict]) -> dict:
-    updated = sum(item["outcome"] == "UPDATED" for item in results)
-    failed = len(results) - updated
-    withWarnings = sum(
-        item["outcome"] == "UPDATED" and bool(item["warnings"])
-        for item in results
-    )
-    return {
-        "status": "COMPLETED" if not failed else "PARTIAL_SUCCESS",
-        "summary": {
-            "requested": len(results),
-            "updated": updated,
-            "failed": failed,
-            "withWarnings": withWarnings,
-        },
-        "results": results,
-    }
-
-
 class AdminManagementService:
     def __init__(
         self,
@@ -670,22 +628,6 @@ class AdminManagementService:
             "supabaseAuthSynced": supabaseAuthSynced,
             "warnings": warnings,
         }
-
-    def setUsersAccess(self, patch, admin: AdminContext) -> dict:
-        results = []
-        for userId in patch.userIds:
-            try:
-                item = self.setUserAccess(
-                    userId,
-                    AdminUserAccessPatch(banned=patch.banned, reason=patch.reason),
-                    admin,
-                )
-                results.append({**item, "outcome": "UPDATED", "errorCode": None})
-            except AdminApiError as exc:
-                results.append(_failedAccessResult(userId, _accessBatchErrorCode(exc)))
-            except Exception:
-                results.append(_failedAccessResult(userId, "ACCESS_UPDATE_FAILED"))
-        return _serializeAccessBatch(results)
 
     def _fetchAll(
         self,

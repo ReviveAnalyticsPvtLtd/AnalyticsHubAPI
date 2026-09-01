@@ -2095,73 +2095,11 @@ When a banned user attempts login or uses a previously issued token, the
 product API returns `403` with `errorCode: "ACCOUNT_ACCESS_REVOKED"` and tells
 the user to contact NubrixAI Support.
 
-### 15.2 `PATCH /api/latest/admin/users/access`
+Access changes target exactly one user per request. There is no batch
+ban/restore endpoint, and clients must not emulate one with automatic request
+loops.
 
-Apply one shared ban/restoration state to 1 through 100 users with partial
-success. IDs are trimmed, deduplicated in first-seen order, and limited to 128
-characters. `reason` is optional, blank-normalized to `null`, and limited to
-1,000 characters.
-
-**Request:**
-
-```json
-{
-  "userIds": ["user-1", "missing-user", "user-2"],
-  "banned": true,
-  "reason": "Optional internal reason"
-}
-```
-
-**Response (200):**
-
-```json
-{
-  "status": "PARTIAL_SUCCESS",
-  "summary": {
-    "requested": 3,
-    "updated": 2,
-    "failed": 1,
-    "withWarnings": 0
-  },
-  "results": [
-    {
-      "userId": "user-1",
-      "outcome": "UPDATED",
-      "isBanned": true,
-      "bannedAt": "2026-08-26T10:00:00+00:00",
-      "bannedBy": "admin-1",
-      "banReason": null,
-      "sessionsRevoked": 1,
-      "supabaseAuthSynced": true,
-      "warnings": [],
-      "errorCode": null
-    },
-    {
-      "userId": "missing-user",
-      "outcome": "FAILED",
-      "isBanned": null,
-      "bannedAt": null,
-      "bannedBy": null,
-      "banReason": null,
-      "sessionsRevoked": 0,
-      "supabaseAuthSynced": false,
-      "warnings": [],
-      "errorCode": "USER_NOT_FOUND"
-    }
-  ]
-}
-```
-
-Every target is attempted. Successful database updates use `UPDATED`, even when
-Supabase Auth synchronization adds a warning. Per-user error codes are
-`USER_NOT_FOUND`, `ERASURE_IN_PROGRESS`, and `ACCESS_UPDATE_FAILED`. Overall
-status is `COMPLETED` only when no item failed; otherwise it is
-`PARTIAL_SUCCESS`.
-
-**Errors:** `401` for administrator authentication, `422` for an invalid strict
-batch body, or a request-level `500` before per-user processing can begin.
-
-### 15.3 `POST /api/latest/admin/users/{userId}/erasure`
+### 15.2 `POST /api/latest/admin/users/{userId}/erasure`
 
 Start the automatic, durable user-erasure workflow. The endpoint first applies
 the authoritative access ban, freezes billing, persists all workflow steps,
@@ -2209,7 +2147,7 @@ the durable workflow automatically. Sanitized `user.erasure.complete` and
 
 **Errors:** `401`, `404`, `409`, `422`, `500`, or `503` when rollout is disabled.
 
-### 15.4 `POST /api/latest/admin/free-trial/extensions`
+### 15.3 `POST /api/latest/admin/free-trial/extensions`
 
 Add 1–30 days to one or more free-trial subscriptions and refresh each
 successful user's included free credits in the same operation.
@@ -2290,7 +2228,7 @@ canonical payload replay safely; a different payload with the same key returns
 
 **Errors:** `401`, `409`, `422`, or `500` when the batch ledger cannot be created.
 
-### 15.5 `GET /api/latest/admin/overview/user-signups`
+### 15.4 `GET /api/latest/admin/overview/user-signups`
 
 Return new-user signup counts bucketed over a trailing time period, shaped for a
 line chart. Values are computed fresh on every request, so the frontend can poll

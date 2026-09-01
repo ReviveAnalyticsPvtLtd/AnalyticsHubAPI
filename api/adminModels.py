@@ -77,66 +77,6 @@ class AdminUserAccessPatch(_StrictModel):
         return value
 
 
-def _normalizeAdminUserIds(values: list[str]) -> list[str]:
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        userId = str(value).strip()
-        if not userId or len(userId) > 128:
-            raise ValueError("userIds contains an invalid value")
-        if userId not in seen:
-            seen.add(userId)
-            normalized.append(userId)
-    return normalized
-
-
-class AdminUserAccessBatchRequest(_StrictModel):
-    userIds: list[str] = Field(min_length=1, max_length=100)
-    banned: bool
-    reason: str | None = Field(default=None, max_length=1000)
-
-    @field_validator("userIds")
-    @classmethod
-    def normalizeUserIds(cls, values: list[str]) -> list[str]:
-        return _normalizeAdminUserIds(values)
-
-    @field_validator("reason", mode="before")
-    @classmethod
-    def normalizeReason(cls, value):
-        if value is None:
-            return None
-        if isinstance(value, str):
-            value = value.strip()
-            return value or None
-        return value
-
-
-class AdminUserAccessBatchResult(_StrictModel):
-    userId: str
-    outcome: Literal["UPDATED", "FAILED"]
-    isBanned: bool | None = None
-    bannedAt: str | None = None
-    bannedBy: str | None = None
-    banReason: str | None = None
-    sessionsRevoked: int = Field(ge=0)
-    supabaseAuthSynced: bool
-    warnings: list[str]
-    errorCode: str | None = None
-
-
-class AdminUserAccessBatchSummary(_StrictModel):
-    requested: int = Field(ge=1)
-    updated: int = Field(ge=0)
-    failed: int = Field(ge=0)
-    withWarnings: int = Field(ge=0)
-
-
-class AdminUserAccessBatchResponse(_StrictModel):
-    status: Literal["COMPLETED", "PARTIAL_SUCCESS"]
-    summary: AdminUserAccessBatchSummary
-    results: list[AdminUserAccessBatchResult]
-
-
 class AdminUserErasureStatus(str, Enum):
     PENDING = "PENDING"
     IN_PROGRESS = "IN_PROGRESS"
