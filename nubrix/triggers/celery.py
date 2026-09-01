@@ -84,8 +84,8 @@ def runUserErasureSweep():
     return UserErasureTask().sweep()
 
 @celeryApp.task(name=f"{APP_NAME}.adminTrialCreditSync")
-def syncAdminTrialCredits(itemId: str):
-    return AdminTrialCreditSyncTask().execute(itemId)
+def syncAdminTrialCredits(extensionId: str):
+    return AdminTrialCreditSyncTask().execute(extensionId)
 
 @celeryApp.task(name=f"{APP_NAME}.adminTrialCreditSyncSweep")
 def sweepAdminTrialCreditSync():

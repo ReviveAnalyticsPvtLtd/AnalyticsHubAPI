@@ -4,8 +4,8 @@ from unittest.mock import patch
 from nubrix.triggers.tasks.adminTrialCreditSyncTask import AdminTrialCreditSyncTask
 
 
-ITEM = {
-    "id": "item-1",
+EXTENSION = {
+    "id": "extension-1",
     "user_id": "free-user",
     "outcome": "EXTENDED",
     "credit_sync_status": "PENDING",
@@ -17,26 +17,26 @@ ITEM = {
 
 
 class FakeRepository:
-    def __init__(self, item=ITEM):
-        self.item = dict(item) if item else None
+    def __init__(self, extension=EXTENSION):
+        self.extension = dict(extension) if extension else None
         self.marked = []
 
-    def getItemById(self, _itemId):
-        return dict(self.item) if self.item else None
+    def getExtensionById(self, _extensionId):
+        return dict(self.extension) if self.extension else None
 
     def listPendingCreditSync(self, limit=100):
-        return [dict(self.item)] if self.item else []
+        return [dict(self.extension)] if self.extension else []
 
-    def synchronizeCreditItem(self, itemId, syncCallback):
-        if self.item is None or self.item["id"] != itemId:
+    def synchronizeCreditExtension(self, extensionId, syncCallback):
+        if self.extension is None or self.extension["id"] != extensionId:
             return None
-        result = syncCallback(dict(self.item))
+        result = syncCallback(dict(self.extension))
         if result == "APPLIED":
-            self.marked.append(itemId)
-            self.item["credit_sync_status"] = "SYNCED"
+            self.marked.append(extensionId)
+            self.extension["credit_sync_status"] = "SYNCED"
         elif result == "STALE":
-            self.item["credit_sync_status"] = "SUPERSEDED"
-        return dict(self.item)
+            self.extension["credit_sync_status"] = "SUPERSEDED"
+        return dict(self.extension)
 
 
 class FakeCredits:
@@ -49,29 +49,29 @@ class FakeCredits:
         return "APPLIED" if self.succeeds else "FAILED"
 
 
-def test_sync_task_marks_item_synced_after_cache_publish():
+def test_sync_task_marks_extension_synced_after_cache_publish():
     repository = FakeRepository()
     credits = FakeCredits()
 
-    result = AdminTrialCreditSyncTask(repository, credits).execute("item-1")
+    result = AdminTrialCreditSyncTask(repository, credits).execute("extension-1")
 
-    assert result == {"itemId": "item-1", "status": "SYNCED"}
-    assert repository.marked == ["item-1"]
+    assert result == {"extensionId": "extension-1", "status": "SYNCED"}
+    assert repository.marked == ["extension-1"]
     assert credits.calls[0]["topupTokens"] == 250
 
 
-def test_sync_task_leaves_item_pending_when_redis_is_unavailable():
+def test_sync_task_leaves_extension_pending_when_redis_is_unavailable():
     repository = FakeRepository()
 
     result = AdminTrialCreditSyncTask(
         repository, FakeCredits(succeeds=False)
-    ).execute("item-1")
+    ).execute("extension-1")
 
-    assert result == {"itemId": "item-1", "status": "PENDING"}
+    assert result == {"extensionId": "extension-1", "status": "PENDING"}
     assert repository.marked == []
 
 
-def test_sweep_retries_pending_items():
+def test_sweep_retries_pending_extensions():
     repository = FakeRepository()
 
     result = AdminTrialCreditSyncTask(repository, FakeCredits()).sweep()

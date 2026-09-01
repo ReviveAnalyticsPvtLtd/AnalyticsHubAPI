@@ -1,4 +1,4 @@
-"""Administrator batch free-trial extension orchestration."""
+"""Administrator single-user free-trial extension orchestration."""
 
 import hashlib
 import json
@@ -19,10 +19,10 @@ def _iso(value) -> str | None:
     return value.isoformat() if hasattr(value, "isoformat") else str(value)
 
 
-def _defaultEnqueue(itemId: str) -> None:
+def _defaultEnqueue(extensionId: str) -> None:
     from nubrix.triggers.celery import syncAdminTrialCredits
 
-    syncAdminTrialCredits.delay(itemId)
+    syncAdminTrialCredits.delay(extensionId)
 
 
 class AdminTrialExtensionService:
@@ -72,7 +72,7 @@ class AdminTrialExtensionService:
             {
                 "days": payload.days,
                 "reason": payload.reason,
-                "userIds": sorted(payload.userIds),
+                "userId": payload.userId,
             },
             separators=(",", ":"),
             sort_keys=True,
@@ -92,173 +92,148 @@ class AdminTrialExtensionService:
 
         requestHash = self.requestHash(payload)
         try:
-            batch = self.repository.createOrGetBatch(
+            extension = self.repository.createOrGetExtension(
                 idempotencyKey=normalizedKey,
                 requestHash=requestHash,
+                userId=payload.userId,
                 days=payload.days,
                 reason=payload.reason,
                 adminId=admin.adminId,
-                userIds=payload.userIds,
             )
         except AdminApiError:
             raise
         except Exception as exc:
             logger.error(
-                "Admin trial-extension batch persistence failed: {}",
+                "Admin trial-extension persistence failed: {}",
                 type(exc).__name__,
             )
             raise AdminApiError(500, "Failed to extend free trials") from exc
 
-        if str(batch.get("request_hash") or "") != requestHash:
+        if str(extension.get("request_hash") or "") != requestHash:
             raise AdminApiError(409, "Idempotency key is already in use")
 
-        batchId = str(batch["id"])
-        results = []
-        for userId in payload.userIds:
-            item = self.repository.getItem(batchId, userId)
-            if item is None:
-                try:
-                    item = self.repository.extendUser(
-                        batchId=batchId,
-                        userId=userId,
-                        days=payload.days,
-                        now=self.nowProvider(),
-                    )
-                except Exception as exc:
-                    logger.error(
-                        "Admin trial extension failed for userId={}: {}",
-                        userId,
-                        type(exc).__name__,
-                    )
-                    try:
-                        item = self.repository.recordFailure(
-                            batchId=batchId,
-                            userId=userId,
-                            errorCode="EXTENSION_FAILED",
-                        )
-                    except Exception as recordExc:
-                        logger.error(
-                            "Admin trial-extension failure persistence failed for "
-                            "userId={}: {}",
-                            userId,
-                            type(recordExc).__name__,
-                        )
-                        item = {
-                            "id": None,
-                            "user_id": userId,
-                            "outcome": "FAILED",
-                            "days_added": None,
-                            "previous_expiry": None,
-                            "new_expiry": None,
-                            "credit_sync_status": "NOT_APPLICABLE",
-                            "access_still_banned": False,
-                            "error_code": "EXTENSION_FAILED",
-                        }
-
-            if (
-                item.get("outcome") == "EXTENDED"
-                and item.get("credit_sync_status") == "PENDING"
-            ):
-                item = self._syncCredits(item)
-
-            self._auditItem(item, batchId, admin)
-            results.append(self._publicItem(item))
-
-        try:
-            self.repository.completeBatch(batchId)
-        except Exception as exc:
-            logger.warning(
-                "Admin trial-extension batch completion marker failed: {}",
-                type(exc).__name__,
-            )
-
-        extended = sum(result["outcome"] == "EXTENDED" for result in results)
-        failed = len(results) - extended
-        pending = sum(
-            result["creditSyncStatus"] == "PENDING" for result in results
-        )
-        return {
-            "batchId": batchId,
-            "status": "PARTIAL_SUCCESS" if failed else "COMPLETED",
-            "days": payload.days,
-            "summary": {
-                "requested": len(results),
-                "extended": extended,
-                "failed": failed,
-                "creditSyncPending": pending,
-            },
-            "results": results,
-        }
-
-    def _syncCredits(self, item: dict) -> dict:
-        try:
-            updated = self.repository.synchronizeCreditItem(
-                str(item["id"]), self._publishCreditItem
-            )
-            if updated is not None:
-                item = updated
-        except Exception as exc:
-            logger.warning(
-                "Admin trial credit sync failed for item={}: {}",
-                item.get("id"),
-                type(exc).__name__,
-            )
-        if item.get("credit_sync_status") == "PENDING":
+        extensionId = str(extension["id"])
+        if extension.get("outcome") == "PENDING":
             try:
-                self.enqueue(str(item["id"]))
+                extension = self.repository.extendUser(
+                    extensionId=extensionId,
+                    userId=payload.userId,
+                    days=payload.days,
+                    now=self.nowProvider(),
+                )
             except Exception as exc:
-                logger.warning(
-                    "Admin trial credit-sync enqueue failed for item={}: {}",
-                    item.get("id"),
+                logger.error(
+                    "Admin trial extension failed for userId={}: {}",
+                    payload.userId,
                     type(exc).__name__,
                 )
-        return item
+                try:
+                    extension = self.repository.recordFailure(
+                        extensionId=extensionId,
+                        errorCode="EXTENSION_FAILED",
+                    )
+                except Exception as recordExc:
+                    logger.error(
+                        "Admin trial-extension failure persistence failed for "
+                        "userId={}: {}",
+                        payload.userId,
+                        type(recordExc).__name__,
+                    )
+                    extension = {
+                        "id": extensionId,
+                        "user_id": payload.userId,
+                        "outcome": "FAILED",
+                        "days_added": None,
+                        "previous_expiry": None,
+                        "new_expiry": None,
+                        "credit_sync_status": "NOT_APPLICABLE",
+                        "access_still_banned": False,
+                        "error_code": "EXTENSION_FAILED",
+                    }
 
-    def _publishCreditItem(self, item: dict) -> str:
+        if (
+            extension.get("outcome") == "EXTENDED"
+            and extension.get("credit_sync_status") == "PENDING"
+        ):
+            extension = self._syncCredits(extension)
+
+        self._auditExtension(extension, admin)
+        return self._publicExtension(extension)
+
+    def _syncCredits(self, extension: dict) -> dict:
+        try:
+            updated = self.repository.synchronizeCreditExtension(
+                str(extension["id"]), self._publishCreditExtension
+            )
+            if updated is not None:
+                extension = updated
+        except Exception as exc:
+            logger.warning(
+                "Admin trial credit sync failed for extension={}: {}",
+                extension.get("id"),
+                type(exc).__name__,
+            )
+        if extension.get("credit_sync_status") == "PENDING":
+            try:
+                self.enqueue(str(extension["id"]))
+            except Exception as exc:
+                logger.warning(
+                    "Admin trial credit-sync enqueue failed for extension={}: {}",
+                    extension.get("id"),
+                    type(exc).__name__,
+                )
+        return extension
+
+    def _publishCreditExtension(self, extension: dict) -> str:
         return self.creditService.refreshTrialCreditsCache(
-            userId=item["user_id"],
-            quota=int(item["credit_quota"]),
-            topupTokens=int(item.get("credit_topup_tokens") or 0),
-            periodEnd=item["credit_period_end"],
-            generation=int(item["credit_generation"]),
+            userId=extension["user_id"],
+            quota=int(extension["credit_quota"]),
+            topupTokens=int(extension.get("credit_topup_tokens") or 0),
+            periodEnd=extension["credit_period_end"],
+            generation=int(extension["credit_generation"]),
         )
 
-    def _auditItem(self, item: dict, batchId: str, admin: AdminContext) -> None:
+    def _auditExtension(self, extension: dict, admin: AdminContext) -> None:
         self.auditService.record(
             action="free_trial.extend",
             targetType="user",
-            targetId=item.get("user_id"),
+            targetId=extension.get("user_id"),
             changedFields=(
                 ["current_period_end", "credit_balances"]
-                if item.get("outcome") == "EXTENDED"
+                if extension.get("outcome") == "EXTENDED"
                 else []
             ),
             outcome=(
-                "success" if item.get("outcome") == "EXTENDED" else "failed"
+                "success"
+                if extension.get("outcome") == "EXTENDED"
+                else "failed"
             ),
             admin=admin,
             details={
-                "batchId": batchId,
-                "daysAdded": item.get("days_added"),
-                "errorCode": item.get("error_code"),
-                "creditSyncStatus": item.get("credit_sync_status"),
+                "extensionId": str(extension["id"]),
+                "daysAdded": extension.get("days_added"),
+                "errorCode": extension.get("error_code"),
+                "creditSyncStatus": extension.get("credit_sync_status"),
             },
         )
 
     @staticmethod
-    def _publicItem(item: dict) -> dict:
+    def _publicExtension(extension: dict) -> dict:
         return {
-            "userId": str(item["user_id"]),
-            "outcome": item["outcome"],
-            "daysAdded": item.get("days_added"),
-            "previousExpiry": _iso(item.get("previous_expiry")),
-            "newExpiry": _iso(item.get("new_expiry")),
+            "extensionId": str(extension["id"]),
+            "userId": str(extension["user_id"]),
+            "outcome": extension["outcome"],
+            "daysAdded": extension.get("days_added"),
+            "previousExpiry": _iso(extension.get("previous_expiry")),
+            "newExpiry": _iso(extension.get("new_expiry")),
             "creditsRefreshed": (
-                item.get("outcome") == "EXTENDED"
+                extension.get("outcome") == "EXTENDED"
             ),
-            "creditSyncStatus": item["credit_sync_status"],
-            "accessStillBanned": bool(item.get("access_still_banned")),
-            "errorCode": item.get("error_code"),
+            "creditSyncStatus": extension["credit_sync_status"],
+            "accessStillBanned": bool(
+                extension.get("access_still_banned")
+            ),
+            "errorCode": extension.get("error_code"),
         }
 
 

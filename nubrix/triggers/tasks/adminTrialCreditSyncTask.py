@@ -26,45 +26,47 @@ class AdminTrialCreditSyncTask:
             self._creditService = creditService
         return self._creditService
 
-    def execute(self, itemId: str) -> dict:
-        item = self.repository.getItemById(itemId)
-        if item is None:
-            return {"itemId": str(itemId), "status": "NOT_FOUND"}
+    def execute(self, extensionId: str) -> dict:
+        extension = self.repository.getExtensionById(extensionId)
+        if extension is None:
+            return {"extensionId": str(extensionId), "status": "NOT_FOUND"}
         if (
-            item.get("outcome") != "EXTENDED"
-            or item.get("credit_sync_status") != "PENDING"
+            extension.get("outcome") != "EXTENDED"
+            or extension.get("credit_sync_status") != "PENDING"
         ):
             return {
-                "itemId": str(itemId),
-                "status": item.get("credit_sync_status", "NOT_APPLICABLE"),
+                "extensionId": str(extensionId),
+                "status": extension.get(
+                    "credit_sync_status", "NOT_APPLICABLE"
+                ),
             }
 
-        updated = self.repository.synchronizeCreditItem(
-            str(itemId), self._publish
+        updated = self.repository.synchronizeCreditExtension(
+            str(extensionId), self._publish
         )
         if updated is None:
-            return {"itemId": str(itemId), "status": "NOT_FOUND"}
+            return {"extensionId": str(extensionId), "status": "NOT_FOUND"}
         status = updated.get("credit_sync_status", "PENDING")
         if status == "PENDING":
-            return {"itemId": str(itemId), "status": "PENDING"}
-        return {"itemId": str(itemId), "status": status}
+            return {"extensionId": str(extensionId), "status": "PENDING"}
+        return {"extensionId": str(extensionId), "status": status}
 
-    def _publish(self, item: dict) -> str:
+    def _publish(self, extension: dict) -> str:
         return self.creditService.refreshTrialCreditsCache(
-            userId=item["user_id"],
-            quota=int(item["credit_quota"]),
-            topupTokens=int(item.get("credit_topup_tokens") or 0),
-            periodEnd=item["credit_period_end"],
-            generation=int(item["credit_generation"]),
+            userId=extension["user_id"],
+            quota=int(extension["credit_quota"]),
+            topupTokens=int(extension.get("credit_topup_tokens") or 0),
+            periodEnd=extension["credit_period_end"],
+            generation=int(extension["credit_generation"]),
         )
 
     def sweep(self, limit: int = 100) -> dict:
-        items = self.repository.listPendingCreditSync(limit=limit)
+        extensions = self.repository.listPendingCreditSync(limit=limit)
         synced = 0
         pending = 0
-        for item in items:
+        for extension in extensions:
             try:
-                result = self.execute(str(item["id"]))
+                result = self.execute(str(extension["id"]))
                 if result["status"] == "SYNCED":
                     synced += 1
                 elif result["status"] == "PENDING":
@@ -72,8 +74,12 @@ class AdminTrialCreditSyncTask:
             except Exception as exc:
                 pending += 1
                 logger.warning(
-                    "Admin trial credit sync failed for item={}: {}",
-                    item.get("id"),
+                    "Admin trial credit sync failed for extension={}: {}",
+                    extension.get("id"),
                     type(exc).__name__,
                 )
-        return {"checked": len(items), "synced": synced, "pending": pending}
+        return {
+            "checked": len(extensions),
+            "synced": synced,
+            "pending": pending,
+        }

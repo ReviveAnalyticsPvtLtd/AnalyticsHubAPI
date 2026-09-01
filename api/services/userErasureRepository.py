@@ -177,7 +177,7 @@ class UserErasureRepository:
                 )
                 cursor.execute(
                     """
-                    update public.admin_free_trial_extension_items
+                    update public.admin_free_trial_extensions
                     set credit_sync_status = 'CANCELLED', updated_at = now()
                     where user_id = %s and credit_sync_status = 'PENDING'
                     """,
@@ -524,28 +524,12 @@ class UserErasureRepository:
                         """,
                         (userId, projectIds),
                     )
-                if self._tableExists(
-                    cursor, "admin_free_trial_extension_items"
-                ):
-                    cursor.execute(
-                        """
-                        update public.admin_free_trial_extension_batches
-                        set reason = null, updated_at = now()
-                        where id in (
-                            select batch_id
-                            from public.admin_free_trial_extension_items
-                            where user_id = %s
-                        )
-                        """,
-                        (userId,),
-                    )
-                    cursor.execute(
-                        """
-                        delete from public.admin_free_trial_extension_items
-                        where user_id = %s
-                        """,
-                        (userId,),
-                    )
+                self._deleteByUser(
+                    cursor,
+                    "admin_free_trial_extensions",
+                    "user_id",
+                    userId,
+                )
                 self._deleteByUser(cursor, "Projects", '"ownerUserId"', userId)
                 self._deleteByUser(cursor, "Workspaces", '"ownerId"', userId)
                 self._deleteByUser(cursor, "credit_balances", "user_id", userId)
@@ -575,7 +559,7 @@ class UserErasureRepository:
             ("Invoices", '"userId"'),
             ("billing_events", "user_id"),
             ("WebhookEvents", "user_id"),
-            ("admin_free_trial_extension_items", "user_id"),
+            ("admin_free_trial_extensions", "user_id"),
         )
         residuals = {}
         connection = self.connectionFactory()
@@ -606,7 +590,7 @@ class UserErasureRepository:
                 )
                 cursor.execute(
                     """
-                    update public.admin_free_trial_extension_items
+                    update public.admin_free_trial_extensions
                     set credit_sync_status = 'CANCELLED', updated_at = now()
                     where user_id = %s and credit_sync_status = 'PENDING'
                     """,

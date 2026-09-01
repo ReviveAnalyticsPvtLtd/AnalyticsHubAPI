@@ -1,7 +1,7 @@
-"""PostgreSQL ledger and per-user transaction for admin trial extensions."""
+"""PostgreSQL persistence for one-user administrator trial extensions."""
 
-import os
 import math
+import os
 from datetime import datetime, timedelta, timezone
 
 import psycopg2
@@ -12,17 +12,12 @@ from psycopg2.extras import Json, RealDictCursor
 from api.services.credits.creditConfig import getTokenQuotaForPlan
 
 
-BATCH_SELECT = """
-    id, idempotency_key, request_hash, days, requested_count, status,
-    requested_by, created_at, updated_at, completed_at
-"""
-
-ITEM_SELECT = """
-    id, batch_id, user_id, subscription_id, outcome, days_added,
-    previous_expiry, new_expiry, credit_sync_status, credit_quota,
-    credit_topup_tokens, credit_period_end, credit_generation,
-    access_still_banned, error_code,
-    created_at, updated_at
+EXTENSION_SELECT = """
+    id, idempotency_key, request_hash, user_id, subscription_id,
+    requested_by, days, reason, outcome, days_added, previous_expiry,
+    new_expiry, credit_sync_status, credit_quota, credit_topup_tokens,
+    credit_period_end, credit_generation, access_still_banned, error_code,
+    created_at, updated_at, completed_at
 """
 
 
@@ -67,43 +62,43 @@ class AdminTrialExtensionRepository:
             lambda: getTokenQuotaForPlan("free", 1)
         )
 
-    def createOrGetBatch(
+    def createOrGetExtension(
         self,
         idempotencyKey: str,
         requestHash: str,
+        userId: str,
         days: int,
         reason: str | None,
         adminId: str,
-        userIds: list[str],
     ) -> dict:
         connection = self.connectionFactory()
         try:
             with connection.cursor(cursor_factory=RealDictCursor) as cursor:
                 cursor.execute(
                     f"""
-                    insert into public.admin_free_trial_extension_batches (
-                        idempotency_key, request_hash, days, reason,
-                        requested_count, requested_by
+                    insert into public.admin_free_trial_extensions (
+                        idempotency_key, request_hash, user_id, requested_by,
+                        days, reason
                     )
                     values (%s, %s, %s, %s, %s, %s)
                     on conflict (idempotency_key) do nothing
-                    returning {BATCH_SELECT}
+                    returning {EXTENSION_SELECT}
                     """,
                     (
                         idempotencyKey,
                         requestHash,
+                        userId,
+                        adminId,
                         days,
                         reason,
-                        len(userIds),
-                        adminId,
                     ),
                 )
                 row = cursor.fetchone()
                 if row is None:
                     cursor.execute(
                         f"""
-                        select {BATCH_SELECT}
-                        from public.admin_free_trial_extension_batches
+                        select {EXTENSION_SELECT}
+                        from public.admin_free_trial_extensions
                         where idempotency_key = %s
                         limit 1
                         """,
@@ -111,7 +106,7 @@ class AdminTrialExtensionRepository:
                     )
                     row = cursor.fetchone()
                 if row is None:
-                    raise RuntimeError("Trial-extension batch could not be loaded")
+                    raise RuntimeError("Trial extension could not be loaded")
             connection.commit()
             return dict(row)
         except Exception:
@@ -120,26 +115,8 @@ class AdminTrialExtensionRepository:
         finally:
             connection.close()
 
-    def getItem(self, batchId: str, userId: str) -> dict | None:
-        connection = self.connectionFactory()
-        try:
-            with connection.cursor(cursor_factory=RealDictCursor) as cursor:
-                cursor.execute(
-                    f"""
-                    select {ITEM_SELECT}
-                    from public.admin_free_trial_extension_items
-                    where batch_id = %s and user_id = %s
-                    limit 1
-                    """,
-                    (batchId, userId),
-                )
-                row = cursor.fetchone()
-                return dict(row) if row is not None else None
-        finally:
-            connection.close()
-
     def extendUser(
-        self, batchId: str, userId: str, days: int, now: datetime
+        self, extensionId: str, userId: str, days: int, now: datetime
     ) -> dict:
         connection = self.connectionFactory()
         try:
@@ -148,6 +125,24 @@ class AdminTrialExtensionRepository:
                     "select pg_advisory_xact_lock(hashtextextended(%s, 0))",
                     (userId,),
                 )
+                cursor.execute(
+                    f"""
+                    select {EXTENSION_SELECT}
+                    from public.admin_free_trial_extensions
+                    where id = %s
+                    limit 1
+                    for update
+                    """,
+                    (extensionId,),
+                )
+                operation = cursor.fetchone()
+                if operation is None:
+                    raise RuntimeError("Trial extension does not exist")
+                if operation.get("outcome") != "PENDING":
+                    connection.commit()
+                    return dict(operation)
+                if str(operation.get("user_id")) != str(userId):
+                    raise RuntimeError("Trial extension user does not match request")
                 cursor.execute(
                     """
                     select "isBanned" as is_banned
@@ -160,11 +155,11 @@ class AdminTrialExtensionRepository:
                 )
                 user = cursor.fetchone()
                 if user is None:
-                    item = self._insertFailure(
-                        cursor, batchId, userId, "USER_NOT_FOUND", False
+                    result = self._recordOutcomeFailure(
+                        cursor, extensionId, "USER_NOT_FOUND", False
                     )
                     connection.commit()
-                    return item
+                    return result
 
                 accessStillBanned = bool(user.get("is_banned"))
                 cursor.execute(
@@ -182,31 +177,24 @@ class AdminTrialExtensionRepository:
                 )
                 subscription = cursor.fetchone()
                 if subscription is None:
-                    item = self._insertFailure(
+                    result = self._recordOutcomeFailure(
                         cursor,
-                        batchId,
-                        userId,
+                        extensionId,
                         "SUBSCRIPTION_NOT_FOUND",
                         accessStillBanned,
                     )
                     connection.commit()
-                    return item
+                    return result
 
                 errorCode = self._eligibilityError(dict(subscription))
                 if errorCode is not None:
-                    item = self._insertFailure(
-                        cursor,
-                        batchId,
-                        userId,
-                        errorCode,
-                        accessStillBanned,
+                    result = self._recordOutcomeFailure(
+                        cursor, extensionId, errorCode, accessStillBanned
                     )
                     connection.commit()
-                    return item
+                    return result
 
-                previousExpiry = _asDatetime(
-                    subscription.get("current_period_end")
-                )
+                previousExpiry = _asDatetime(subscription.get("current_period_end"))
                 periodStart, newExpiry = calculateTrialWindow(
                     dict(subscription), now, days
                 )
@@ -217,7 +205,6 @@ class AdminTrialExtensionRepository:
                 creditGeneration = int(
                     subscription.get("admin_credit_generation") or 0
                 ) + 1
-
                 lifecycleSnapshot = {
                     "subscription_days_left": max(
                         0,
@@ -230,23 +217,16 @@ class AdminTrialExtensionRepository:
                 cursor.execute(
                     """
                     update public.subscriptions
-                    set billing_mode = 'none',
-                        status = 'trial',
-                        plan_type = 'free',
-                        current_period_start = %s,
-                        current_period_end = %s,
-                        renewal_due_at = %s,
-                        auto_renew_enabled = false,
+                    set billing_mode = 'none', status = 'trial', plan_type = 'free',
+                        current_period_start = %s, current_period_end = %s,
+                        renewal_due_at = %s, auto_renew_enabled = false,
                         payment_collection_mode = 'authenticated_checkout',
-                        recurring_failures = 0,
-                        cancellation_reason = null,
+                        recurring_failures = 0, cancellation_reason = null,
                         billing_state = jsonb_set(
                             coalesce(billing_state, '{}'::jsonb),
                             '{lifecycle_snapshot}', %s::jsonb, true
                         ),
-                        version = %s,
-                        admin_credit_generation = %s,
-                        updated_at = %s
+                        version = %s, admin_credit_generation = %s, updated_at = %s
                     where id = %s
                     """,
                     (
@@ -270,8 +250,7 @@ class AdminTrialExtensionRepository:
                     values (%s, %s, 'free', %s, %s, 0, %s, %s, %s, %s, %s)
                     on conflict (user_id) do update
                     set subscription_id = excluded.subscription_id,
-                        plan_tier = 'free',
-                        domain_count = excluded.domain_count,
+                        plan_tier = 'free', domain_count = excluded.domain_count,
                         monthly_token_quota = excluded.monthly_token_quota,
                         used_tokens = 0,
                         remaining_tokens = excluded.remaining_tokens,
@@ -296,22 +275,19 @@ class AdminTrialExtensionRepository:
                 creditRow = cursor.fetchone() or {}
                 topupTokens = int(creditRow.get("topup_tokens") or 0)
                 cursor.execute(
-                    """
-                    insert into public.admin_free_trial_extension_items (
-                        batch_id, user_id, subscription_id, outcome, days_added,
-                        previous_expiry, new_expiry, credit_sync_status,
-                        credit_quota, credit_topup_tokens, credit_period_end,
-                        credit_generation, access_still_banned
-                    )
-                    values (
-                        %s, %s, %s, 'EXTENDED', %s, %s, %s, 'PENDING',
-                        %s, %s, %s, %s, %s
-                    )
-                    returning id
+                    f"""
+                    update public.admin_free_trial_extensions
+                    set subscription_id = %s, outcome = 'EXTENDED',
+                        days_added = %s, previous_expiry = %s,
+                        new_expiry = %s, credit_sync_status = 'PENDING',
+                        credit_quota = %s, credit_topup_tokens = %s,
+                        credit_period_end = %s, credit_generation = %s,
+                        access_still_banned = %s, error_code = null,
+                        completed_at = %s, updated_at = %s
+                    where id = %s and outcome = 'PENDING'
+                    returning {EXTENSION_SELECT}
                     """,
                     (
-                        batchId,
-                        userId,
                         subscription["id"],
                         days,
                         previousExpiry,
@@ -321,27 +297,16 @@ class AdminTrialExtensionRepository:
                         creditPeriodEnd,
                         creditGeneration,
                         accessStillBanned,
+                        now,
+                        now,
+                        extensionId,
                     ),
                 )
-                itemId = cursor.fetchone()["id"]
+                result = cursor.fetchone()
+                if result is None:
+                    raise RuntimeError("Trial extension result could not be recorded")
             connection.commit()
-            return {
-                "id": str(itemId),
-                "batch_id": batchId,
-                "user_id": userId,
-                "subscription_id": str(subscription["id"]),
-                "outcome": "EXTENDED",
-                "days_added": days,
-                "previous_expiry": previousExpiry,
-                "new_expiry": newExpiry,
-                "credit_sync_status": "PENDING",
-                "credit_quota": quota,
-                "credit_topup_tokens": topupTokens,
-                "credit_period_end": creditPeriodEnd,
-                "credit_generation": creditGeneration,
-                "access_still_banned": accessStillBanned,
-                "error_code": None,
-            }
+            return dict(result)
         except Exception:
             connection.rollback()
             raise
@@ -363,93 +328,69 @@ class AdminTrialExtensionRepository:
             return "FREE_TRIAL_NOT_ELIGIBLE"
         return None
 
-    def _insertFailure(
-        self,
+    @staticmethod
+    def _recordOutcomeFailure(
         cursor,
-        batchId: str,
-        userId: str,
+        extensionId: str,
         errorCode: str,
         accessStillBanned: bool,
     ) -> dict:
         cursor.execute(
-            """
-            insert into public.admin_free_trial_extension_items (
-                batch_id, user_id, outcome, credit_sync_status,
-                access_still_banned, error_code
-            )
-            values (%s, %s, 'FAILED', 'NOT_APPLICABLE', %s, %s)
-            returning id
+            f"""
+            update public.admin_free_trial_extensions
+            set outcome = 'FAILED', credit_sync_status = 'NOT_APPLICABLE',
+                access_still_banned = %s, error_code = %s,
+                completed_at = now(), updated_at = now()
+            where id = %s and outcome = 'PENDING'
+            returning {EXTENSION_SELECT}
             """,
-            (batchId, userId, accessStillBanned, errorCode),
+            (accessStillBanned, errorCode, extensionId),
         )
-        itemId = cursor.fetchone()["id"]
-        return {
-            "id": str(itemId),
-            "batch_id": batchId,
-            "user_id": userId,
-            "subscription_id": None,
-            "outcome": "FAILED",
-            "days_added": None,
-            "previous_expiry": None,
-            "new_expiry": None,
-            "credit_sync_status": "NOT_APPLICABLE",
-            "credit_quota": None,
-            "credit_topup_tokens": None,
-            "credit_period_end": None,
-            "credit_generation": None,
-            "access_still_banned": accessStillBanned,
-            "error_code": errorCode,
-        }
+        result = cursor.fetchone()
+        if result is None:
+            raise RuntimeError("Trial-extension failure could not be recorded")
+        return dict(result)
 
-    def recordFailure(
-        self, batchId: str, userId: str, errorCode: str
-    ) -> dict:
+    def recordFailure(self, extensionId: str, errorCode: str) -> dict:
         connection = self.connectionFactory()
         try:
             with connection.cursor(cursor_factory=RealDictCursor) as cursor:
                 cursor.execute(
-                    """
-                    insert into public.admin_free_trial_extension_items (
-                        batch_id, user_id, outcome, credit_sync_status,
-                        access_still_banned, error_code
-                    )
-                    values (%s, %s, 'FAILED', 'NOT_APPLICABLE', false, %s)
-                    on conflict (batch_id, user_id) do nothing
-                    returning id
+                    f"""
+                    update public.admin_free_trial_extensions
+                    set outcome = 'FAILED', credit_sync_status = 'NOT_APPLICABLE',
+                        access_still_banned = false, error_code = %s,
+                        completed_at = now(), updated_at = now()
+                    where id = %s and outcome = 'PENDING'
+                    returning {EXTENSION_SELECT}
                     """,
-                    (batchId, userId, errorCode),
+                    (errorCode, extensionId),
                 )
-                inserted = cursor.fetchone()
+                row = cursor.fetchone()
+                if row is None:
+                    cursor.execute(
+                        f"""
+                        select {EXTENSION_SELECT}
+                        from public.admin_free_trial_extensions
+                        where id = %s
+                        limit 1
+                        """,
+                        (extensionId,),
+                    )
+                    row = cursor.fetchone()
+                if row is None:
+                    raise RuntimeError("Trial-extension failure could not be recorded")
             connection.commit()
-            if inserted is not None:
-                return {
-                    "id": str(inserted["id"]),
-                    "batch_id": batchId,
-                    "user_id": userId,
-                    "subscription_id": None,
-                    "outcome": "FAILED",
-                    "days_added": None,
-                    "previous_expiry": None,
-                    "new_expiry": None,
-                    "credit_sync_status": "NOT_APPLICABLE",
-                    "credit_quota": None,
-                    "credit_topup_tokens": None,
-                    "credit_period_end": None,
-                    "credit_generation": None,
-                    "access_still_banned": False,
-                    "error_code": errorCode,
-                }
+            return dict(row)
         except Exception:
             connection.rollback()
             raise
         finally:
             connection.close()
-        existing = self.getItem(batchId, userId)
-        if existing is None:
-            raise RuntimeError("Trial-extension failure could not be recorded")
-        return existing
 
-    def synchronizeCreditItem(self, itemId: str, syncCallback) -> dict | None:
+    def synchronizeCreditExtension(
+        self, extensionId: str, syncCallback
+    ) -> dict | None:
         """Fence, publish, and finalize one pending cache reset transactionally."""
         connection = self.connectionFactory()
         try:
@@ -457,11 +398,11 @@ class AdminTrialExtensionRepository:
                 cursor.execute(
                     """
                     select user_id, subscription_id
-                    from public.admin_free_trial_extension_items
+                    from public.admin_free_trial_extensions
                     where id = %s
                     limit 1
                     """,
-                    (itemId,),
+                    (extensionId,),
                 )
                 locator = cursor.fetchone()
                 if locator is None:
@@ -486,22 +427,22 @@ class AdminTrialExtensionRepository:
                 subscription = cursor.fetchone()
                 cursor.execute(
                     f"""
-                    select {ITEM_SELECT}
-                    from public.admin_free_trial_extension_items
+                    select {EXTENSION_SELECT}
+                    from public.admin_free_trial_extensions
                     where id = %s
                     limit 1
                     for update
                     """,
-                    (itemId,),
+                    (extensionId,),
                 )
                 locked = cursor.fetchone()
                 if locked is None:
                     connection.commit()
                     return None
-                item = dict(locked)
-                if item.get("credit_sync_status") != "PENDING":
+                extension = dict(locked)
+                if extension.get("credit_sync_status") != "PENDING":
                     connection.commit()
-                    return item
+                    return extension
 
                 eligible = (
                     subscription is not None
@@ -515,26 +456,24 @@ class AdminTrialExtensionRepository:
                 if not eligible:
                     status = "CANCELLED"
                 elif int(subscription.get("admin_credit_generation") or 0) != int(
-                    item.get("credit_generation") or 0
+                    extension.get("credit_generation") or 0
                 ):
                     status = "SUPERSEDED"
                 else:
-                    syncResult = syncCallback(item)
+                    syncResult = syncCallback(extension)
                     if syncResult == "FAILED":
                         connection.commit()
-                        return item
-                    status = (
-                        "SYNCED" if syncResult == "APPLIED" else "SUPERSEDED"
-                    )
+                        return extension
+                    status = "SYNCED" if syncResult == "APPLIED" else "SUPERSEDED"
 
                 cursor.execute(
                     f"""
-                    update public.admin_free_trial_extension_items
+                    update public.admin_free_trial_extensions
                     set credit_sync_status = %s, updated_at = now()
                     where id = %s
-                    returning {ITEM_SELECT}
+                    returning {EXTENSION_SELECT}
                     """,
-                    (status, itemId),
+                    (status, extensionId),
                 )
                 updated = cursor.fetchone()
             connection.commit()
@@ -545,18 +484,18 @@ class AdminTrialExtensionRepository:
         finally:
             connection.close()
 
-    def getItemById(self, itemId: str) -> dict | None:
+    def getExtensionById(self, extensionId: str) -> dict | None:
         connection = self.connectionFactory()
         try:
             with connection.cursor(cursor_factory=RealDictCursor) as cursor:
                 cursor.execute(
                     f"""
-                    select {ITEM_SELECT}
-                    from public.admin_free_trial_extension_items
+                    select {EXTENSION_SELECT}
+                    from public.admin_free_trial_extensions
                     where id = %s
                     limit 1
                     """,
-                    (itemId,),
+                    (extensionId,),
                 )
                 row = cursor.fetchone()
                 return dict(row) if row is not None else None
@@ -569,8 +508,8 @@ class AdminTrialExtensionRepository:
             with connection.cursor(cursor_factory=RealDictCursor) as cursor:
                 cursor.execute(
                     f"""
-                    select {ITEM_SELECT}
-                    from public.admin_free_trial_extension_items
+                    select {EXTENSION_SELECT}
+                    from public.admin_free_trial_extensions
                     where credit_sync_status = 'PENDING'
                     order by created_at
                     limit %s
@@ -578,25 +517,6 @@ class AdminTrialExtensionRepository:
                     (max(1, min(int(limit), 500)),),
                 )
                 return [dict(row) for row in cursor.fetchall()]
-        finally:
-            connection.close()
-
-    def completeBatch(self, batchId: str) -> None:
-        connection = self.connectionFactory()
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    update public.admin_free_trial_extension_batches
-                    set status = 'COMPLETED', completed_at = now(), updated_at = now()
-                    where id = %s
-                    """,
-                    (batchId,),
-                )
-            connection.commit()
-        except Exception:
-            connection.rollback()
-            raise
         finally:
             connection.close()
 

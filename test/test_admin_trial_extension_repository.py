@@ -7,6 +7,7 @@ from api.services.adminTrialExtensionRepository import (
 
 
 NOW = datetime(2026, 8, 24, 10, 0, tzinfo=timezone.utc)
+KEY = "f53b33cd-219e-4c70-b5c2-43d956591fa5"
 
 
 class FakeCursor:
@@ -64,10 +65,37 @@ def subscription(**overrides):
     return row
 
 
+def extension(**overrides):
+    row = {
+        "id": "extension-1",
+        "idempotency_key": KEY,
+        "request_hash": "a" * 64,
+        "user_id": "free-user",
+        "subscription_id": None,
+        "requested_by": "admin-1",
+        "days": 5,
+        "reason": None,
+        "outcome": "PENDING",
+        "days_added": None,
+        "previous_expiry": None,
+        "new_expiry": None,
+        "credit_sync_status": "NOT_APPLICABLE",
+        "credit_quota": None,
+        "credit_topup_tokens": None,
+        "credit_period_end": None,
+        "credit_generation": None,
+        "access_still_banned": False,
+        "error_code": None,
+        "created_at": NOW,
+        "updated_at": NOW,
+        "completed_at": None,
+    }
+    row.update(overrides)
+    return row
+
+
 def test_trial_window_stacks_active_time_but_restarts_expired_time():
-    activeStart, activeEnd = calculateTrialWindow(
-        subscription(), NOW, days=5
-    )
+    activeStart, activeEnd = calculateTrialWindow(subscription(), NOW, days=5)
     expiredStart, expiredEnd = calculateTrialWindow(
         subscription(
             status="expired",
@@ -83,112 +111,184 @@ def test_trial_window_stacks_active_time_but_restarts_expired_time():
     assert expiredEnd == datetime(2026, 8, 29, 10, 0, tzinfo=timezone.utc)
 
 
-def test_extend_user_locks_subscription_and_commits_subscription_credit_and_item():
+def test_create_extension_persists_one_idempotent_operation():
+    stored = extension()
+    connection = FakeConnection([stored])
+    repository = AdminTrialExtensionRepository(connectionFactory=lambda: connection)
+
+    result = repository.createOrGetExtension(
+        idempotencyKey=KEY,
+        requestHash="a" * 64,
+        userId="free-user",
+        days=5,
+        reason=None,
+        adminId="admin-1",
+    )
+
+    statements = " ".join(query.lower() for query, _ in connection.fakeCursor.executions)
+    assert "insert into public.admin_free_trial_extensions" in statements
+    assert "admin_free_trial_extension_batches" not in statements
+    assert "admin_free_trial_extension_items" not in statements
+    assert result == stored
+    assert connection.commits == 1
+
+
+def test_extend_user_commits_subscription_credit_and_single_operation():
+    completed = extension(
+        subscription_id="subscription-1",
+        outcome="EXTENDED",
+        days_added=5,
+        previous_expiry=datetime(2026, 8, 25, 10, 0, tzinfo=timezone.utc),
+        new_expiry=datetime(2026, 8, 30, 10, 0, tzinfo=timezone.utc),
+        credit_sync_status="PENDING",
+        credit_quota=1_000,
+        credit_topup_tokens=250,
+        credit_period_end=datetime(2026, 9, 24, 10, 0, tzinfo=timezone.utc),
+        credit_generation=8,
+        completed_at=NOW,
+    )
     connection = FakeConnection([
+        extension(),
         {"is_banned": False},
         subscription(),
         {"topup_tokens": 250},
-        {"id": "item-1"},
+        completed,
     ])
     repository = AdminTrialExtensionRepository(
         connectionFactory=lambda: connection,
         freeQuotaProvider=lambda: 1_000,
     )
 
-    item = repository.extendUser(
-        batchId="batch-1", userId="free-user", days=5, now=NOW
+    result = repository.extendUser(
+        extensionId="extension-1", userId="free-user", days=5, now=NOW
     )
 
     statements = " ".join(query.lower() for query, _ in connection.fakeCursor.executions)
+    statementList = [
+        query.lower() for query, _ in connection.fakeCursor.executions
+    ]
+    advisoryIndex = next(
+        index
+        for index, query in enumerate(statementList)
+        if "pg_advisory_xact_lock" in query
+    )
+    operationLockIndex = next(
+        index
+        for index, query in enumerate(statementList)
+        if "from public.admin_free_trial_extensions" in query
+        and "for update" in query
+    )
     assert 'from public."users"' in statements
     assert "from public.subscriptions" in statements
     assert "for update" in statements
     assert "pg_advisory_xact_lock" in statements
     assert "update public.subscriptions" in statements
     assert "insert into public.credit_balances" in statements
-    assert "insert into public.admin_free_trial_extension_items" in statements
+    assert "update public.admin_free_trial_extensions" in statements
+    assert "admin_free_trial_extension_items" not in statements
+    assert advisoryIndex < operationLockIndex
     assert connection.commits == 1
     assert connection.rollbacks == 0
-    assert item["new_expiry"] == datetime(
-        2026, 8, 30, 10, 0, tzinfo=timezone.utc
+    assert result["new_expiry"] == datetime(2026, 8, 30, 10, 0, tzinfo=timezone.utc)
+    assert result["credit_quota"] == 1_000
+    assert result["credit_sync_status"] == "PENDING"
+    assert result["credit_generation"] == 8
+
+
+def test_completed_operation_is_replayed_without_extending_again():
+    completed = extension(outcome="EXTENDED", credit_sync_status="SYNCED")
+    connection = FakeConnection([completed])
+    repository = AdminTrialExtensionRepository(connectionFactory=lambda: connection)
+
+    result = repository.extendUser(
+        extensionId="extension-1", userId="free-user", days=5, now=NOW
     )
-    assert item["credit_quota"] == 1_000
-    assert item["credit_topup_tokens"] == 250
-    assert item["credit_sync_status"] == "PENDING"
-    assert item["credit_generation"] == 8
+
+    statements = " ".join(query.lower() for query, _ in connection.fakeCursor.executions)
+    assert result == completed
+    assert "update public.subscriptions" not in statements
+    assert connection.commits == 1
 
 
 def test_paid_user_is_recorded_as_failure_without_changing_subscription_or_credit():
-    connection = FakeConnection([
-        {"is_banned": False},
-        subscription(
-            billing_mode="monthly_recurring",
-            plan_type="pro",
-            status="active",
-        ),
-        {"id": "item-paid"},
-    ])
-    repository = AdminTrialExtensionRepository(
-        connectionFactory=lambda: connection,
-        freeQuotaProvider=lambda: 1_000,
+    failed = extension(
+        user_id="paid-user",
+        outcome="FAILED",
+        error_code="PAID_SUBSCRIPTION_NOT_ELIGIBLE",
+        completed_at=NOW,
     )
+    connection = FakeConnection([
+        extension(user_id="paid-user"),
+        {"is_banned": False},
+        subscription(billing_mode="monthly_recurring", plan_type="pro", status="active"),
+        failed,
+    ])
+    repository = AdminTrialExtensionRepository(connectionFactory=lambda: connection)
 
-    item = repository.extendUser(
-        batchId="batch-1", userId="paid-user", days=5, now=NOW
+    result = repository.extendUser(
+        extensionId="extension-1", userId="paid-user", days=5, now=NOW
     )
 
     statements = " ".join(query.lower() for query, _ in connection.fakeCursor.executions)
     assert "update public.subscriptions" not in statements
     assert "insert into public.credit_balances" not in statements
-    assert item["outcome"] == "FAILED"
-    assert item["error_code"] == "PAID_SUBSCRIPTION_NOT_ELIGIBLE"
-    assert connection.commits == 1
+    assert result["outcome"] == "FAILED"
+    assert result["error_code"] == "PAID_SUBSCRIPTION_NOT_ELIGIBLE"
 
 
 def test_erasure_pending_user_is_ineligible_even_when_trial_is_free():
+    failed = extension(
+        user_id="erasing-user",
+        outcome="FAILED",
+        error_code="USER_ERASURE_PENDING",
+        completed_at=NOW,
+    )
     connection = FakeConnection([
+        extension(user_id="erasing-user"),
         {"is_banned": False},
         subscription(erasure_pending=True),
-        {"id": "item-erasure"},
+        failed,
     ])
-    repository = AdminTrialExtensionRepository(
-        connectionFactory=lambda: connection,
-        freeQuotaProvider=lambda: 1_000,
+    repository = AdminTrialExtensionRepository(connectionFactory=lambda: connection)
+
+    result = repository.extendUser(
+        extensionId="extension-1", userId="erasing-user", days=5, now=NOW
     )
 
-    item = repository.extendUser(
-        batchId="batch-1", userId="erasing-user", days=5, now=NOW
+    assert result["error_code"] == "USER_ERASURE_PENDING"
+
+
+def test_missing_user_is_a_durable_single_operation_failure():
+    failed = extension(
+        user_id="missing-user",
+        outcome="FAILED",
+        error_code="USER_NOT_FOUND",
+        completed_at=NOW,
+    )
+    connection = FakeConnection([
+        extension(user_id="missing-user"),
+        None,
+        failed,
+    ])
+    repository = AdminTrialExtensionRepository(connectionFactory=lambda: connection)
+
+    result = repository.extendUser(
+        extensionId="extension-1", userId="missing-user", days=5, now=NOW
     )
 
-    assert item["error_code"] == "USER_ERASURE_PENDING"
-
-
-def test_missing_user_is_a_durable_per_user_failure():
-    connection = FakeConnection([None, {"id": "item-missing"}])
-    repository = AdminTrialExtensionRepository(
-        connectionFactory=lambda: connection,
-        freeQuotaProvider=lambda: 1_000,
-    )
-
-    item = repository.extendUser(
-        batchId="batch-1", userId="missing-user", days=5, now=NOW
-    )
-
-    assert item["outcome"] == "FAILED"
-    assert item["error_code"] == "USER_NOT_FOUND"
+    assert result["outcome"] == "FAILED"
+    assert result["error_code"] == "USER_NOT_FOUND"
     assert connection.commits == 1
 
 
-def test_older_pending_credit_item_is_superseded_without_touching_redis():
-    item = {
-        "id": "item-old",
-        "user_id": "free-user",
-        "subscription_id": "subscription-1",
-        "outcome": "EXTENDED",
-        "credit_sync_status": "PENDING",
-        "credit_generation": 4,
-    }
-    updated = {**item, "credit_sync_status": "SUPERSEDED"}
+def test_older_pending_credit_extension_is_superseded_without_touching_redis():
+    pending = extension(
+        subscription_id="subscription-1",
+        outcome="EXTENDED",
+        credit_sync_status="PENDING",
+        credit_generation=4,
+    )
+    updated = {**pending, "credit_sync_status": "SUPERSEDED"}
     connection = FakeConnection([
         {"user_id": "free-user", "subscription_id": "subscription-1"},
         {
@@ -198,34 +298,28 @@ def test_older_pending_credit_item_is_superseded_without_touching_redis():
             "plan_type": "free",
             "status": "trial",
         },
-        item,
+        pending,
         updated,
     ])
-    repository = AdminTrialExtensionRepository(
-        connectionFactory=lambda: connection,
-        freeQuotaProvider=lambda: 1_000,
-    )
+    repository = AdminTrialExtensionRepository(connectionFactory=lambda: connection)
     publishes = []
 
-    result = repository.synchronizeCreditItem(
-        "item-old", lambda value: publishes.append(value) or "APPLIED"
+    result = repository.synchronizeCreditExtension(
+        "extension-1", lambda value: publishes.append(value) or "APPLIED"
     )
 
     assert result["credit_sync_status"] == "SUPERSEDED"
     assert publishes == []
-    assert connection.commits == 1
 
 
-def test_erasure_pending_cancels_credit_item_without_touching_redis():
-    item = {
-        "id": "item-1",
-        "user_id": "free-user",
-        "subscription_id": "subscription-1",
-        "outcome": "EXTENDED",
-        "credit_sync_status": "PENDING",
-        "credit_generation": 4,
-    }
-    updated = {**item, "credit_sync_status": "CANCELLED"}
+def test_erasure_pending_cancels_credit_extension_without_touching_redis():
+    pending = extension(
+        subscription_id="subscription-1",
+        outcome="EXTENDED",
+        credit_sync_status="PENDING",
+        credit_generation=4,
+    )
+    updated = {**pending, "credit_sync_status": "CANCELLED"}
     connection = FakeConnection([
         {"user_id": "free-user", "subscription_id": "subscription-1"},
         {
@@ -235,33 +329,28 @@ def test_erasure_pending_cancels_credit_item_without_touching_redis():
             "plan_type": "free",
             "status": "trial",
         },
-        item,
+        pending,
         updated,
     ])
-    repository = AdminTrialExtensionRepository(
-        connectionFactory=lambda: connection,
-        freeQuotaProvider=lambda: 1_000,
-    )
+    repository = AdminTrialExtensionRepository(connectionFactory=lambda: connection)
     publishes = []
 
-    result = repository.synchronizeCreditItem(
-        "item-1", lambda value: publishes.append(value) or "APPLIED"
+    result = repository.synchronizeCreditExtension(
+        "extension-1", lambda value: publishes.append(value) or "APPLIED"
     )
 
     assert result["credit_sync_status"] == "CANCELLED"
     assert publishes == []
 
 
-def test_unrelated_subscription_version_change_does_not_supersede_credit_reset():
-    item = {
-        "id": "item-1",
-        "user_id": "free-user",
-        "subscription_id": "subscription-1",
-        "outcome": "EXTENDED",
-        "credit_sync_status": "PENDING",
-        "credit_generation": 4,
-    }
-    updated = {**item, "credit_sync_status": "SYNCED"}
+def test_current_credit_generation_is_published_and_marked_synced():
+    pending = extension(
+        subscription_id="subscription-1",
+        outcome="EXTENDED",
+        credit_sync_status="PENDING",
+        credit_generation=4,
+    )
+    updated = {**pending, "credit_sync_status": "SYNCED"}
     connection = FakeConnection([
         {"user_id": "free-user", "subscription_id": "subscription-1"},
         {
@@ -272,22 +361,17 @@ def test_unrelated_subscription_version_change_does_not_supersede_credit_reset()
             "plan_type": "free",
             "status": "trial",
         },
-        item,
+        pending,
         updated,
     ])
-    repository = AdminTrialExtensionRepository(
-        connectionFactory=lambda: connection,
-        freeQuotaProvider=lambda: 1_000,
-    )
+    repository = AdminTrialExtensionRepository(connectionFactory=lambda: connection)
     publishes = []
 
-    result = repository.synchronizeCreditItem(
-        "item-1", lambda value: publishes.append(value) or "APPLIED"
+    result = repository.synchronizeCreditExtension(
+        "extension-1", lambda value: publishes.append(value) or "APPLIED"
     )
 
-    statements = " ".join(
-        query.lower() for query, _ in connection.fakeCursor.executions
-    )
+    statements = " ".join(query.lower() for query, _ in connection.fakeCursor.executions)
     assert result["credit_sync_status"] == "SYNCED"
     assert len(publishes) == 1
     assert "pg_advisory_xact_lock" in statements

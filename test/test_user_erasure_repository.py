@@ -146,6 +146,16 @@ def test_create_request_persists_all_steps_and_freezes_billing_transactionally()
         and "auto_renew_enabled = false" in query
         for query, _params in connection.state["executed"]
     )
+    assert any(
+        "update public.admin_free_trial_extensions" in query
+        and "credit_sync_status = 'cancelled'" in query
+        for query, _params in connection.state["executed"]
+    )
+    assert not any(
+        "admin_free_trial_extension_items" in query
+        or "admin_free_trial_extension_batches" in query
+        for query, _params in connection.state["executed"]
+    )
 
 
 def test_create_request_locks_then_bans_and_revokes_sessions_before_workflow_mutations():

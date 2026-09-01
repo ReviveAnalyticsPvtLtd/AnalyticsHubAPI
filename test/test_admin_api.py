@@ -230,39 +230,16 @@ class FakeAdminTrialExtensionService:
             "admin": admin,
         })
         return {
-            "batchId": idempotencyKey,
-            "status": "PARTIAL_SUCCESS",
-            "days": payload.days,
-            "summary": {
-                "requested": 2,
-                "extended": 1,
-                "failed": 1,
-                "creditSyncPending": 0,
-            },
-            "results": [
-                {
-                    "userId": "free-user",
-                    "outcome": "EXTENDED",
-                    "daysAdded": payload.days,
-                    "previousExpiry": "2026-08-25T10:00:00+00:00",
-                    "newExpiry": "2026-08-30T10:00:00+00:00",
-                    "creditsRefreshed": True,
-                    "creditSyncStatus": "SYNCED",
-                    "accessStillBanned": False,
-                    "errorCode": None,
-                },
-                {
-                    "userId": "paid-user",
-                    "outcome": "FAILED",
-                    "daysAdded": None,
-                    "previousExpiry": None,
-                    "newExpiry": None,
-                    "creditsRefreshed": False,
-                    "creditSyncStatus": "NOT_APPLICABLE",
-                    "accessStillBanned": False,
-                    "errorCode": "PAID_SUBSCRIPTION_NOT_ELIGIBLE",
-                },
-            ],
+            "extensionId": idempotencyKey,
+            "userId": payload.userId,
+            "outcome": "EXTENDED",
+            "daysAdded": payload.days,
+            "previousExpiry": "2026-08-25T10:00:00+00:00",
+            "newExpiry": "2026-08-30T10:00:00+00:00",
+            "creditsRefreshed": True,
+            "creditSyncStatus": "SYNCED",
+            "accessStillBanned": False,
+            "errorCode": None,
         }
 
 
@@ -433,14 +410,14 @@ def test_user_erasure_start_requires_confirmation_and_idempotency_header(client)
     assert wrongConfirmation.json()["message"] == "Validation failed"
 
 
-def test_free_trial_extension_processes_eligible_users_and_reports_failures(client):
+def test_free_trial_extension_processes_one_user(client):
     FakeAdminTrialExtensionService.calls.clear()
     idempotencyKey = "f53b33cd-219e-4c70-b5c2-43d956591fa5"
 
     response = client.post(
         "/admin/free-trial/extensions",
         json={
-            "userIds": ["free-user", "paid-user"],
+            "userId": "free-user",
             "days": 5,
             "reason": "Customer recovery",
         },
@@ -448,25 +425,18 @@ def test_free_trial_extension_processes_eligible_users_and_reports_failures(clie
     )
 
     assert response.status_code == 200
-    assert response.json()["status"] == "PARTIAL_SUCCESS"
-    assert response.json()["summary"] == {
-        "requested": 2,
-        "extended": 1,
-        "failed": 1,
-        "creditSyncPending": 0,
-    }
-    assert response.json()["results"][1]["errorCode"] == (
-        "PAID_SUBSCRIPTION_NOT_ELIGIBLE"
-    )
+    assert response.json()["extensionId"] == idempotencyKey
+    assert response.json()["outcome"] == "EXTENDED"
+    assert response.json()["userId"] == "free-user"
     call = FakeAdminTrialExtensionService.calls[-1]
     assert call["idempotencyKey"] == idempotencyKey
     assert call["payload"].days == 5
-    assert call["payload"].userIds == ["free-user", "paid-user"]
+    assert call["payload"].userId == "free-user"
     assert call["admin"] == ADMIN_CONTEXT
 
 
 def test_free_trial_extension_requires_auth_and_idempotency_header(client):
-    body = {"userIds": ["free-user"], "days": 4}
+    body = {"userId": "free-user", "days": 4}
 
     withoutAuth = client.post(
         "/admin/free-trial/extensions",
@@ -628,7 +598,7 @@ def test_admin_does_not_expose_single_user_erasure_status_route():
     assert ("/admin/users/{userId}/erasure", "POST") in routes
 
 
-def test_free_trial_extension_route_runs_blocking_batch_in_threadpool():
+def test_free_trial_extension_route_runs_blocking_work_in_threadpool():
     route = next(
         route
         for route in app.routes
