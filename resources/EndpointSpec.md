@@ -2267,6 +2267,49 @@ the response was computed, for a freshness indicator between polls.
 **Errors:** `401`, `422` for an unsupported `period`, or a safe `500` read
 failure.
 
+### 15.5 `GET /api/latest/admin/overview/token-usage`
+
+Return provider-reported LLM token usage from Langfuse, bucketed for the same
+line-chart filters as the signup overview. Values are queried fresh on every
+request so the frontend can use the same polling interval as the signup chart.
+This metric does not represent non-LLM estimated charges.
+
+**Headers:**
+
+- `Authorization: Bearer <admin-token>`
+
+**Query parameters:**
+
+- `period` — one of `7d`, `14d`, `30d`, `90d`, `6m`, `1y`. Defaults to `30d`.
+
+Period granularity, bucket counts, UTC boundaries, and label formats match
+`GET /api/latest/admin/overview/user-signups`.
+
+**Response:**
+
+```json
+{
+  "period": "30d",
+  "granularity": "day",
+  "timezone": "UTC",
+  "rangeStart": "2026-07-28T00:00:00+00:00",
+  "rangeEnd": "2026-08-27T00:00:00+00:00",
+  "lastUpdatedAt": "2026-08-26T14:30:00+00:00",
+  "totalTokens": 750,
+  "chart": {
+    "labels": ["2026-07-28", "2026-07-29"],
+    "datasets": [{ "label": "LLM tokens", "data": [250, 500] }]
+  }
+}
+```
+
+Days without usage are zero-filled. Langfuse is queried at daily granularity
+and the API rolls those values into the signup chart's weekly or monthly
+buckets when required.
+
+**Errors:** `401`, `422` for an unsupported `period`, `503` when Langfuse is not
+configured, or a safe `500` when the Langfuse Metrics API request fails.
+
 ---
 
 ## Common Error Responses

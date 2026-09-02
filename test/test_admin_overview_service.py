@@ -1,4 +1,5 @@
 import datetime
+import json
 import os
 import sys
 from pathlib import Path
@@ -301,3 +302,127 @@ def test_backend_failure_surfaces_as_a_server_error():
         service.getUserSignupOverview("7d")
 
     assert excInfo.value.statusCode == 500
+
+
+def test_constructor_preserves_the_existing_positional_clock_argument():
+    service = AdminOverviewService(FakeClient(), lambda: NOW)
+
+    result = service.getUserSignupOverview("7d")
+
+    assert result["lastUpdatedAt"] == "2026-08-26T14:30:00+00:00"
+
+
+class FakeLangfuseMetrics:
+    def __init__(self, rows):
+        self.rows = rows
+        self.queries = []
+
+    def metrics(self, query):
+        self.queries.append(query)
+        return SimpleNamespace(data=self.rows)
+
+
+class FakeLangfuseClient:
+    def __init__(self, rows):
+        self.metricsEndpoint = FakeLangfuseMetrics(rows)
+        self.api = SimpleNamespace(metrics=self.metricsEndpoint)
+
+
+class FailingLangfuseMetrics:
+    def metrics(self, query):
+        raise RuntimeError("upstream details must not escape")
+
+
+def test_token_usage_maps_daily_langfuse_totals_into_signup_chart_buckets():
+    langfuse = FakeLangfuseClient([
+        {"time_dimension": "2026-08-20T00:00:00Z", "sum_totalTokens": "100"},
+        {"time_dimension": "2026-08-24T00:00:00Z", "sum_totalTokens": 250},
+        {"time_dimension": "2026-08-26T00:00:00Z", "sum_totalTokens": 400},
+    ])
+    service = AdminOverviewService(
+        langfuseClient=langfuse,
+        now=lambda: NOW,
+    )
+
+    result = service.getTokenUsageOverview("7d")
+
+    assert result["granularity"] == "day"
+    assert result["chart"] == {
+        "labels": [
+            "2026-08-20", "2026-08-21", "2026-08-22", "2026-08-23",
+            "2026-08-24", "2026-08-25", "2026-08-26",
+        ],
+        "datasets": [
+            {"label": "LLM tokens", "data": [100, 0, 0, 0, 250, 0, 400]},
+        ],
+    }
+    assert result["totalTokens"] == 750
+    assert json.loads(langfuse.metricsEndpoint.queries[0]) == {
+        "view": "observations",
+        "metrics": [{"measure": "totalTokens", "aggregation": "sum"}],
+        "dimensions": [],
+        "filters": [],
+        "timeDimension": {"granularity": "day"},
+        "fromTimestamp": "2026-08-20T00:00:00+00:00",
+        "toTimestamp": "2026-08-27T00:00:00+00:00",
+        "orderBy": [{"field": "time_dimension", "direction": "asc"}],
+        "config": {"row_limit": 1000},
+    }
+
+
+def test_token_usage_rolls_daily_values_into_weekly_buckets():
+    langfuse = FakeLangfuseClient([
+        {"time_dimension": "2026-08-20T00:00:00Z", "sum_totalTokens": 100},
+        {"time_dimension": "2026-08-26T00:00:00Z", "sum_totalTokens": 200},
+    ])
+    service = AdminOverviewService(langfuseClient=langfuse, now=lambda: NOW)
+
+    result = service.getTokenUsageOverview("90d")
+
+    assert result["granularity"] == "week"
+    assert len(result["chart"]["labels"]) == 13
+    assert result["chart"]["datasets"][0]["data"][-1] == 300
+
+
+def test_token_usage_rolls_daily_values_into_calendar_months():
+    langfuse = FakeLangfuseClient([
+        {"time_dimension": "2026-07-31T00:00:00Z", "sum_totalTokens": 100},
+        {"time_dimension": "2026-08-02T00:00:00Z", "sum_totalTokens": 200},
+    ])
+    service = AdminOverviewService(langfuseClient=langfuse, now=lambda: NOW)
+
+    result = service.getTokenUsageOverview("1y")
+
+    labels = result["chart"]["labels"]
+    data = result["chart"]["datasets"][0]["data"]
+    assert data[labels.index("2026-07")] == 100
+    assert data[labels.index("2026-08")] == 200
+
+
+def test_token_usage_reports_unavailable_when_langfuse_is_not_configured():
+    service = AdminOverviewService(
+        langfuseClient=None,
+        now=lambda: NOW,
+    )
+
+    with pytest.raises(AdminApiError) as excInfo:
+        service.getTokenUsageOverview("7d")
+
+    assert excInfo.value.statusCode == 503
+    assert excInfo.value.message == "LLM usage analytics is unavailable"
+
+
+def test_token_usage_wraps_langfuse_failures_in_the_admin_error_contract():
+    langfuse = SimpleNamespace(
+        api=SimpleNamespace(metrics=FailingLangfuseMetrics())
+    )
+    service = AdminOverviewService(
+        langfuseClient=langfuse,
+        now=lambda: NOW,
+    )
+
+    with pytest.raises(AdminApiError) as excInfo:
+        service.getTokenUsageOverview("7d")
+
+    assert excInfo.value.statusCode == 500
+    assert excInfo.value.message == "Failed to load LLM token usage overview"

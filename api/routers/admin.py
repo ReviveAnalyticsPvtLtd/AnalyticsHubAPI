@@ -10,6 +10,7 @@ from api.adminModels import (
     AdminLogoutResponse,
     AdminSubscriptionPatch,
     AdminSubscriptionView,
+    AdminTokenUsageOverviewView,
     AdminUserAccessPatch,
     AdminUserAccessView,
     AdminUserErasureAcceptedView,
@@ -81,6 +82,17 @@ def getUserSignupOverview(
     service: AdminOverviewService = Depends(getAdminOverviewService),
 ):
     return service.getUserSignupOverview(period)
+
+
+@router.get(
+    "/overview/token-usage", response_model=AdminTokenUsageOverviewView
+)
+def getTokenUsageOverview(
+    period: AdminOverviewPeriod = Query(default="30d"),
+    _admin: AdminContext = Depends(verifyAdmin),
+    service: AdminOverviewService = Depends(getAdminOverviewService),
+):
+    return service.getTokenUsageOverview(period)
 
 
 @router.get("/users", response_model=list[AdminUserView])

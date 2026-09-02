@@ -25,6 +25,7 @@ from api.adminModels import (
     AdminLoginResponse,
     AdminLogoutResponse,
     AdminSubscriptionView,
+    AdminTokenUsageOverviewView,
     AdminUserErasureAcceptedView,
     AdminUserSignupOverviewView,
     AdminUserView,
@@ -257,15 +258,34 @@ SIGNUP_OVERVIEW_VIEW = {
     },
 }
 
+TOKEN_USAGE_OVERVIEW_VIEW = {
+    "period": "30d",
+    "granularity": "day",
+    "timezone": "UTC",
+    "rangeStart": "2026-07-28T00:00:00+00:00",
+    "rangeEnd": "2026-08-27T00:00:00+00:00",
+    "lastUpdatedAt": "2026-08-26T14:30:00+00:00",
+    "totalTokens": 750,
+    "chart": {
+        "labels": ["2026-07-28", "2026-07-29"],
+        "datasets": [{"label": "LLM tokens", "data": [250, 500]}],
+    },
+}
+
 
 class FakeAdminOverviewService:
     """Records the period the route forwards without touching a backend."""
 
     requestedPeriods: list[str] = []
+    requestedTokenPeriods: list[str] = []
 
     def getUserSignupOverview(self, period):
         FakeAdminOverviewService.requestedPeriods.append(period)
         return {**SIGNUP_OVERVIEW_VIEW, "period": period}
+
+    def getTokenUsageOverview(self, period):
+        FakeAdminOverviewService.requestedTokenPeriods.append(period)
+        return {**TOKEN_USAGE_OVERVIEW_VIEW, "period": period}
 
 
 async def fakeVerifyAdmin(request: Request) -> AdminContext:
@@ -569,6 +589,7 @@ def test_admin_routes_declare_strict_response_allowlists():
         ("/admin/auth/logout", "POST"): AdminLogoutResponse,
         ("/admin/audit", "GET"): list[AdminAuditEventView],
         ("/admin/overview/user-signups", "GET"): AdminUserSignupOverviewView,
+        ("/admin/overview/token-usage", "GET"): AdminTokenUsageOverviewView,
         ("/admin/users", "GET"): list[AdminUserView],
         ("/admin/users/{userId}", "PATCH"): AdminUserView,
         ("/admin/users/{userId}/access", "PATCH"): accessView,
@@ -731,4 +752,49 @@ def test_signup_overview_view_rejects_unknown_fields():
     with pytest.raises(Exception):
         AdminUserSignupOverviewView(
             **{**SIGNUP_OVERVIEW_VIEW, "unexpected": "value"}
+        )
+
+
+def test_token_usage_overview_returns_chart_payload(client):
+    FakeAdminOverviewService.requestedTokenPeriods = []
+
+    response = client.get(
+        "/admin/overview/token-usage", headers=_adminHeaders()
+    )
+
+    assert response.status_code == 200
+    assert response.json() == TOKEN_USAGE_OVERVIEW_VIEW
+    assert FakeAdminOverviewService.requestedTokenPeriods == ["30d"]
+
+
+def test_token_usage_overview_forwards_the_requested_period(client):
+    FakeAdminOverviewService.requestedTokenPeriods = []
+
+    response = client.get(
+        "/admin/overview/token-usage?period=1y", headers=_adminHeaders()
+    )
+
+    assert response.status_code == 200
+    assert response.json()["period"] == "1y"
+    assert FakeAdminOverviewService.requestedTokenPeriods == ["1y"]
+
+
+def test_token_usage_overview_rejects_an_unsupported_period(client):
+    response = client.get(
+        "/admin/overview/token-usage?period=3w", headers=_adminHeaders()
+    )
+
+    assert response.status_code == 422
+
+
+def test_token_usage_overview_requires_admin_authentication(client):
+    response = client.get("/admin/overview/token-usage")
+
+    assert response.status_code == 401
+
+
+def test_token_usage_overview_view_rejects_unknown_fields():
+    with pytest.raises(Exception):
+        AdminTokenUsageOverviewView(
+            **{**TOKEN_USAGE_OVERVIEW_VIEW, "unexpected": "value"}
         )

@@ -261,3 +261,14 @@ class AdminUserSignupOverviewView(_StrictModel):
     lastUpdatedAt: str
     totalSignups: int
     chart: AdminSignupChart
+
+
+class AdminTokenUsageOverviewView(_StrictModel):
+    period: AdminOverviewPeriod
+    granularity: AdminOverviewGranularity
+    timezone: str
+    rangeStart: str
+    rangeEnd: str
+    lastUpdatedAt: str
+    totalTokens: int = Field(ge=0)
+    chart: AdminSignupChart

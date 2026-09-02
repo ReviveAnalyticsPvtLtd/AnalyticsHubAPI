@@ -1,4 +1,4 @@
-"""Admin overview aggregates: new-user signups bucketed over a time period."""
+"""Admin overview aggregates for signup and LLM token-usage line charts."""
 
 __all__ = [
     "ADMIN_OVERVIEW_BATCH_SIZE",
@@ -10,6 +10,7 @@ __all__ = [
 
 import bisect
 import datetime
+import json
 
 from loguru import logger
 
@@ -19,6 +20,8 @@ from api.adminErrors import AdminApiError
 ADMIN_OVERVIEW_BATCH_SIZE = 1000
 SIGNUP_COLUMN = "createdAt"
 SIGNUP_SERIES_LABEL = "New users"
+TOKEN_USAGE_SERIES_LABEL = "LLM tokens"
+_UNSET = object()
 
 # period -> (granularity, bucket count). Weekly periods are rounded to whole
 # weeks so every bucket spans the same number of days.
@@ -74,8 +77,9 @@ def _subtractMonths(moment: datetime.datetime, months: int) -> datetime.datetime
 
 
 class AdminOverviewService:
-    def __init__(self, client=None, now=None):
+    def __init__(self, client=None, now=None, langfuseClient=_UNSET):
         self._client = client
+        self._langfuseClient = langfuseClient
         self._now = now or _utcNow
 
     @property
@@ -84,6 +88,13 @@ class AdminOverviewService:
             from api.commons import client
             self._client = client
         return self._client
+
+    @property
+    def langfuseClient(self):
+        if self._langfuseClient is _UNSET:
+            from utils.langfuseClient import langfuseClient
+            self._langfuseClient = langfuseClient
+        return self._langfuseClient
 
     def getUserSignupOverview(self, period: str) -> dict:
         granularity, bucketCount = self._resolvePeriod(period)
@@ -111,6 +122,74 @@ class AdminOverviewService:
                 ],
             },
         }
+
+    def getTokenUsageOverview(self, period: str) -> dict:
+        granularity, bucketCount = self._resolvePeriod(period)
+        now = self._now()
+        boundaries = self._bucketBoundaries(now, granularity, bucketCount)
+        labels = [
+            self._formatLabel(start, granularity) for start, _end in boundaries
+        ]
+        rangeStart = boundaries[0][0]
+        rangeEnd = boundaries[-1][1]
+        counts = [0] * len(boundaries)
+        starts = [start for start, _end in boundaries]
+
+        for row in self._fetchTokenUsageRows(rangeStart, rangeEnd):
+            moment = _parseTimestamp(row.get("time_dimension"))
+            if moment is None or moment < rangeStart or moment >= rangeEnd:
+                continue
+            try:
+                tokens = max(0, int(row.get("sum_totalTokens") or 0))
+            except (TypeError, ValueError):
+                tokens = 0
+            counts[bisect.bisect_right(starts, moment) - 1] += tokens
+
+        return {
+            "period": period,
+            "granularity": granularity,
+            "timezone": "UTC",
+            "rangeStart": rangeStart.isoformat(),
+            "rangeEnd": rangeEnd.isoformat(),
+            "lastUpdatedAt": now.isoformat(),
+            "totalTokens": sum(counts),
+            "chart": {
+                "labels": labels,
+                "datasets": [
+                    {"label": TOKEN_USAGE_SERIES_LABEL, "data": counts},
+                ],
+            },
+        }
+
+    def _fetchTokenUsageRows(
+        self, rangeStart: datetime.datetime, rangeEnd: datetime.datetime
+    ) -> list[dict]:
+        if self.langfuseClient is None:
+            raise AdminApiError(503, "LLM usage analytics is unavailable")
+
+        query = json.dumps({
+            "view": "observations",
+            "metrics": [{"measure": "totalTokens", "aggregation": "sum"}],
+            "dimensions": [],
+            "filters": [],
+            "timeDimension": {"granularity": "day"},
+            "fromTimestamp": rangeStart.isoformat(),
+            "toTimestamp": rangeEnd.isoformat(),
+            "orderBy": [{"field": "time_dimension", "direction": "asc"}],
+            "config": {"row_limit": 1000},
+        })
+        try:
+            response = self.langfuseClient.api.metrics.metrics(query=query)
+            rows = getattr(response, "data", None) or []
+            return [
+                row if isinstance(row, dict) else vars(row)
+                for row in rows
+            ]
+        except Exception as exc:
+            logger.error("Admin token usage overview failed: {}", type(exc).__name__)
+            raise AdminApiError(
+                500, "Failed to load LLM token usage overview"
+            ) from exc
 
     def _countSignups(
         self,
