@@ -426,3 +426,137 @@ def test_token_usage_wraps_langfuse_failures_in_the_admin_error_contract():
 
     assert excInfo.value.statusCode == 500
     assert excInfo.value.message == "Failed to load LLM token usage overview"
+
+
+def test_token_cost_queries_recorded_cost_and_preserves_subcent_amounts():
+    langfuse = FakeLangfuseClient([
+        {"time_dimension": "2026-08-20T00:00:00Z", "sum_totalCost": "0.00000125"},
+        {"time_dimension": "2026-08-24T00:00:00Z", "sum_totalCost": 0.1},
+        {"time_dimension": "2026-08-24T00:00:00Z", "sum_totalCost": "0.2"},
+        {"time_dimension": "2026-08-26T00:00:00Z", "sum_totalCost": None},
+    ])
+    service = AdminOverviewService(langfuseClient=langfuse, now=lambda: NOW)
+
+    result = service.getTokenCostOverview("7d")
+
+    assert result == {
+        "period": "7d", "granularity": "day", "timezone": "UTC",
+        "rangeStart": "2026-08-20T00:00:00+00:00",
+        "rangeEnd": "2026-08-27T00:00:00+00:00",
+        "lastUpdatedAt": "2026-08-26T14:30:00+00:00",
+        "totalCost": 0.30000125, "currency": "USD",
+        "chart": {
+            "labels": [
+                "2026-08-20", "2026-08-21", "2026-08-22", "2026-08-23",
+                "2026-08-24", "2026-08-25", "2026-08-26",
+            ],
+            "datasets": [{"label": "LLM cost (USD)", "data": [
+                0.00000125, 0, 0, 0, 0.3, 0, 0,
+            ]}],
+        },
+    }
+    assert json.loads(langfuse.metricsEndpoint.queries[0]) == {
+        "view": "observations",
+        "metrics": [{"measure": "totalCost", "aggregation": "sum"}],
+        "dimensions": [], "filters": [],
+        "timeDimension": {"granularity": "day"},
+        "fromTimestamp": "2026-08-20T00:00:00+00:00",
+        "toTimestamp": "2026-08-27T00:00:00+00:00",
+        "orderBy": [{"field": "time_dimension", "direction": "asc"}],
+        "config": {"row_limit": 1000},
+    }
+
+
+@pytest.mark.parametrize("period,granularity,count", [
+    ("7d", "day", 7), ("14d", "day", 14), ("30d", "day", 30),
+    ("90d", "week", 13), ("6m", "week", 26), ("1y", "month", 12),
+])
+def test_token_cost_empty_periods_match_token_chart_buckets(period, granularity, count):
+    service = AdminOverviewService(langfuseClient=FakeLangfuseClient([]), now=lambda: NOW)
+
+    result = service.getTokenCostOverview(period)
+    tokenResult = service.getTokenUsageOverview(period)
+
+    assert result["granularity"] == granularity
+    assert result["chart"]["datasets"][0]["data"] == [0] * count
+    assert result["totalCost"] == 0
+    for field in ("period", "granularity", "timezone", "rangeStart", "rangeEnd", "lastUpdatedAt"):
+        assert result[field] == tokenResult[field]
+    assert result["chart"]["labels"] == tokenResult["chart"]["labels"]
+
+
+@pytest.mark.parametrize("period,expectedTail", [
+    ("90d", [0, 0.3]), ("6m", [0, 0.3]), ("1y", [0.4, 0.3]),
+])
+def test_token_cost_rolls_daily_amounts_into_weekly_and_monthly_buckets(period, expectedTail):
+    langfuse = FakeLangfuseClient([
+        {"time_dimension": "2026-07-31T00:00:00Z", "sum_totalCost": "0.4"},
+        {"time_dimension": "2026-08-20T00:00:00Z", "sum_totalCost": "0.1"},
+        {"time_dimension": "2026-08-26T00:00:00Z", "sum_totalCost": "0.2"},
+    ])
+    result = AdminOverviewService(langfuseClient=langfuse, now=lambda: NOW).getTokenCostOverview(period)
+
+    assert result["chart"]["datasets"][0]["data"][-2:] == expectedTail
+    assert result["totalCost"] == 0.7
+
+
+def test_token_cost_excludes_outside_range_and_invalid_timestamps():
+    langfuse = FakeLangfuseClient([
+        {"time_dimension": "2026-08-19T23:59:59Z", "sum_totalCost": 10},
+        {"time_dimension": "2026-08-20T00:00:00Z", "sum_totalCost": "0.01"},
+        {"time_dimension": "2026-08-27T00:00:00Z", "sum_totalCost": 20},
+        {"time_dimension": "invalid", "sum_totalCost": 30},
+    ])
+    result = AdminOverviewService(langfuseClient=langfuse, now=lambda: NOW).getTokenCostOverview("7d")
+
+    assert result["totalCost"] == 0.01
+    assert result["chart"]["datasets"][0]["data"] == [0.01, 0, 0, 0, 0, 0, 0]
+
+
+@pytest.mark.parametrize("badCost", ["invalid", "NaN", "Infinity", "-Infinity", -0.1, "1e999"])
+def test_token_cost_rejects_invalid_upstream_amounts_instead_of_reporting_zero(badCost):
+    langfuse = FakeLangfuseClient([
+        {"time_dimension": "2026-08-26T00:00:00Z", "sum_totalCost": badCost},
+    ])
+    service = AdminOverviewService(langfuseClient=langfuse, now=lambda: NOW)
+
+    with pytest.raises(AdminApiError) as excInfo:
+        service.getTokenCostOverview("7d")
+
+    assert excInfo.value.statusCode == 500
+    assert excInfo.value.message == "Failed to load LLM token cost overview"
+
+
+def test_token_cost_reports_unconfigured_langfuse():
+    service = AdminOverviewService(langfuseClient=None, now=lambda: NOW)
+    with pytest.raises(AdminApiError) as excInfo:
+        service.getTokenCostOverview("7d")
+    assert excInfo.value.statusCode == 503
+
+
+def test_token_cost_wraps_upstream_failures_without_leaking_details():
+    langfuse = SimpleNamespace(api=SimpleNamespace(metrics=FailingLangfuseMetrics()))
+    service = AdminOverviewService(langfuseClient=langfuse, now=lambda: NOW)
+    with pytest.raises(AdminApiError) as excInfo:
+        service.getTokenCostOverview("7d")
+    assert excInfo.value.statusCode == 500
+    assert excInfo.value.message == "Failed to load LLM token cost overview"
+
+
+def test_token_cost_rejects_invalid_period_before_querying_langfuse():
+    service = AdminOverviewService(langfuseClient=None, now=lambda: NOW)
+    with pytest.raises(AdminApiError) as excInfo:
+        service.getTokenCostOverview("3w")
+    assert excInfo.value.statusCode == 422
+
+
+def test_token_cost_refetches_langfuse_on_each_request():
+    langfuse = FakeLangfuseClient([])
+    service = AdminOverviewService(langfuseClient=langfuse, now=lambda: NOW)
+    first = service.getTokenCostOverview("7d")
+    langfuse.metricsEndpoint.rows = [
+        {"time_dimension": "2026-08-26T00:00:00Z", "sum_totalCost": "0.125"},
+    ]
+    second = service.getTokenCostOverview("7d")
+    assert first["totalCost"] == 0
+    assert second["totalCost"] == 0.125

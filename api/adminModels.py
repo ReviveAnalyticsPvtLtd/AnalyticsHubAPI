@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import (
     BaseModel,
@@ -272,3 +272,25 @@ class AdminTokenUsageOverviewView(_StrictModel):
     lastUpdatedAt: str
     totalTokens: int = Field(ge=0)
     chart: AdminSignupChart
+
+
+class AdminTokenCostDataset(_StrictModel):
+    label: str
+    data: list[Annotated[float, Field(ge=0, allow_inf_nan=False)]]
+
+
+class AdminTokenCostChart(_StrictModel):
+    labels: list[str]
+    datasets: list[AdminTokenCostDataset]
+
+
+class AdminTokenCostOverviewView(_StrictModel):
+    period: AdminOverviewPeriod
+    granularity: AdminOverviewGranularity
+    timezone: str
+    rangeStart: str
+    rangeEnd: str
+    lastUpdatedAt: str
+    totalCost: float = Field(ge=0, allow_inf_nan=False)
+    currency: Literal["USD"]
+    chart: AdminTokenCostChart

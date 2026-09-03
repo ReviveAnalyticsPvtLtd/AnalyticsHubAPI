@@ -1,4 +1,4 @@
-"""Admin overview aggregates for signup and LLM token-usage line charts."""
+"""Admin overview aggregates for signup, LLM token-usage, and cost charts."""
 
 __all__ = [
     "ADMIN_OVERVIEW_BATCH_SIZE",
@@ -11,6 +11,8 @@ __all__ = [
 import bisect
 import datetime
 import json
+import math
+from decimal import Decimal, InvalidOperation
 
 from loguru import logger
 
@@ -21,6 +23,7 @@ ADMIN_OVERVIEW_BATCH_SIZE = 1000
 SIGNUP_COLUMN = "createdAt"
 SIGNUP_SERIES_LABEL = "New users"
 TOKEN_USAGE_SERIES_LABEL = "LLM tokens"
+TOKEN_COST_SERIES_LABEL = "LLM cost (USD)"
 _UNSET = object()
 
 # period -> (granularity, bucket count). Weekly periods are rounded to whole
@@ -160,6 +163,76 @@ class AdminOverviewService:
                 ],
             },
         }
+
+    def getTokenCostOverview(self, period: str) -> dict:
+        granularity, bucketCount = self._resolvePeriod(period)
+        now = self._now()
+        boundaries = self._bucketBoundaries(now, granularity, bucketCount)
+        rangeStart = boundaries[0][0]
+        rangeEnd = boundaries[-1][1]
+        starts = [start for start, _end in boundaries]
+        costs = [Decimal(0)] * len(boundaries)
+
+        try:
+            for row in self._fetchTokenCostRows(rangeStart, rangeEnd):
+                moment = _parseTimestamp(row.get("time_dimension"))
+                if moment is None or moment < rangeStart or moment >= rangeEnd:
+                    continue
+                rawCost = row.get("sum_totalCost")
+                cost = Decimal(0) if rawCost is None else Decimal(str(rawCost))
+                if not cost.is_finite() or cost < 0:
+                    raise ValueError("Invalid recorded cost")
+                costs[bisect.bisect_right(starts, moment) - 1] += cost
+
+            # Aggregate in decimal before converting to JSON numbers. Never round
+            # to cents here: individual LLM calls often cost far less than $0.01.
+            totalCost = float(sum(costs))
+            data = [float(cost) for cost in costs]
+            if not math.isfinite(totalCost) or not all(map(math.isfinite, data)):
+                raise ValueError("Recorded cost exceeds numeric range")
+        except (InvalidOperation, ValueError, TypeError, OverflowError) as exc:
+            logger.error("Admin token cost overview failed: {}", type(exc).__name__)
+            raise AdminApiError(500, "Failed to load LLM token cost overview") from exc
+
+        return {
+            "period": period,
+            "granularity": granularity,
+            "timezone": "UTC",
+            "rangeStart": rangeStart.isoformat(),
+            "rangeEnd": rangeEnd.isoformat(),
+            "lastUpdatedAt": now.isoformat(),
+            "totalCost": totalCost,
+            "currency": "USD",
+            "chart": {
+                "labels": [self._formatLabel(start, granularity) for start in starts],
+                "datasets": [{"label": TOKEN_COST_SERIES_LABEL, "data": data}],
+            },
+        }
+
+    def _fetchTokenCostRows(
+        self, rangeStart: datetime.datetime, rangeEnd: datetime.datetime
+    ) -> list[dict]:
+        if self.langfuseClient is None:
+            raise AdminApiError(503, "LLM usage analytics is unavailable")
+
+        query = json.dumps({
+            "view": "observations",
+            "metrics": [{"measure": "totalCost", "aggregation": "sum"}],
+            "dimensions": [],
+            "filters": [],
+            "timeDimension": {"granularity": "day"},
+            "fromTimestamp": rangeStart.isoformat(),
+            "toTimestamp": rangeEnd.isoformat(),
+            "orderBy": [{"field": "time_dimension", "direction": "asc"}],
+            "config": {"row_limit": 1000},
+        })
+        try:
+            response = self.langfuseClient.api.metrics.metrics(query=query)
+            rows = getattr(response, "data", None) or []
+            return [row if isinstance(row, dict) else vars(row) for row in rows]
+        except Exception as exc:
+            logger.error("Admin token cost overview failed: {}", type(exc).__name__)
+            raise AdminApiError(500, "Failed to load LLM token cost overview") from exc
 
     def _fetchTokenUsageRows(
         self, rangeStart: datetime.datetime, rangeEnd: datetime.datetime

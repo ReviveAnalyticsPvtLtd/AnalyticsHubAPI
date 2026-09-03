@@ -1,5 +1,7 @@
 import os
 import inspect
+import datetime
+from types import SimpleNamespace
 
 os.environ.setdefault("SUPABASE_URL", "http://localhost")
 os.environ.setdefault("SUPABASE_KEY", "test-key")
@@ -15,6 +17,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 import pytest
+from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from api.adminErrors import AdminApiError
@@ -41,7 +44,7 @@ from api.services.adminAuthService import (
 )
 from api.services.adminAuditService import getAdminAuditService
 from api.services.adminManagementService import getAdminManagementService
-from api.services.adminOverviewService import getAdminOverviewService
+from api.services.adminOverviewService import AdminOverviewService, getAdminOverviewService
 from api.services.adminTrialExtensionService import getAdminTrialExtensionService
 from api.services.userErasureService import getUserErasureService
 from main import (
@@ -590,6 +593,7 @@ def test_admin_routes_declare_strict_response_allowlists():
         ("/admin/audit", "GET"): list[AdminAuditEventView],
         ("/admin/overview/user-signups", "GET"): AdminUserSignupOverviewView,
         ("/admin/overview/token-usage", "GET"): AdminTokenUsageOverviewView,
+        ("/admin/overview/token-cost", "GET"): adminModels.AdminTokenCostOverviewView,
         ("/admin/users", "GET"): list[AdminUserView],
         ("/admin/users/{userId}", "PATCH"): AdminUserView,
         ("/admin/users/{userId}/access", "PATCH"): accessView,
@@ -798,3 +802,109 @@ def test_token_usage_overview_view_rejects_unknown_fields():
         AdminTokenUsageOverviewView(
             **{**TOKEN_USAGE_OVERVIEW_VIEW, "unexpected": "value"}
         )
+
+
+@pytest.fixture()
+def costClient(client):
+    # Keep the service and response serialization real; replace only remote I/O.
+    metrics = SimpleNamespace(metrics=lambda **kwargs: SimpleNamespace(data=[
+        {"time_dimension": "2026-08-26T00:00:00Z", "sum_totalCost": "0.00000125"},
+    ]))
+    service = AdminOverviewService(
+        langfuseClient=SimpleNamespace(api=SimpleNamespace(metrics=metrics)),
+        now=lambda: datetime.datetime(2026, 8, 26, 14, 30, tzinfo=datetime.timezone.utc),
+    )
+    app.dependency_overrides[getAdminOverviewService] = lambda: service
+    return client, service
+
+
+def test_token_cost_route_defaults_to_thirty_days_and_serializes_decimal_chart(costClient):
+    client, _service = costClient
+    response = client.get("/admin/overview/token-cost", headers=_adminHeaders())
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == {
+        "period", "granularity", "timezone", "rangeStart", "rangeEnd",
+        "lastUpdatedAt", "totalCost", "currency", "chart",
+    }
+    assert body["period"] == "30d"
+    assert body["currency"] == "USD"
+    assert body["totalCost"] == 0.00000125
+    assert len(body["chart"]["labels"]) == 30
+    assert body["chart"]["datasets"] == [
+        {"label": "LLM cost (USD)", "data": [0] * 29 + [0.00000125]},
+    ]
+
+
+@pytest.mark.parametrize("period,count", [
+    ("7d", 7), ("14d", 14), ("30d", 30), ("90d", 13), ("6m", 26), ("1y", 12),
+])
+def test_token_cost_route_accepts_all_token_chart_periods(costClient, period, count):
+    client, _service = costClient
+    response = client.get(f"/admin/overview/token-cost?period={period}", headers=_adminHeaders())
+    assert response.status_code == 200
+    assert response.json()["period"] == period
+    assert len(response.json()["chart"]["labels"]) == count
+
+
+def test_token_cost_route_rejects_invalid_period(costClient):
+    client, _service = costClient
+    response = client.get("/admin/overview/token-cost?period=3w", headers=_adminHeaders())
+    assert response.status_code == 422
+    assert response.json()["message"] == "Validation failed"
+    assert "period" in response.json()["errors"]
+
+
+def test_token_cost_route_requires_admin_authentication(costClient):
+    client, _service = costClient
+    response = client.get("/admin/overview/token-cost")
+    assert response.status_code == 401
+
+
+def test_token_cost_route_returns_unavailable_instead_of_zero(costClient):
+    client, service = costClient
+    service._langfuseClient = None
+    response = client.get("/admin/overview/token-cost", headers=_adminHeaders())
+    assert response.status_code == 503
+    assert response.json() == {"message": "LLM usage analytics is unavailable"}
+
+
+def test_token_cost_route_sanitizes_upstream_errors(costClient):
+    client, service = costClient
+
+    def fail(**kwargs):
+        raise RuntimeError("secret upstream details")
+
+    service.langfuseClient.api.metrics.metrics = fail
+    response = client.get("/admin/overview/token-cost", headers=_adminHeaders())
+    assert response.status_code == 500
+    assert response.json() == {"message": "Failed to load LLM token cost overview"}
+
+
+def test_token_cost_schema_preserves_numbers_and_rejects_unknown_fields():
+    payload = {
+        **{key: value for key, value in TOKEN_USAGE_OVERVIEW_VIEW.items() if key != "totalTokens"},
+        "totalCost": 0.00000125, "currency": "USD",
+        "chart": {"labels": ["2026-08-26"], "datasets": [
+            {"label": "LLM cost (USD)", "data": [0.00000125]},
+        ]},
+    }
+    model = adminModels.AdminTokenCostOverviewView
+    assert model(**payload).model_dump(mode="json") == payload
+    with pytest.raises(ValidationError):
+        model(**{**payload, "unexpected": "value"})
+
+
+@pytest.mark.parametrize("amount", [-1, float("nan"), float("inf")])
+def test_token_cost_schema_rejects_invalid_totals_and_chart_values(amount):
+    model = adminModels.AdminTokenCostOverviewView
+    base = {
+        **{key: value for key, value in TOKEN_USAGE_OVERVIEW_VIEW.items() if key != "totalTokens"},
+        "totalCost": 0, "currency": "USD",
+    }
+    with pytest.raises(ValidationError):
+        model(**{**base, "totalCost": amount})
+    with pytest.raises(ValidationError):
+        model(**{**base, "chart": {"labels": ["2026-08-26"], "datasets": [
+            {"label": "LLM cost (USD)", "data": [amount]},
+        ]}})
