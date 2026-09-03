@@ -274,6 +274,17 @@ class AdminTokenUsageOverviewView(_StrictModel):
     chart: AdminSignupChart
 
 
+class AdminWebsiteVisitOverviewView(_StrictModel):
+    period: AdminOverviewPeriod
+    granularity: AdminOverviewGranularity
+    timezone: str
+    rangeStart: str
+    rangeEnd: str
+    lastUpdatedAt: str
+    totalVisits: int = Field(ge=0)
+    chart: AdminSignupChart
+
+
 class AdminTokenCostDataset(_StrictModel):
     label: str
     data: list[Annotated[float, Field(ge=0, allow_inf_nan=False)]]

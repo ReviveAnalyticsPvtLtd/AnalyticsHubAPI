@@ -24,6 +24,7 @@ SIGNUP_COLUMN = "createdAt"
 SIGNUP_SERIES_LABEL = "New users"
 TOKEN_USAGE_SERIES_LABEL = "LLM tokens"
 TOKEN_COST_SERIES_LABEL = "LLM cost (USD)"
+WEBSITE_VISIT_SERIES_LABEL = "Website visits"
 _UNSET = object()
 
 # period -> (granularity, bucket count). Weekly periods are rounded to whole
@@ -80,9 +81,10 @@ def _subtractMonths(moment: datetime.datetime, months: int) -> datetime.datetime
 
 
 class AdminOverviewService:
-    def __init__(self, client=None, now=None, langfuseClient=_UNSET):
+    def __init__(self, client=None, now=None, langfuseClient=_UNSET, visitRepository=None):
         self._client = client
         self._langfuseClient = langfuseClient
+        self._visitRepository = visitRepository
         self._now = now or _utcNow
 
     @property
@@ -98,6 +100,51 @@ class AdminOverviewService:
             from utils.langfuseClient import langfuseClient
             self._langfuseClient = langfuseClient
         return self._langfuseClient
+
+    @property
+    def visitRepository(self):
+        if self._visitRepository is None:
+            from api.services.websiteVisitRepository import getWebsiteVisitRepository
+            self._visitRepository = getWebsiteVisitRepository()
+        return self._visitRepository
+
+    def getWebsiteVisitOverview(self, period: str) -> dict:
+        granularity, bucketCount = self._resolvePeriod(period)
+        now = self._now()
+        boundaries = self._bucketBoundaries(now, granularity, bucketCount)
+        rangeStart = boundaries[0][0]
+        rangeEnd = boundaries[-1][1]
+        starts = [start for start, _end in boundaries]
+        counts = [0] * len(boundaries)
+
+        try:
+            for row in self.visitRepository.countDailyVisits(rangeStart, rangeEnd):
+                moment = _parseTimestamp(row.get("day"))
+                if moment is None or moment < rangeStart or moment >= rangeEnd:
+                    continue
+                visits = int(row.get("visits") or 0)
+                if visits < 0:
+                    raise ValueError("Negative visit aggregate")
+                counts[bisect.bisect_right(starts, moment) - 1] += visits
+        except Exception as exc:
+            logger.error("Website visit overview failed: {}", type(exc).__name__)
+            raise AdminApiError(500, "Failed to load website visit overview") from exc
+
+        return {
+            "period": period,
+            "granularity": granularity,
+            "timezone": "UTC",
+            "rangeStart": rangeStart.isoformat(),
+            "rangeEnd": rangeEnd.isoformat(),
+            "lastUpdatedAt": now.isoformat(),
+            "totalVisits": sum(counts),
+            "chart": {
+                "labels": [self._formatLabel(start, granularity) for start in starts],
+                "datasets": [
+                    {"label": WEBSITE_VISIT_SERIES_LABEL, "data": counts},
+                ],
+            },
+        }
 
     def getUserSignupOverview(self, period: str) -> dict:
         granularity, bucketCount = self._resolvePeriod(period)

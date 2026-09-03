@@ -22,6 +22,7 @@ from api.routers import (
     manager,
     reporting,
     subscriptions,
+    tracking,
     transformations,
     utils,
     webhooks,
@@ -153,4 +154,5 @@ app.include_router(webhooks.router, prefix = "/webhooks", tags = ["Webhooks"])
 app.include_router(billingAdmin.router, prefix = "/billing-admin", tags = ["Billing Admin"])
 app.include_router(transformations.router, prefix = "/transformations", tags = ["Transformations"])
 app.include_router(credits.router, prefix = "/credits", tags = ["Credits"])
+app.include_router(tracking.router, prefix = "/track", tags = ["Tracking"])
 app.include_router(admin.router, prefix = "/admin", tags = ["Admin"])

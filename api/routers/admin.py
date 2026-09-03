@@ -12,6 +12,7 @@ from api.adminModels import (
     AdminSubscriptionView,
     AdminTokenCostOverviewView,
     AdminTokenUsageOverviewView,
+    AdminWebsiteVisitOverviewView,
     AdminUserAccessPatch,
     AdminUserAccessView,
     AdminUserErasureAcceptedView,
@@ -94,6 +95,17 @@ def getTokenUsageOverview(
     service: AdminOverviewService = Depends(getAdminOverviewService),
 ):
     return service.getTokenUsageOverview(period)
+
+
+@router.get(
+    "/overview/website-visits", response_model=AdminWebsiteVisitOverviewView
+)
+def getWebsiteVisitOverview(
+    period: AdminOverviewPeriod = Query(default="30d"),
+    _admin: AdminContext = Depends(verifyAdmin),
+    service: AdminOverviewService = Depends(getAdminOverviewService),
+):
+    return service.getWebsiteVisitOverview(period)
 
 
 @router.get(

@@ -29,6 +29,7 @@ from api.adminModels import (
     AdminLogoutResponse,
     AdminSubscriptionView,
     AdminTokenUsageOverviewView,
+    AdminWebsiteVisitOverviewView,
     AdminUserErasureAcceptedView,
     AdminUserSignupOverviewView,
     AdminUserView,
@@ -275,12 +276,25 @@ TOKEN_USAGE_OVERVIEW_VIEW = {
     },
 }
 
+WEBSITE_VISIT_OVERVIEW_VIEW = {
+    "period": "30d", "granularity": "day", "timezone": "UTC",
+    "rangeStart": "2026-07-28T00:00:00+00:00",
+    "rangeEnd": "2026-08-27T00:00:00+00:00",
+    "lastUpdatedAt": "2026-08-26T14:30:00+00:00",
+    "totalVisits": 5,
+    "chart": {
+        "labels": ["2026-07-28", "2026-07-29"],
+        "datasets": [{"label": "Website visits", "data": [2, 3]}],
+    },
+}
+
 
 class FakeAdminOverviewService:
     """Records the period the route forwards without touching a backend."""
 
     requestedPeriods: list[str] = []
     requestedTokenPeriods: list[str] = []
+    requestedWebsiteVisitPeriods: list[str] = []
 
     def getUserSignupOverview(self, period):
         FakeAdminOverviewService.requestedPeriods.append(period)
@@ -289,6 +303,10 @@ class FakeAdminOverviewService:
     def getTokenUsageOverview(self, period):
         FakeAdminOverviewService.requestedTokenPeriods.append(period)
         return {**TOKEN_USAGE_OVERVIEW_VIEW, "period": period}
+
+    def getWebsiteVisitOverview(self, period):
+        FakeAdminOverviewService.requestedWebsiteVisitPeriods.append(period)
+        return {**WEBSITE_VISIT_OVERVIEW_VIEW, "period": period}
 
 
 async def fakeVerifyAdmin(request: Request) -> AdminContext:
@@ -592,8 +610,10 @@ def test_admin_routes_declare_strict_response_allowlists():
         ("/admin/auth/logout", "POST"): AdminLogoutResponse,
         ("/admin/audit", "GET"): list[AdminAuditEventView],
         ("/admin/overview/user-signups", "GET"): AdminUserSignupOverviewView,
-        ("/admin/overview/token-usage", "GET"): AdminTokenUsageOverviewView,
-        ("/admin/overview/token-cost", "GET"): adminModels.AdminTokenCostOverviewView,
+            ("/admin/overview/token-usage", "GET"): AdminTokenUsageOverviewView,
+            ("/admin/overview/token-cost", "GET"): adminModels.AdminTokenCostOverviewView,
+            ("/admin/overview/website-visits", "GET"):
+                AdminWebsiteVisitOverviewView,
         ("/admin/users", "GET"): list[AdminUserView],
         ("/admin/users/{userId}", "PATCH"): AdminUserView,
         ("/admin/users/{userId}/access", "PATCH"): accessView,
@@ -801,6 +821,34 @@ def test_token_usage_overview_view_rejects_unknown_fields():
     with pytest.raises(Exception):
         AdminTokenUsageOverviewView(
             **{**TOKEN_USAGE_OVERVIEW_VIEW, "unexpected": "value"}
+        )
+
+
+def test_website_visit_overview_defaults_to_thirty_days_and_returns_allowlisted_chart(client):
+    FakeAdminOverviewService.requestedWebsiteVisitPeriods = []
+    response = client.get("/admin/overview/website-visits", headers=_adminHeaders())
+
+    assert response.status_code == 200
+    assert response.json() == WEBSITE_VISIT_OVERVIEW_VIEW
+    assert FakeAdminOverviewService.requestedWebsiteVisitPeriods == ["30d"]
+    assert set(response.json()) == {
+        "period", "granularity", "timezone", "rangeStart", "rangeEnd",
+        "lastUpdatedAt", "totalVisits", "chart",
+    }
+
+
+def test_website_visit_overview_requires_authentication_and_rejects_invalid_period(client):
+    assert client.get("/admin/overview/website-visits").status_code == 401
+    response = client.get(
+        "/admin/overview/website-visits?period=3w", headers=_adminHeaders()
+    )
+    assert response.status_code == 422
+
+
+def test_website_visit_overview_view_rejects_unknown_fields():
+    with pytest.raises(Exception):
+        AdminWebsiteVisitOverviewView(
+            **{**WEBSITE_VISIT_OVERVIEW_VIEW, "unexpected": "value"}
         )
 
 

@@ -312,6 +312,71 @@ def test_constructor_preserves_the_existing_positional_clock_argument():
     assert result["lastUpdatedAt"] == "2026-08-26T14:30:00+00:00"
 
 
+class FakeVisitRepository:
+    def __init__(self, rows=(), failure=None):
+        self.rows = list(rows)
+        self.failure = failure
+        self.calls = []
+
+    def countDailyVisits(self, rangeStart, rangeEnd):
+        self.calls.append((rangeStart, rangeEnd))
+        if self.failure:
+            raise self.failure
+        return list(self.rows)
+
+
+@pytest.mark.parametrize("period,granularity,bucketCount", [
+    ("7d", "day", 7), ("14d", "day", 14), ("30d", "day", 30),
+    ("90d", "week", 13), ("6m", "week", 26), ("1y", "month", 12),
+])
+def test_website_visit_overview_reuses_shared_period_buckets(period, granularity, bucketCount):
+    repository = FakeVisitRepository()
+    service = AdminOverviewService(visitRepository=repository, now=lambda: NOW)
+
+    result = service.getWebsiteVisitOverview(period)
+
+    assert result["granularity"] == granularity
+    assert len(result["chart"]["labels"]) == bucketCount
+    assert result["chart"]["datasets"] == [{"label": "Website visits", "data": [0] * bucketCount}]
+    assert result["totalVisits"] == 0
+    assert repository.calls == [(
+        datetime.datetime.fromisoformat(result["rangeStart"]),
+        datetime.datetime.fromisoformat(result["rangeEnd"]),
+    )]
+
+
+def test_website_visit_overview_maps_daily_rows_to_utc_buckets_and_excludes_end():
+    repository = FakeVisitRepository([
+        {"day": datetime.datetime(2026, 8, 20, tzinfo=datetime.timezone.utc), "visits": 2},
+        {"day": datetime.datetime(2026, 8, 26, tzinfo=datetime.timezone.utc), "visits": 3},
+        {"day": datetime.datetime(2026, 8, 27, tzinfo=datetime.timezone.utc), "visits": 99},
+    ])
+    service = AdminOverviewService(visitRepository=repository, now=lambda: NOW)
+
+    result = service.getWebsiteVisitOverview("7d")
+
+    assert result["chart"]["datasets"] == [
+        {"label": "Website visits", "data": [2, 0, 0, 0, 0, 0, 3]},
+    ]
+    assert result["totalVisits"] == 5
+    assert result["rangeEnd"] == "2026-08-27T00:00:00+00:00"
+
+
+def test_website_visit_overview_is_fresh_and_sanitizes_repository_failure():
+    repository = FakeVisitRepository()
+    service = AdminOverviewService(visitRepository=repository, now=lambda: NOW)
+
+    assert service.getWebsiteVisitOverview("7d")["totalVisits"] == 0
+    repository.rows = [{"day": datetime.datetime(2026, 8, 26, tzinfo=datetime.timezone.utc), "visits": 1}]
+    assert service.getWebsiteVisitOverview("7d")["totalVisits"] == 1
+
+    repository.failure = RuntimeError("database password=must-not-leak")
+    with pytest.raises(AdminApiError) as excInfo:
+        service.getWebsiteVisitOverview("7d")
+    assert excInfo.value.statusCode == 500
+    assert excInfo.value.message == "Failed to load website visit overview"
+
+
 class FakeLangfuseMetrics:
     def __init__(self, rows):
         self.rows = rows
