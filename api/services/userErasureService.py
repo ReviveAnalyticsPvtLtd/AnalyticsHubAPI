@@ -64,9 +64,6 @@ class UserErasureService:
         idempotencyKey: str,
         admin: AdminContext,
     ) -> dict:
-        if os.environ.get("USER_ERASURE_ENABLED", "false").strip().lower() != "true":
-            raise AdminApiError(503, "User erasure is not enabled")
-
         try:
             normalizedKey = str(uuid.UUID(str(idempotencyKey)))
         except (TypeError, ValueError, AttributeError) as exc:

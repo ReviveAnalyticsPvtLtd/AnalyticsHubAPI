@@ -2103,7 +2103,7 @@ loops.
 
 Start the automatic, durable user-erasure workflow. The endpoint first applies
 the authoritative access ban, freezes billing, persists all workflow steps,
-and queues Celery. It is disabled unless `USER_ERASURE_ENABLED=true`.
+and queues Celery.
 
 **Headers:**
 
@@ -2145,7 +2145,7 @@ the durable workflow automatically. Sanitized `user.erasure.complete` and
 `user.erasure.failed` outcomes are available through the existing
 `GET /api/latest/admin/audit?targetType=user_erasure_request` endpoint.
 
-**Errors:** `401`, `404`, `409`, `422`, `500`, or `503` when rollout is disabled.
+**Errors:** `401`, `404`, `409`, `422`, or `500`.
 
 ### 15.3 `POST /api/latest/admin/free-trial/extensions`
 

@@ -61,7 +61,6 @@ class FakeAudit:
 def _service(monkeypatch, repository=None, queue=None):
     from api.services.userErasureService import UserErasureService
 
-    monkeypatch.setenv("USER_ERASURE_ENABLED", "true")
     monkeypatch.setenv("USER_ERASURE_HMAC_SECRET", "independent-test-secret")
     events = []
     repository = repository or FakeRepository(events)
@@ -135,8 +134,14 @@ def test_start_erasure_rejects_idempotency_key_reused_for_another_user(monkeypat
     assert captured.value.message == "Idempotency key is already in use"
 
 
-def test_start_erasure_is_disabled_by_default(monkeypatch):
-    monkeypatch.delenv("USER_ERASURE_ENABLED", raising=False)
+@pytest.mark.parametrize("legacyFlagValue", [None, "false"])
+def test_start_erasure_does_not_require_a_feature_flag(
+    monkeypatch, legacyFlagValue
+):
+    if legacyFlagValue is None:
+        monkeypatch.delenv("USER_ERASURE_ENABLED", raising=False)
+    else:
+        monkeypatch.setenv("USER_ERASURE_ENABLED", legacyFlagValue)
     monkeypatch.setenv("USER_ERASURE_HMAC_SECRET", "test-secret")
     events = []
     repository = FakeRepository(events)
@@ -149,17 +154,15 @@ def test_start_erasure_is_disabled_by_default(monkeypatch):
         enqueue=lambda requestId: events.append(("queue", requestId)),
     )
 
-    with pytest.raises(AdminApiError) as captured:
-        service.start(
-            "user-1",
-            AdminUserErasureRequest.model_validate({"confirmation": "ERASE"}),
-            "8cfdb150-417d-47ab-acd1-fef39d2bc14e",
-            ADMIN,
-        )
+    result = service.start(
+        "user-1",
+        AdminUserErasureRequest.model_validate({"confirmation": "ERASE"}),
+        "8cfdb150-417d-47ab-acd1-fef39d2bc14e",
+        ADMIN,
+    )
 
-    assert captured.value.statusCode == 503
-    assert captured.value.message == "User erasure is not enabled"
-    assert events == []
+    assert result["status"] == "PENDING"
+    assert [event[0] for event in events] == ["create", "queue"]
 
 
 def test_queue_failure_keeps_request_accepted_and_records_safe_warning(monkeypatch):
